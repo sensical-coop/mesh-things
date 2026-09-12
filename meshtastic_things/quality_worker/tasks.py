@@ -45,7 +45,7 @@ def _reading_interval_for(device: dict, payload_kind: str | None, variant_interv
         return variant_intervals.get(payload_kind)
     return None
 
-# TODO CHECK - here we should store last postprocessing date, so that we can recover failing jobs later
+# TODO Here we should store last postprocessing date, so that we can recover failing jobs later
 @shared_task(name="quality_worker.tasks.scan_devices")
 def scan_devices() -> dict:
     """Enqueues per-device work"""

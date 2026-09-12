@@ -7,7 +7,7 @@ from drf_spectacular.extensions import OpenApiAuthenticationExtension
 from rest_framework import authentication, exceptions
 
 # queryapi has no Owner model or Postgres
-# TODO Fix
+# TODO - Item #8-related
 CACHE_TTL_SECONDS = 60
 
 INTROSPECT_RATE_LIMIT = 30

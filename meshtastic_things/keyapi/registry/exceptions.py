@@ -10,7 +10,7 @@ class BadGateway(APIException):
 
 
 class Conflict(APIException):
-    # TODO - Cumbersome - remove
+    # TODO - Evaluate if this is necessary.
     """A uniqueness constraint was violated."""
 
     status_code = 409
