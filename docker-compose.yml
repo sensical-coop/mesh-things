@@ -1,8 +1,7 @@
 include:
   - compose/base.yml
   - compose/pipeline.yml
-  - compose/keyapi.yml
-  - compose/queryapi.yml
+  - compose/api.yml
   - compose/quality.yml
   - compose/flink.yml
   - compose/gateway.yml

@@ -1,53 +1,24 @@
-# The /management and /data prefixes must match common/gateway.py
+# The readings role owns /readings/*; the registry role serves everything else.
 {$CADDY_SITE_ADDRESS::80} {
 	handle / {
 		header Content-Type application/json
 		respond `{
   "name": "Meshtastic Things",
-  "services": [
-    {
-      "name": "management",
-      "description": "Owners, meshes, devices, measurements, postprocessing blueprints",
-      "base": "/management",
-      "schema": "/management/schema",
-      "docs": "/management/docs",
-      "health": "/management/health",
-      "metrics": "/management/metrics"
-    },
-    {
-      "name": "data",
-      "description": "Timeseries and readings",
-      "base": "/data",
-      "schema": "/data/schema",
-      "docs": "/data/docs",
-      "health": "/data/health"
-    }
-  ]
+  "description": "Owners, meshes, devices, measurements, and readings",
+  "schema": "/schema",
+  "docs": "/docs",
+  "health": "/health",
+  "metrics": "/metrics",
+  "readings": "/readings"
 }` 200
 	}
 
-	handle /schema {
-		rewrite * /gateway-schema
-		reverse_proxy key-management-api:8090
-	}
-
-	# One Swagger UI
-	handle /docs {
-		rewrite * /gateway-docs
-		reverse_proxy key-management-api:8090
-	}
-
-	handle_path /management/* {
-		reverse_proxy key-management-api:8090
-	}
-
-	handle_path /data/* {
+	handle /readings/* {
 		reverse_proxy query-api:8091
 	}
 
 	handle {
-		header Content-Type application/json
-		respond `{"detail": "Not found. See / for the service index."}` 404
+		reverse_proxy key-management-api:8090
 	}
 }
 

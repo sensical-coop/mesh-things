@@ -1,0 +1,114 @@
+x-api-image: &api-image
+  image: meshtastic-things/api:latest
+  build:
+    context: ../meshtastic_things
+    dockerfile: api/Dockerfile
+
+x-registry-role: &registry-role
+  <<: *api-image
+  environment:
+    DJANGO_SETTINGS_MODULE: api_project.settings.prod
+    APP_ROLE: registry
+  env_file: "../.env"
+  restart: unless-stopped
+
+services:
+  key_management_api:
+    <<: *registry-role
+    mem_limit: 512m
+    container_name: key-management-api
+    depends_on:
+      kafka:
+        condition: service_healthy
+      kafka-topics-init:
+        condition: service_completed_successfully
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    ports:
+      - 127.0.0.1:${KEYAPI__PORT}:${KEYAPI__PORT}
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:${KEYAPI__PORT}/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 5
+      start_period: 15s
+
+  # Reads Postgres as queryapi_ro
+  # Serves without key_management_api
+  query_api:
+    <<: *api-image
+    environment:
+      DJANGO_SETTINGS_MODULE: api_project.settings.prod
+      APP_ROLE: readings
+    env_file: "../.env"
+    restart: unless-stopped
+    mem_limit: 512m
+    container_name: query-api
+    command:
+      ["gunicorn", "api_project.wsgi:application", "--bind", "0.0.0.0:${QUERYAPI__PORT}", "--workers", "2"]
+    depends_on:
+      influxdb:
+        condition: service_healthy
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+      key_management_api:
+        condition: service_healthy
+    ports:
+      - 127.0.0.1:${QUERYAPI__PORT}:${QUERYAPI__PORT}
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:${QUERYAPI__PORT}/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 5
+      start_period: 15s
+
+  key_management_device_consumer:
+    <<: *registry-role
+    mem_limit: 256m
+    container_name: key-management-device-consumer
+    depends_on:
+      kafka:
+        condition: service_healthy
+      kafka-topics-init:
+        condition: service_completed_successfully
+      postgres:
+        condition: service_healthy
+      key_management_api:
+        condition: service_healthy
+    command: ["python", "manage.py", "consume_device_sightings"]
+
+  key_management_sensor_discovery_consumer:
+    <<: *registry-role
+    mem_limit: 256m
+    container_name: key-management-sensor-discovery-consumer
+    depends_on:
+      kafka:
+        condition: service_healthy
+      kafka-topics-init:
+        condition: service_completed_successfully
+      postgres:
+        condition: service_healthy
+      key_management_api:
+        condition: service_healthy
+    command: ["python", "manage.py", "consume_sensor_discovery"]
+
+  key_management_quality_alarms_consumer:
+    <<: *registry-role
+    mem_limit: 256m
+    container_name: key-management-quality-alarms-consumer
+    depends_on:
+      kafka:
+        condition: service_healthy
+      kafka-topics-init:
+        condition: service_completed_successfully
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+      key_management_api:
+        condition: service_healthy
+    command: ["python", "manage.py", "consume_quality_alarms"]

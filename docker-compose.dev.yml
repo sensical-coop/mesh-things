@@ -17,13 +17,13 @@ services:
     ports: !override
       - ${KEYAPI__PORT}:${KEYAPI__PORT}
     environment:
-      DJANGO_SETTINGS_MODULE: keyapi_project.settings.dev
+      DJANGO_SETTINGS_MODULE: api_project.settings.dev
 
   query_api:
     ports: !override
       - ${QUERYAPI__PORT}:${QUERYAPI__PORT}
     environment:
-      DJANGO_SETTINGS_MODULE: queryapi_project.settings.dev
+      DJANGO_SETTINGS_MODULE: api_project.settings.dev
 
   # Admin UIs and datastores
   influxdb:
@@ -63,19 +63,15 @@ services:
 
   key_management_device_consumer:
     environment:
-      DJANGO_SETTINGS_MODULE: keyapi_project.settings.dev
+      DJANGO_SETTINGS_MODULE: api_project.settings.dev
 
   key_management_sensor_discovery_consumer:
     environment:
-      DJANGO_SETTINGS_MODULE: keyapi_project.settings.dev
+      DJANGO_SETTINGS_MODULE: api_project.settings.dev
 
   key_management_quality_alarms_consumer:
     environment:
-      DJANGO_SETTINGS_MODULE: keyapi_project.settings.dev
-
-  query_api_owner_auth_consumer:
-    environment:
-      DJANGO_SETTINGS_MODULE: queryapi_project.settings.dev
+      DJANGO_SETTINGS_MODULE: api_project.settings.dev
 
   # Local dev SMTP
   mailhog:
