@@ -2,28 +2,45 @@ x-pipeline-image: &pipeline-image
   image: meshtastic-things/pipeline:latest
   build: ../meshtastic_things
 
+x-bridge-member: &bridge-member
+  <<: *pipeline-image
+  mem_limit: 256m
+  depends_on:
+    kafka:
+      condition: service_healthy
+    kafka-topics-init:
+      condition: service_completed_successfully
+  env_file: "../.env"
+  restart: unless-stopped
+  expose:
+    - ${MQTT_BRIDGE__HEALTH__PORT}
+  command: ["mqtt_kafka_bridge"]
+  healthcheck:
+    test: ["CMD", "curl", "-f", "http://localhost:${MQTT_BRIDGE__HEALTH__PORT}/health"]
+    interval: 1m30s
+    timeout: 30s
+    retries: 5
+    start_period: 30s
+
 services:
+  # Members of the $share/<group>/ subscription.
   mqtt_kafka_bridge:
-    mem_limit: 256m
-    <<: *pipeline-image
-    depends_on:
-      kafka:
-        condition: service_healthy
-      kafka-topics-init:
-        condition: service_completed_successfully
-    env_file: "../.env"
-    restart: unless-stopped
-    expose:
-      - ${MQTT_BRIDGE__HEALTH__PORT}
-    command: ["mqtt_kafka_bridge"]
-    healthcheck:
-      test: ["CMD", "curl", "-f", "http://localhost:${MQTT_BRIDGE__HEALTH__PORT}/health"]
-      interval: 1m30s
-      timeout: 30s
-      retries: 5
-      start_period: 30s
-    deploy:
-      replicas: ${MQTT_BRIDGE__REPLICAS:-1}
+    <<: *bridge-member
+    environment:
+      MQTT_BRIDGE__CLIENT_ID: mesh-bridge-1
+
+  # Extra capacity (off by default) `--profile bridge-pool`.
+  mqtt_kafka_bridge_2:
+    <<: *bridge-member
+    profiles: ["bridge-pool"]
+    environment:
+      MQTT_BRIDGE__CLIENT_ID: mesh-bridge-2
+
+  mqtt_kafka_bridge_3:
+    <<: *bridge-member
+    profiles: ["bridge-pool"]
+    environment:
+      MQTT_BRIDGE__CLIENT_ID: mesh-bridge-3
 
   influxdb_writer:
     mem_limit: 256m

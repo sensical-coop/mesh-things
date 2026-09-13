@@ -1,13 +1,60 @@
 import asyncio
 import os
-import socket
 
 import aiomqtt
 from aiohttp import web
 import structlog
 from kafka import KafkaProducer
+from paho.mqtt.packettypes import PacketTypes
+from paho.mqtt.properties import Properties
 from tools.healthcheck import HealthState, KakfaProducerHealth, MQTTHealth
 from tools.env import get_bool_env
+
+
+def _client_id() -> str:
+    """The MQTT client id: stable across restarts, unique per pool member."""
+    return os.environ.get('MQTT_BRIDGE__CLIENT_ID', '').strip() or 'mesh-bridge'
+
+
+def session_expiry_seconds() -> int:
+    """How long the broker keeps a member's session after it disconnects.
+
+    A single-member deployment wants this generous.
+    """
+    return int(os.environ.get('MQTT_BRIDGE__SESSION_EXPIRY', 3600))
+
+
+def _session_properties() -> Properties:
+    properties = Properties(PacketTypes.CONNECT)
+    properties.SessionExpiryInterval = session_expiry_seconds()
+    return properties
+
+
+async def retire_session(broker: str, client_id: str) -> None:
+    """Discard a member's session on the broker immediately
+
+    Trick. Removing a member from the shared group does not remove its session.
+    until it expires the broker still keeps every message and holds it for a
+    client that is not coming back. Connecting once with `clean_start=True`
+    and a zero expiry throws the session away as soon as this disconnects.
+
+    Use it when scaling the pool down, before the id stops being used.
+    """
+    tls_params = aiomqtt.TLSParameters() if get_bool_env('MQTT_BRIDGE__SSL', default=True) else None
+    properties = Properties(PacketTypes.CONNECT)
+    properties.SessionExpiryInterval = 0
+    async with aiomqtt.Client(
+        broker,
+        port=int(os.environ.get('MQTT_BRIDGE__PORT', 8883)),
+        username=os.environ['MQTT_BRIDGE__USER'],
+        password=os.environ['MQTT_BRIDGE__PASS'],
+        identifier=client_id,
+        protocol=aiomqtt.ProtocolVersion.V5,
+        clean_start=True,
+        properties=properties,
+        tls_params=tls_params,
+    ):
+        log.info(f'Retired MQTT session for client_id={client_id}')
 
 
 def _partition_key(topic):
@@ -31,8 +78,7 @@ class MQTTHandler(object):
             timeout=int(os.environ['MQTT_BRIDGE__HEALTH__TIMEOUT'])
         )
         self.mqtt_health = MQTTHealth()
-        client_id_prefix = os.environ.get('MQTT_BRIDGE__CLIENT_ID_PREFIX', 'mesh-bridge')
-        self.client_id = f'{client_id_prefix}-{socket.gethostname()}'
+        self.client_id = _client_id()
 
     async def bridge_mqtt_kafka(self, topic, shared_sub=False):
 
@@ -51,7 +97,10 @@ class MQTTHandler(object):
             username=os.environ['MQTT_BRIDGE__USER'],
             password=os.environ['MQTT_BRIDGE__PASS'],
             identifier=self.client_id,
-            clean_session=get_bool_env('MQTT_BRIDGE__CLEAN_SESSION', default=False),
+            protocol=aiomqtt.ProtocolVersion.V5,
+            # Resume the session
+            clean_start=False,
+            properties=_session_properties(),
             tls_params=tls_params,
         )
 

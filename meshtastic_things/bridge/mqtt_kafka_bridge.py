@@ -2,7 +2,7 @@ import asyncio
 import os
 import sys
 import argparse
-from bridge.mqtt_handler import MQTTHandler
+from bridge.mqtt_handler import MQTTHandler, retire_session
 from tools.env import get_bool_env
 from dotenv import load_dotenv
 
@@ -27,8 +27,23 @@ def main():
     parser.add_argument(
         "--local", default=False, dest='local', action='store_true', help="Local development mode"
     )
+    parser.add_argument(
+        "--retire-session",
+        metavar="CLIENT_ID",
+        help=(
+            "Delete this client id's session on the broker and exit. Use when "
+            "removing a member from the shared group: its session otherwise "
+            "keeps taking a share of the messages and queueing them forever."
+        ),
+    )
 
     args = parser.parse_args()
+
+    if args.retire_session:
+        if args.local:
+            load_dotenv("../.env")
+        asyncio.run(retire_session(os.environ['MQTT_BRIDGE__BROKER'], args.retire_session))
+        return
 
     if args.local:
         load_dotenv("../.env")
