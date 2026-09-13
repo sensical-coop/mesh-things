@@ -5,6 +5,8 @@ from datetime import datetime, timezone
 import structlog
 from kafka import KafkaProducer
 
+from common import node_ids
+
 # Definition of the "<measurement>.<field>"
 from common.channels import channel_name
 
@@ -14,9 +16,8 @@ log = structlog.get_logger()
 
 
 def gateway_kafka_key(device: Device) -> str:
-    """Meshtastic's node number in string form, e.g. 0xaabbccdd -> "!aabbccdd".
-    This matches ServiceEnvelope.gateway_id"""
-    return f"!{device.device_id:08x}"
+    """Return the gateway's key, which must match ServiceEnvelope.gateway_id."""
+    return node_ids.to_hex(device.device_id)
 
 
 def node_rejection_kafka_key(device: Device) -> str:

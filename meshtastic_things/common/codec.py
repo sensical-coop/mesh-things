@@ -6,7 +6,7 @@ from google.protobuf.json_format import MessageToDict
 from meshtastic import protocols
 from meshtastic.protobuf import mesh_pb2, mqtt_pb2
 
-from common import portnum_registry
+from common import node_ids, portnum_registry
 
 # Channel.psk default AQ==
 _DEFAULT_CHANNEL_KEY = bytes(
@@ -57,6 +57,7 @@ def decode_payload(mp: mesh_pb2.MeshPacket):
     return portnum, pb_dict, payload_kind
 
 def build_decoded_message(se: mqtt_pb2.ServiceEnvelope, portnum: int, pb_dict: dict, payload_kind: str) -> dict:
+    """Shape a decoded packet into the event downstream writers consume"""
     mp = se.packet
     return {
         "node_id": getattr(mp, "from"),
@@ -65,7 +66,7 @@ def build_decoded_message(se: mqtt_pb2.ServiceEnvelope, portnum: int, pb_dict: d
         "rx_time": mp.rx_time,
         "hop_start": mp.hop_start,
         "channel_id": se.channel_id,
-        "gateway_id": se.gateway_id,
+        "gateway_id": node_ids.to_num(se.gateway_id),
         "payload_kind": payload_kind,
         "payload": pb_dict,
     }
