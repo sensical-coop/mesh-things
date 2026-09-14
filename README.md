@@ -19,15 +19,6 @@ Meshtastic Things is a system for ingesting Meshtastic mesh telemetry from MQTT 
 - Storage: InfluxDB and S3/MinIO
 - APIs (keys and query): Django
 
-Data pipeline:
-
-```
-MQTT ──> bridge ──> mesh.telemetry.raw.v1 ──> decode/decrypt ──> mesh.telemetry.decoded.v1
-                                                     ^                          │
-                                          mesh.keys.v1 (gateway PSKs)           ├──> influxdb_writer ──> InfluxDB ──> readings
-                                          from registry                         └──> s3_writer ──────> Parquet on S3/MinIO
-```
-
 ## Getting started
 
 Deployment is a single `docker compose` stack (`docker-compose.yml`, which
@@ -55,5 +46,6 @@ docker compose --profile full up -d # or the full stack: Flink streams, and S3 a
 build protobufs locally — see [`scripts/regen-protos.sh`](meshtastic_things/scripts/regen-protos.sh).
 
 **Warning**: Nothing reaches InfluxDB until a mesh has a **registered gateway** (registration authorizes decoding).
+
 
 
