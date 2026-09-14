@@ -11,7 +11,7 @@ from common.influx_query import duration_seconds, split_channel
 from .alarms import build_alarm, get_alarm_publisher
 from .executor import align_series, analyse_completeness, resolve_output_units, run_steps
 from .influx_io import get_influx_io
-from .keyapi_client import get_keyapi_client
+from .registry_client import get_registry_client
 
 log = structlog.get_logger()
 
@@ -34,7 +34,7 @@ def _variant_intervals() -> dict[str, int | None]:
     """payload_kind -> default_reading_interval_seconds, the per-device fallback."""
     return {
         variant["payload_kind"]: variant.get("default_reading_interval_seconds")
-        for variant in get_keyapi_client().telemetry_variants()
+        for variant in get_registry_client().telemetry_variants()
     }
 
 
@@ -49,7 +49,7 @@ def _reading_interval_for(device: dict, payload_kind: str | None, variant_interv
 @shared_task(name="quality_worker.tasks.scan_devices")
 def scan_devices() -> dict:
     """Enqueues per-device work"""
-    client = get_keyapi_client()
+    client = get_registry_client()
     devices = client.devices(is_allowed="true")
     blueprint_runs = completeness_runs = 0
     for device in devices:
@@ -67,9 +67,9 @@ def run_blueprint(device_uuid: str, lookback: str | None = None) -> dict:
     """Load the device's referenced channels, align them, run every step in
     order, and write the derived channels back."""
     lookback = lookback or BLUEPRINT_LOOKBACK
-    keyapi, influx = get_keyapi_client(), get_influx_io()
+    registry, influx = get_registry_client(), get_influx_io()
 
-    devices = {d["id"]: d for d in keyapi.devices()}
+    devices = {d["id"]: d for d in registry.devices()}
     device = devices.get(device_uuid)
     if device is None:
         log.warning("device_not_found", device_uuid=device_uuid)
@@ -78,7 +78,7 @@ def run_blueprint(device_uuid: str, lookback: str | None = None) -> dict:
     if not blueprint_id:
         return {"status": "no_blueprint"}
 
-    blueprint = keyapi.blueprint(blueprint_id)
+    blueprint = registry.blueprint(blueprint_id)
     steps = blueprint.get("steps") or []
     mesh_id, device_id = device["mesh_id"], device["device_id"]
 
@@ -128,7 +128,7 @@ def run_blueprint(device_uuid: str, lookback: str | None = None) -> dict:
     if outputs:
         catalog_units = {
             row["channel"]: row.get("native_unit")
-            for row in keyapi.measurement_types()
+            for row in registry.measurement_types()
             if row.get("channel")
         }
         get_alarm_publisher().publish_discovery(
@@ -156,9 +156,9 @@ def check_completeness(device_uuid: str, lookback: str | None = None) -> dict:
     """Device completeness check"""
 
     lookback = lookback or COMPLETENESS_LOOKBACK
-    keyapi, influx = get_keyapi_client(), get_influx_io()
+    registry, influx = get_registry_client(), get_influx_io()
 
-    devices = {d["id"]: d for d in keyapi.devices()}
+    devices = {d["id"]: d for d in registry.devices()}
     device = devices.get(device_uuid)
     if device is None:
         return {"status": "device_not_found"}
@@ -172,7 +172,7 @@ def check_completeness(device_uuid: str, lookback: str | None = None) -> dict:
     publisher = get_alarm_publisher()
     results = []
 
-    for row in keyapi.device_measurements(device_uuid):
+    for row in registry.device_measurements(device_uuid):
         if row.get("origin") != ORIGIN_MEASURED:
             continue
         channel = row["channel"]

@@ -1,5 +1,5 @@
 """Optional to create one owner + mesh + gateway from
-KEYAPI__SEED_* env vars (all five required)."""
+REGISTRY__SEED_* env vars (all five required)."""
 import os
 
 import structlog
@@ -13,16 +13,16 @@ log = structlog.get_logger()
 
 
 class Command(BaseCommand):
-    help = "Create one bootstrap owner + mesh + gateway from KEYAPI__SEED_* env vars, if set."
+    help = "Create one bootstrap owner + mesh + gateway from REGISTRY__SEED_* env vars, if set."
 
     def handle(self, *args, **options):
-        seed_owner_name = os.environ.get("KEYAPI__SEED_OWNER_NAME")
-        seed_owner_email = os.environ.get("KEYAPI__SEED_OWNER_EMAIL")
-        seed_channel_id = os.environ.get("KEYAPI__SEED_CHANNEL_ID")
-        seed_psk_b64 = os.environ.get("KEYAPI__SEED_PSK_B64")
-        seed_gateway_device_id = os.environ.get("KEYAPI__SEED_GATEWAY_DEVICE_ID")
+        seed_owner_name = os.environ.get("REGISTRY__SEED_OWNER_NAME")
+        seed_owner_email = os.environ.get("REGISTRY__SEED_OWNER_EMAIL")
+        seed_channel_id = os.environ.get("REGISTRY__SEED_CHANNEL_ID")
+        seed_psk_b64 = os.environ.get("REGISTRY__SEED_PSK_B64")
+        seed_gateway_device_id = os.environ.get("REGISTRY__SEED_GATEWAY_DEVICE_ID")
         if not (seed_owner_name and seed_owner_email and seed_channel_id and seed_psk_b64 and seed_gateway_device_id):
-            self.stdout.write("KEYAPI__SEED_* not fully set - nothing to seed.")
+            self.stdout.write("REGISTRY__SEED_* not fully set - nothing to seed.")
             return
 
         owner = Owner.objects.filter(email=seed_owner_email).first()

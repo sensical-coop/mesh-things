@@ -1,6 +1,6 @@
 """Registry of postprocessing algorithms, discovered by name.
 
-A `PostprocessingStep` (keyapi) names one of these functions, binds its
+A `PostprocessingStep` (registry) names one of these functions, binds its
 `inputs` to channel names, and supplies `params` - see
 docs/architecture.md#postprocessing-blueprints. Writing a new algorithm means
 dropping a decorated function into a module in this package; nothing else
@@ -8,7 +8,7 @@ needs editing.
 
 Same name-dispatch shape as common/calibration.py's CALIBRATION_FUNCTIONS and
 common/detectors.py's DETECTORS, but with declared metadata (inputs/outputs/
-params/mode) so keyapi can reject a misconfigured step at write time instead
+params/mode) so registry can reject a misconfigured step at write time instead
 of failing deep inside a worker hours later.
 
 `mode` decides *where* an algorithm can run:
@@ -56,7 +56,7 @@ class AlgorithmSpec:
     # Declared here because the algorithm is the only thing that knows: a
     # channel produced by a blueprint has no protobuf field to inherit a unit
     # from, so without this its catalog row is created bare and every consumer
-    # downstream (queryapi's /latest decoration, any plot axis) has nothing to
+    # downstream (readings' /latest decoration, any plot axis) has nothing to
     # label it with.
     output_units: dict[str, str] = field(default_factory=dict)
 
@@ -179,9 +179,9 @@ _discovered = False
 def discover(force: bool = False) -> dict[str, AlgorithmSpec]:
     """Import every module in this package so its decorators run.
 
-    Import failures are logged and skipped rather than raised: keyapi imports
+    Import failures are logged and skipped rather than raised: registry imports
     this purely to validate step config, and one algorithm module growing a
-    dependency keyapi doesn't have shouldn't take the whole API down. The
+    dependency registry doesn't have shouldn't take the whole API down. The
     affected algorithms simply won't validate as known names, which surfaces
     as a clear 400 on the step that uses them.
     """
@@ -206,7 +206,7 @@ def get(function_name: str) -> AlgorithmSpec | None:
 
 def validate_step(function_name: str, inputs: dict | None, params: dict | None) -> list[str]:
     """Check a step's config against the declared spec, returning human-readable
-    errors (empty list = valid). Used by keyapi's serializer so bad config fails
+    errors (empty list = valid). Used by registry's serializer so bad config fails
     at write time - see PostprocessingStepSerializer."""
     spec = get(function_name)
     if spec is None:

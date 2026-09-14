@@ -24,7 +24,7 @@ class OwnerBearerAuthentication(authentication.BaseAuthentication):
         if not token:
             return None
 
-        cache_key = f"keyapi:failed-auth:{request.META.get('REMOTE_ADDR', 'unknown')}"
+        cache_key = f"registry:failed-auth:{request.META.get('REMOTE_ADDR', 'unknown')}"
         if (cache.get(cache_key) or 0) >= FAILED_AUTH_RATE_LIMIT:
             raise exceptions.Throttled(detail="Too many invalid credentials, slow down")
 

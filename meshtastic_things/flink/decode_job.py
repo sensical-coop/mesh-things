@@ -289,11 +289,11 @@ def main():
         kafka_bootstrap=kafka_bootstrap,
         raw_topic=os.environ["MQTT_BRIDGE__KAFKA_TOPIC"],
         decoded_topic=os.environ["PROTO_DECODE__KAFKA_TOPIC"],
-        keys_topic=os.environ.get("KEYAPI__KAFKA_TOPIC", "mesh.keys.v1"),
-        devices_topic=os.environ.get("KEYAPI__DEVICES_KAFKA_TOPIC", "mesh.devices.v1"),
-        node_rejections_topic=os.environ.get("KEYAPI__NODE_REJECTIONS_KAFKA_TOPIC", "mesh.node_rejections.v1"),
+        keys_topic=os.environ.get("REGISTRY__KAFKA_TOPIC", "mesh.keys.v1"),
+        devices_topic=os.environ.get("REGISTRY__DEVICES_KAFKA_TOPIC", "mesh.devices.v1"),
+        node_rejections_topic=os.environ.get("REGISTRY__NODE_REJECTIONS_KAFKA_TOPIC", "mesh.node_rejections.v1"),
         sensor_discovery_topic=os.environ.get(
-            "KEYAPI__SENSOR_DISCOVERY_KAFKA_TOPIC", "mesh.sensor_discovery.v1"
+            "REGISTRY__SENSOR_DISCOVERY_KAFKA_TOPIC", "mesh.sensor_discovery.v1"
         ),
     )
 

@@ -215,7 +215,7 @@ class OwnerLoginView(APIView):
         serializer = OwnerLoginSerializer(data=request.data)
         serializer.is_valid(raise_exception=True)
 
-        cache_key = f"keyapi:failed-login:{request.META.get('REMOTE_ADDR', 'unknown')}"
+        cache_key = f"registry:failed-login:{request.META.get('REMOTE_ADDR', 'unknown')}"
         if (cache.get(cache_key) or 0) >= LOGIN_FAILED_RATE_LIMIT:
             raise Throttled(detail="Too many failed login attempts, slow down")
 

@@ -19,7 +19,7 @@ if APP_ROLE not in (REGISTRY_ROLE, READINGS_ROLE):
     )
 IS_READINGS = APP_ROLE == READINGS_ROLE
 
-ENV_PREFIX = "QUERYAPI" if IS_READINGS else "KEYAPI"
+ENV_PREFIX = APP_ROLE.upper()
 
 SECRET_KEY = env_str(f"{ENV_PREFIX}__SECRET_KEY")
 if not SECRET_KEY:
@@ -79,7 +79,7 @@ TEMPLATES = [
     },
 ]
 
-# QUERYAPI__DB_DSN points at the read-only role
+# The readings role's DSN points at the read-only Postgres role
 DATABASES = {
     "default": dj_database_url.parse(
         env_str(f"{ENV_PREFIX}__DB_DSN", "postgresql://unset:unset@localhost:5432/unset")

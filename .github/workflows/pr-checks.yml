@@ -1,0 +1,72 @@
+name: PR checks
+
+on:
+  pull_request:
+    branches: [main]
+  workflow_call:
+
+env:
+  COMPOSE_FILE: docker-compose.yml
+
+jobs:
+  api-tests:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - run: cp env.example .env
+      - run: docker compose build registry_api
+      - run: docker compose up -d --wait postgres redis
+      - run: >
+          docker compose run --rm --no-deps -e REGISTRY__SECRET_KEY=ci-test-secret
+          registry_api python manage.py test registry readings
+      - name: Migrations match the models
+        run: >
+          docker compose run --rm --no-deps -e REGISTRY__SECRET_KEY=ci-test-secret
+          registry_api python manage.py makemigrations --check --dry-run
+      - if: always()
+        run: docker compose down -v
+
+  prod-settings-boot:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - run: cp env.example .env
+      - run: docker compose build registry_api
+      - name: Both roles load the production settings
+        run: |
+          for role in registry_api readings_api; do
+            echo "--- $role ---"
+            docker compose run --rm --no-deps \
+              -e REGISTRY__SECRET_KEY=ci-test-secret \
+              -e READINGS__SECRET_KEY=ci-test-secret \
+              "$role" python manage.py check
+          done
+      - name: Compose files are valid, base and dev overlay alike
+        run: |
+          docker compose -f docker-compose.yml config --quiet
+          docker compose -f docker-compose.yml -f docker-compose.dev.yml config --quiet
+
+  images:
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        dockerfile:
+          - Dockerfile
+          - api/Dockerfile
+          - flink/Dockerfile
+          - quality_worker/Dockerfile
+    steps:
+      - uses: actions/checkout@v4
+      - run: docker build -f "meshtastic_things/${{ matrix.dockerfile }}" ./meshtastic_things
+
+  root-tests:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+      - run: pip install -r meshtastic_things/requirements-dev.txt
+      - run: pytest -q
+        working-directory: meshtastic_things

@@ -1,9 +1,9 @@
-"""keyapi's createsuperuser replacing Django's interactive username/password
+"""registry's createsuperuser replacing Django's interactive username/password
 flow
 
 This creates the bearer API key Owners
 
-  docker compose exec key_management_api python manage.py createsuperuser \\
+  docker compose exec registry_api python manage.py createsuperuser \\
     --email you@example.com --name "You"
 
 If the owner already exists, it just grants superuser (--name is ignored) and

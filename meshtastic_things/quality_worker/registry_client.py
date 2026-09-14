@@ -1,4 +1,4 @@
-"""Read client for keyapi's REST API.
+"""Read client for registry's REST API.
 """
 import os
 
@@ -8,7 +8,7 @@ import structlog
 log = structlog.get_logger()
 
 
-class KeyapiClient:
+class RegistryClient:
     def __init__(self, base_url: str, api_key: str, timeout: float = 10.0):
         self.base_url = base_url.rstrip("/")
         self._session = requests.Session()
@@ -39,15 +39,15 @@ class KeyapiClient:
         return self._get("/measurement-types")
 
 
-_client: KeyapiClient | None = None
+_client: RegistryClient | None = None
 
 
-def get_keyapi_client() -> KeyapiClient:
+def get_registry_client() -> RegistryClient:
     global _client
     if _client is None:
-        _client = KeyapiClient(
-            base_url=os.environ.get("QUALITY_WORKER__KEYAPI_URL", "http://key-management-api:8090"),
-            api_key=os.environ["QUALITY_WORKER__KEYAPI_API_KEY"],
-            timeout=float(os.environ.get("QUALITY_WORKER__KEYAPI_TIMEOUT", "10")),
+        _client = RegistryClient(
+            base_url=os.environ.get("QUALITY_WORKER__REGISTRY_URL", "http://registry-api:8090"),
+            api_key=os.environ["QUALITY_WORKER__REGISTRY_API_KEY"],
+            timeout=float(os.environ.get("QUALITY_WORKER__REGISTRY_TIMEOUT", "10")),
         )
     return _client

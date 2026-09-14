@@ -1,0 +1,75 @@
+name: Build and push images
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+jobs:
+  test:
+    uses: ./.github/workflows/pr-checks.yml
+
+#  # NOTE: Publishing to ghcr
+#
+#  build-and-push:
+#    needs: test
+#    runs-on: ubuntu-latest
+#    permissions:
+#      contents: read
+#      packages: write
+#    strategy:
+#      matrix:
+#        include:
+#          - name: pipeline
+#            dockerfile: meshtastic_things/Dockerfile
+#          - name: api
+#            dockerfile: meshtastic_things/api/Dockerfile
+#          - name: flink
+#            dockerfile: meshtastic_things/flink/Dockerfile
+#          - name: quality-worker
+#            dockerfile: meshtastic_things/quality_worker/Dockerfile
+#    steps:
+#      - uses: actions/checkout@v4
+#      - run: echo "REPO_LC=${GITHUB_REPOSITORY,,}" >> "$GITHUB_ENV"
+#      - uses: docker/login-action@v3
+#        with:
+#          registry: ghcr.io
+#          username: ${{ github.actor }}
+#          password: ${{ secrets.GITHUB_TOKEN }}
+#      - uses: docker/build-push-action@v6
+#        with:
+#          context: ./meshtastic_things
+#          file: ${{ matrix.dockerfile }}
+#          push: true
+#          tags: |
+#            ghcr.io/${{ env.REPO_LC }}/${{ matrix.name }}:latest
+#            ghcr.io/${{ env.REPO_LC }}/${{ matrix.name }}:${{ github.sha }}
+#
+#  # Boots the pushed image
+#  verify-published-image:
+#    needs: build-and-push
+#    runs-on: ubuntu-latest
+#    permissions:
+#      contents: read
+#      packages: read
+#    steps:
+#      - run: echo "REPO_LC=${GITHUB_REPOSITORY,,}" >> "$GITHUB_ENV"
+#      - uses: docker/login-action@v3
+#        with:
+#          registry: ghcr.io
+#          username: ${{ github.actor }}
+#          password: ${{ secrets.GITHUB_TOKEN }}
+#      - name: Both roles start from the published api image
+#        run: |
+#          image="ghcr.io/${REPO_LC}/api:${GITHUB_SHA}"
+#          docker pull "$image"
+#          for role in registry readings; do
+#            echo "--- $role ---"
+#            docker run --rm \
+#              -e DJANGO_SETTINGS_MODULE=api_project.settings.prod \
+#              -e APP_ROLE="$role" \
+#              -e REGISTRY__SECRET_KEY=smoke -e REGISTRY__ALLOWED_HOSTS=api.example.com \
+#              -e REGISTRY__PUBLIC_BASE_URL=https://api.example.com \
+#              -e READINGS__SECRET_KEY=smoke -e READINGS__ALLOWED_HOSTS=api.example.com \
+#              "$image" python manage.py check
+#          done

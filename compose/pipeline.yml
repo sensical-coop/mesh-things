@@ -1,5 +1,7 @@
 x-pipeline-image: &pipeline-image
   image: meshtastic-things/pipeline:latest
+  # Prebuilt alternative, disabled. See compose/api.yml.
+  # image: ghcr.io/sensical-coop/meshtastic-kafka/pipeline:${TAG:-latest}
   build: ../meshtastic_things
 
 x-bridge-member: &bridge-member
@@ -76,7 +78,7 @@ services:
         condition: service_healthy
       kafka-topics-init:
         condition: service_completed_successfully
-      key_management_api:
+      registry_api:
         condition: service_healthy
     env_file: "../.env"
     restart: unless-stopped

@@ -14,11 +14,11 @@
 	}
 
 	handle /readings/* {
-		reverse_proxy query-api:8091
+		reverse_proxy readings-api:8091
 	}
 
 	handle {
-		reverse_proxy key-management-api:8090
+		reverse_proxy registry-api:8090
 	}
 }
 

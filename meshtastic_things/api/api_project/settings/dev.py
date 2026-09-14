@@ -10,18 +10,18 @@ ALLOWED_HOSTS = env_list(f"{ENV_PREFIX}__ALLOWED_HOSTS", ["*"])
 
 if not IS_READINGS:
     # Email defaults to MailHog (the `mailhog` service in docker-compose.dev.yml).
-    EMAIL_BACKEND = env_str("KEYAPI__EMAIL_BACKEND", "django.core.mail.backends.smtp.EmailBackend")
-    EMAIL_HOST = env_str("KEYAPI__EMAIL_HOST", "mailhog")
-    EMAIL_PORT = env_int("KEYAPI__EMAIL_PORT", 1025)
-    EMAIL_HOST_USER = env_str("KEYAPI__EMAIL_HOST_USER", "")
-    EMAIL_HOST_PASSWORD = env_str("KEYAPI__EMAIL_HOST_PASSWORD", "")
-    EMAIL_USE_TLS = env_bool("KEYAPI__EMAIL_USE_TLS", False)
-    EMAIL_USE_SSL = env_bool("KEYAPI__EMAIL_USE_SSL", False)
-    DEFAULT_FROM_EMAIL = env_str("KEYAPI__DEFAULT_FROM_EMAIL", "noreply@example.com")
+    EMAIL_BACKEND = env_str("REGISTRY__EMAIL_BACKEND", "django.core.mail.backends.smtp.EmailBackend")
+    EMAIL_HOST = env_str("REGISTRY__EMAIL_HOST", "mailhog")
+    EMAIL_PORT = env_int("REGISTRY__EMAIL_PORT", 1025)
+    EMAIL_HOST_USER = env_str("REGISTRY__EMAIL_HOST_USER", "")
+    EMAIL_HOST_PASSWORD = env_str("REGISTRY__EMAIL_HOST_PASSWORD", "")
+    EMAIL_USE_TLS = env_bool("REGISTRY__EMAIL_USE_TLS", False)
+    EMAIL_USE_SSL = env_bool("REGISTRY__EMAIL_USE_SSL", False)
+    DEFAULT_FROM_EMAIL = env_str("REGISTRY__DEFAULT_FROM_EMAIL", "noreply@example.com")
 
-    EMAIL_VERIFICATION_TTL_HOURS = env_int("KEYAPI__EMAIL_VERIFICATION_TTL_HOURS", 24)
-    PASSWORD_RESET_TTL_HOURS = env_int("KEYAPI__PASSWORD_RESET_TTL_HOURS", 1)
-    PUBLIC_BASE_URL = env_str("KEYAPI__PUBLIC_BASE_URL", "http://localhost:8090")
+    EMAIL_VERIFICATION_TTL_HOURS = env_int("REGISTRY__EMAIL_VERIFICATION_TTL_HOURS", 24)
+    PASSWORD_RESET_TTL_HOURS = env_int("REGISTRY__PASSWORD_RESET_TTL_HOURS", 1)
+    PUBLIC_BASE_URL = env_str("REGISTRY__PUBLIC_BASE_URL", "http://localhost:8090")
 
 if env_bool(f"{ENV_PREFIX}__BEHIND_TLS", False):
     SECURE_SSL_REDIRECT = True

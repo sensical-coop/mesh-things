@@ -1,7 +1,7 @@
 """Units, and the quantity kind for each.
 """
 
-# The vocabulary keyapi's catalog uses.
+# The vocabulary registry's catalog uses.
 PHYSICAL_PROPERTY = "physical_property"
 RATIO = "ratio"
 COUNT = "count"

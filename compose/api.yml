@@ -1,5 +1,9 @@
 x-api-image: &api-image
   image: meshtastic-things/api:latest
+  # To pull prebuilt images instead of building on the server: uncomment below,
+  # comment `build:`, and re-enable the publish jobs in deploy.yml. Set TAG to a
+  # commit sha
+  # image: ghcr.io/sensical-coop/meshtastic-kafka/api:${TAG:-latest}
   build:
     context: ../meshtastic_things
     dockerfile: api/Dockerfile
@@ -13,10 +17,10 @@ x-registry-role: &registry-role
   restart: unless-stopped
 
 services:
-  key_management_api:
+  registry_api:
     <<: *registry-role
     mem_limit: 512m
-    container_name: key-management-api
+    container_name: registry-api
     depends_on:
       kafka:
         condition: service_healthy
@@ -27,17 +31,17 @@ services:
       redis:
         condition: service_healthy
     ports:
-      - 127.0.0.1:${KEYAPI__PORT}:${KEYAPI__PORT}
+      - 127.0.0.1:${REGISTRY__PORT}:${REGISTRY__PORT}
     healthcheck:
-      test: ["CMD", "curl", "-f", "http://localhost:${KEYAPI__PORT}/health"]
+      test: ["CMD", "curl", "-f", "http://localhost:${REGISTRY__PORT}/health"]
       interval: 30s
       timeout: 10s
       retries: 5
       start_period: 15s
 
-  # Reads Postgres as queryapi_ro
-  # Serves without key_management_api
-  query_api:
+  # Reads Postgres as readings_ro
+  # Serves without registry_api
+  readings_api:
     <<: *api-image
     environment:
       DJANGO_SETTINGS_MODULE: api_project.settings.prod
@@ -45,9 +49,9 @@ services:
     env_file: "../.env"
     restart: unless-stopped
     mem_limit: 512m
-    container_name: query-api
+    container_name: readings-api
     command:
-      ["gunicorn", "api_project.wsgi:application", "--bind", "0.0.0.0:${QUERYAPI__PORT}", "--workers", "2"]
+      ["gunicorn", "api_project.wsgi:application", "--bind", "0.0.0.0:${READINGS__PORT}", "--workers", "2"]
     depends_on:
       influxdb:
         condition: service_healthy
@@ -55,21 +59,21 @@ services:
         condition: service_healthy
       redis:
         condition: service_healthy
-      key_management_api:
+      registry_api:
         condition: service_healthy
     ports:
-      - 127.0.0.1:${QUERYAPI__PORT}:${QUERYAPI__PORT}
+      - 127.0.0.1:${READINGS__PORT}:${READINGS__PORT}
     healthcheck:
-      test: ["CMD", "curl", "-f", "http://localhost:${QUERYAPI__PORT}/health"]
+      test: ["CMD", "curl", "-f", "http://localhost:${READINGS__PORT}/health"]
       interval: 30s
       timeout: 10s
       retries: 5
       start_period: 15s
 
-  key_management_device_consumer:
+  registry_device_consumer:
     <<: *registry-role
     mem_limit: 256m
-    container_name: key-management-device-consumer
+    container_name: registry-device-consumer
     depends_on:
       kafka:
         condition: service_healthy
@@ -77,14 +81,14 @@ services:
         condition: service_completed_successfully
       postgres:
         condition: service_healthy
-      key_management_api:
+      registry_api:
         condition: service_healthy
     command: ["python", "manage.py", "consume_device_sightings"]
 
-  key_management_sensor_discovery_consumer:
+  registry_sensor_discovery_consumer:
     <<: *registry-role
     mem_limit: 256m
-    container_name: key-management-sensor-discovery-consumer
+    container_name: registry-sensor-discovery-consumer
     depends_on:
       kafka:
         condition: service_healthy
@@ -92,14 +96,14 @@ services:
         condition: service_completed_successfully
       postgres:
         condition: service_healthy
-      key_management_api:
+      registry_api:
         condition: service_healthy
     command: ["python", "manage.py", "consume_sensor_discovery"]
 
-  key_management_quality_alarms_consumer:
+  registry_quality_alarms_consumer:
     <<: *registry-role
     mem_limit: 256m
-    container_name: key-management-quality-alarms-consumer
+    container_name: registry-quality-alarms-consumer
     depends_on:
       kafka:
         condition: service_healthy
@@ -109,6 +113,6 @@ services:
         condition: service_healthy
       redis:
         condition: service_healthy
-      key_management_api:
+      registry_api:
         condition: service_healthy
     command: ["python", "manage.py", "consume_quality_alarms"]

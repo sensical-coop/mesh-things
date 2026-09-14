@@ -24,7 +24,7 @@ from registry.models import Device
 log = structlog.get_logger()
 
 # Don't re-email the same (device, channel, detector) more often than this.
-ALARM_EMAIL_COOLDOWN_SECONDS = int(os.environ.get("KEYAPI__ALARM_EMAIL_COOLDOWN_SECONDS", 3600))
+ALARM_EMAIL_COOLDOWN_SECONDS = int(os.environ.get("REGISTRY__ALARM_EMAIL_COOLDOWN_SECONDS", 3600))
 
 DETECTOR_SUBJECTS = {
     "absence": "Device has stopped publishing",
@@ -42,7 +42,7 @@ class Command(BaseCommand):
         topic = os.environ.get("PATTERN_DETECTION__ALARMS_TOPIC", "mesh.telemetry.alarms.v1")
         consumer = KafkaConsumer(
             bootstrap_servers=bootstrap_servers,
-            group_id="keyapi-quality-alarms-group",
+            group_id="registry-quality-alarms-group",
             enable_auto_commit=False,
             auto_offset_reset="latest", # avoid bursting
         )
@@ -88,7 +88,7 @@ class Command(BaseCommand):
             return
 
         channel = event.get("channel")
-        cooldown_key = f"keyapi:alarm-email:{mesh_id}:{device_id}:{channel}:{detector}"
+        cooldown_key = f"registry:alarm-email:{mesh_id}:{device_id}:{channel}:{detector}"
         if not cache.add(cooldown_key, "1", ALARM_EMAIL_COOLDOWN_SECONDS):
             log.debug("Alarm email suppressed by cooldown", key=cooldown_key)
             return

@@ -16,9 +16,9 @@ services:
       - caddy_data:/data
       - caddy_config:/config
     depends_on:
-      key_management_api:
+      registry_api:
         condition: service_healthy
-      query_api:
+      readings_api:
         condition: service_healthy
 
   # full-only: Kafka topic browser, not needed for a minimal deployment

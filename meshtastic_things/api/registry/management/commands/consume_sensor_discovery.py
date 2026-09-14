@@ -23,10 +23,10 @@ class Command(BaseCommand):
 
     def handle(self, *args, **options):
         bootstrap_servers = os.environ["KAFKA_BOOTSTRAP"]
-        topic = os.environ.get("KEYAPI__SENSOR_DISCOVERY_KAFKA_TOPIC", "mesh.sensor_discovery.v1")
+        topic = os.environ.get("REGISTRY__SENSOR_DISCOVERY_KAFKA_TOPIC", "mesh.sensor_discovery.v1")
         consumer = KafkaConsumer(
             bootstrap_servers=bootstrap_servers,
-            group_id="keyapi-sensor-discovery-group",
+            group_id="registry-sensor-discovery-group",
             enable_auto_commit=False,
             auto_offset_reset="earliest",
         )

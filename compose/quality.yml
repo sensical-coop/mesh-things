@@ -1,5 +1,7 @@
 x-quality-worker-image: &quality-worker-image
   image: meshtastic-things/quality-worker:latest
+  # Prebuilt alternative, disabled. See compose/api.yml.
+  # image: ghcr.io/sensical-coop/meshtastic-kafka/quality-worker:${TAG:-latest}
   build:
     context: ../meshtastic_things
     dockerfile: quality_worker/Dockerfile
@@ -21,7 +23,7 @@ services:
         condition: service_healthy
       redis:
         condition: service_healthy
-      key_management_api:
+      registry_api:
         condition: service_healthy
     env_file: "../.env"
     restart: unless-stopped

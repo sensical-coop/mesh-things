@@ -12,8 +12,8 @@ COPY api/ ./
 # Shared code
 COPY common/ ./common/
 
-# KEYAPI__SECRET_KEY has no runtime fallback
-RUN KEYAPI__SECRET_KEY=build-time-only-unused python manage.py collectstatic --noinput
+# REGISTRY__SECRET_KEY has no runtime fallback
+RUN REGISTRY__SECRET_KEY=build-time-only-unused python manage.py collectstatic --noinput
 
 ENV PYTHONUNBUFFERED=1
 

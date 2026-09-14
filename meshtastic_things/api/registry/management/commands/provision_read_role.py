@@ -11,7 +11,7 @@ from django.db import connection
 
 log = structlog.get_logger()
 
-ROLE = "queryapi_ro"
+ROLE = "readings_ro"
 
 # Column grants
 COLUMN_GRANTS = {
@@ -21,16 +21,16 @@ COLUMN_GRANTS = {
 # Whole-table grants
 TABLE_GRANTS = ("owners", "measurement_types")
 
-CONNECTION_LIMIT = int(os.environ.get("QUERYAPI__DB_MAX_CONNECTIONS", "10"))
+CONNECTION_LIMIT = int(os.environ.get("READINGS__DB_MAX_CONNECTIONS", "10"))
 
 
 class Command(BaseCommand):
     help = "Create or update the read-only role used by the readings tier."
 
     def handle(self, *args, **options):
-        password = os.environ.get("QUERYAPI__DB_PASSWORD", "")
+        password = os.environ.get("READINGS__DB_PASSWORD", "")
         if not password:
-            self.stdout.write("QUERYAPI__DB_PASSWORD not set - skipping read-role provisioning.")
+            self.stdout.write("READINGS__DB_PASSWORD not set - skipping read-role provisioning.")
             return
 
         database = connection.settings_dict["NAME"]

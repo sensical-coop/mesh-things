@@ -1,5 +1,7 @@
 x-flink-image: &flink-image
   image: meshtastic-things/flink:latest
+  # Prebuilt alternative, disabled. See compose/api.yml.
+  # image: ghcr.io/sensical-coop/meshtastic-kafka/flink:${TAG:-latest}
   build:
     context: ../meshtastic_things
     dockerfile: flink/Dockerfile
@@ -83,7 +85,7 @@ services:
         condition: service_completed_successfully
       jobmanager:
         condition: service_healthy
-      key_management_api:
+      registry_api:
         condition: service_healthy
 
   # full-only

@@ -20,10 +20,10 @@ class Command(BaseCommand):
 
     def handle(self, *args, **options):
         bootstrap_servers = os.environ["KAFKA_BOOTSTRAP"]
-        topic = os.environ.get("KEYAPI__DEVICES_KAFKA_TOPIC", "mesh.devices.v1")
+        topic = os.environ.get("REGISTRY__DEVICES_KAFKA_TOPIC", "mesh.devices.v1")
         consumer = KafkaConsumer(
             bootstrap_servers=bootstrap_servers,
-            group_id="keyapi-device-catalog-group",
+            group_id="registry-device-catalog-group",
             enable_auto_commit=False,
             auto_offset_reset="earliest",
         )

@@ -31,8 +31,13 @@ MQTT ──> bridge ──> mesh.telemetry.raw.v1 ──> decode/decrypt ──>
 
 ## Getting started
 
+There are two levels to this application `lite` and `full`. In
+addition, local development is enabled by `dev` django settings.
+
+Check `COMPOSE_PROFILES` and `COMPOSE_FILE` in `env.example` below:
+
 ```bash
-cp env.example .env    # then see docs/README.md#quick-start
+cp env.example .env
 docker compose up -d               # lite by default (COMPOSE_PROFILES in env.example)
 docker compose --profile full up -d   # or the full stack: Flink stream tier, S3 archive, kafbat-ui
 ```

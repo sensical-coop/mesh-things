@@ -4,7 +4,7 @@ A *channel* is one addressable timeseries.
 InfluxDB's pairs (measurement, field) into single strings.
 This vocabulary is shared by (all need to be the same):
 
-  - blueprint inputs/outputs (keyapi's PostprocessingStep)
+  - blueprint inputs/outputs (registry's PostprocessingStep)
   - quality thresholds (mesh.quality_config.v1's key)
   - the streams per-channel keying (flink/pattern_detection_job.py)
   - the batches (quality_worker/influx_io.py)

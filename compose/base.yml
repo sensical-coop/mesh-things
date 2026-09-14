@@ -37,9 +37,8 @@ services:
           "$$MQTT_BRIDGE__KAFKA_TOPIC" \
           "$$MQTT_BRIDGE__HEALTH__KAFKA_TOPIC" \
           "$$PROTO_DECODE__KAFKA_TOPIC" \
-          "$${KEYAPI__DEVICES_KAFKA_TOPIC:-mesh.devices.v1}" \
-          "$${KEYAPI__SENSOR_DISCOVERY_KAFKA_TOPIC:-mesh.sensor_discovery.v1}" \
-          "$${KEYAPI__OWNER_AUTH_REVOCATIONS_KAFKA_TOPIC:-mesh.owner_auth_revocations.v1}" \
+          "$${REGISTRY__DEVICES_KAFKA_TOPIC:-mesh.devices.v1}" \
+          "$${REGISTRY__SENSOR_DISCOVERY_KAFKA_TOPIC:-mesh.sensor_discovery.v1}" \
           "$$CALIBRATED__KAFKA_TOPIC" \
           "$$PATTERN_DETECTION__ALARMS_TOPIC" \
         ; do
@@ -47,19 +46,11 @@ services:
             --create --if-not-exists --topic "$$topic" \
             --partitions 1 --replication-factor 1
         done
-        # Changelogs, not event streams - each is keyed by an identity (gateway
-        # ID, mesh_id:device_id, node_id:field) and only the latest value per
-        # key matters. Compaction (not the default delete-based retention)
-        # keeps a cold Flink restart's from-earliest replay complete forever,
-        # instead of silently losing any key untouched since the retention
-        # window - see docs/architecture.md#reverse-proxy's neighboring Kafka
-        # topics table and decode_job.py's GATEWAY_KEY_STATE/NODE_REJECTED_STATE.
         for topic in \
-          "$${KEYAPI__KAFKA_TOPIC:-mesh.keys.v1}" \
-          "$${KEYAPI__NODE_REJECTIONS_KAFKA_TOPIC:-mesh.node_rejections.v1}" \
-          "$${KEYAPI__QUALITY_CONFIG_KAFKA_TOPIC:-mesh.quality_config.v1}" \
+          "$${REGISTRY__KAFKA_TOPIC:-mesh.keys.v1}" \
+          "$${REGISTRY__NODE_REJECTIONS_KAFKA_TOPIC:-mesh.node_rejections.v1}" \
+          "$${REGISTRY__QUALITY_CONFIG_KAFKA_TOPIC:-mesh.quality_config.v1}" \
           "$$CALIBRATION__KAFKA_TOPIC" \
-          "$$PATTERN_DETECTION__RULES_TOPIC" \
         ; do
           /opt/kafka/bin/kafka-topics.sh --bootstrap-server kafka:29092 \
             --create --if-not-exists --topic "$$topic" \
@@ -100,7 +91,7 @@ services:
       timeout: 5s
       retries: 5
 
-  # Shared cache for keyapi and queryapi
+  # Shared cache for registry and readings
   redis:
     mem_limit: 256m
     container_name: meshtastic-things-redis

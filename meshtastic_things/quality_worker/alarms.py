@@ -90,6 +90,6 @@ def get_alarm_publisher() -> QualityPublisher:
         _publisher = QualityPublisher(
             bootstrap_servers=os.environ["KAFKA_BOOTSTRAP"],
             alarms_topic=os.environ.get("PATTERN_DETECTION__ALARMS_TOPIC", "mesh.telemetry.alarms.v1"),
-            discovery_topic=os.environ.get("KEYAPI__SENSOR_DISCOVERY_KAFKA_TOPIC", "mesh.sensor_discovery.v1"),
+            discovery_topic=os.environ.get("REGISTRY__SENSOR_DISCOVERY_KAFKA_TOPIC", "mesh.sensor_discovery.v1"),
         )
     return _publisher

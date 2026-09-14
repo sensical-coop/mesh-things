@@ -166,10 +166,10 @@ def get_publisher() -> KeyEventPublisher:
     if _publisher is None:
         _publisher = KeyEventPublisher(
             bootstrap_servers=os.environ["KAFKA_BOOTSTRAP"],
-            keys_topic=os.environ.get("KEYAPI__KAFKA_TOPIC", "mesh.keys.v1"),
+            keys_topic=os.environ.get("REGISTRY__KAFKA_TOPIC", "mesh.keys.v1"),
             node_rejections_topic=os.environ.get(
-                "KEYAPI__NODE_REJECTIONS_KAFKA_TOPIC", "mesh.node_rejections.v1"
+                "REGISTRY__NODE_REJECTIONS_KAFKA_TOPIC", "mesh.node_rejections.v1"
             ),
-            quality_config_topic=os.environ.get("KEYAPI__QUALITY_CONFIG_KAFKA_TOPIC", "mesh.quality_config.v1"),
+            quality_config_topic=os.environ.get("REGISTRY__QUALITY_CONFIG_KAFKA_TOPIC", "mesh.quality_config.v1"),
         )
     return _publisher

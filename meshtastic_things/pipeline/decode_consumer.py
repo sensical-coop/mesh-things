@@ -52,9 +52,9 @@ class DecodeConsumer(object):
         )
         self.raw_consumer.subscribe(topics=[self.raw_topic])
 
-        self.keys_topic = os.environ.get('KEYAPI__KAFKA_TOPIC', 'mesh.keys.v1')
+        self.keys_topic = os.environ.get('REGISTRY__KAFKA_TOPIC', 'mesh.keys.v1')
         self.node_rejections_topic = os.environ.get(
-            'KEYAPI__NODE_REJECTIONS_KAFKA_TOPIC', 'mesh.node_rejections.v1'
+            'REGISTRY__NODE_REJECTIONS_KAFKA_TOPIC', 'mesh.node_rejections.v1'
         )
         self.config_consumer = KafkaConsumer(
             bootstrap_servers=kafka_bootstrap_server,
@@ -65,9 +65,9 @@ class DecodeConsumer(object):
         self.config_consumer.subscribe(topics=[self.keys_topic, self.node_rejections_topic])
 
         self.decoded_topic = os.environ['PROTO_DECODE__KAFKA_TOPIC']
-        self.devices_topic = os.environ.get('KEYAPI__DEVICES_KAFKA_TOPIC', 'mesh.devices.v1')
+        self.devices_topic = os.environ.get('REGISTRY__DEVICES_KAFKA_TOPIC', 'mesh.devices.v1')
         self.sensor_discovery_topic = os.environ.get(
-            'KEYAPI__SENSOR_DISCOVERY_KAFKA_TOPIC', 'mesh.sensor_discovery.v1'
+            'REGISTRY__SENSOR_DISCOVERY_KAFKA_TOPIC', 'mesh.sensor_discovery.v1'
         )
         self.producer = KafkaProducer(
             bootstrap_servers=kafka_bootstrap_server,
@@ -85,7 +85,7 @@ class DecodeConsumer(object):
     async def consume_config(self):
         """Same as decode_job.py's process_broadcast_element. Keeps
         gateway_state/rejected_nodes updated from the same two kafka
-        topics keyapi publishes to."""
+        topics registry publishes to."""
         while True:
             messages = self.config_consumer.poll(timeout_ms=1000)
             for topic_partition, records in messages.items():
