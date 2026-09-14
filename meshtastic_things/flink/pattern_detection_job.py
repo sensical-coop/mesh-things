@@ -1,3 +1,13 @@
+"""Data-quality checks: per-point/small-batch detectors.
+
+Two checks run here, both per (mesh_id, device_id, channel):
+  - flat_value    - the channel hasn't moved for a configured span of time
+  - plausibility  - the value is outside the curated valid range
+
+Thresholds come from "registry" catalog over mesh.quality_config.v1, so editing
+a TelemetryVariantMeasurement's limits or a device's intervals is what changes
+these checks.
+"""
 import argparse
 import datetime
 import json
@@ -29,14 +39,35 @@ def _udf_log_exception(message: str) -> None:
     print(f"{message}\n{traceback.format_exc()}")
 
 
-# Keyed by "node_id:field" -> JSON {"detector_name", "params"}. Populated from the
-# mesh.rules.v1 broadcast stream.
-RULES_STATE = MapStateDescriptor("detector-rules", Types.STRING(), Types.STRING())
-RECENT_VALUES_WINDOW = 5
+# Catalog config from registry. Two kinds share this map, distinguished by the
+# key shape (same pattern decode_job.py uses for its two merged broadcast
+# streams):
+#   "<measurement>.<field>"   -> {"kind": "variant_config", default_reading_interval_seconds, valid_min, valid_max}
+#   "<mesh_id>:<device_id>"   -> {"kind": "device_intervals", reading_interval_seconds, publish_interval_seconds}
+QUALITY_CONFIG_STATE = MapStateDescriptor("quality-config", Types.STRING(), Types.STRING())
+
+# How long a channel must stay unchanged to count as flat. The *number of
+# readings* that corresponds to is derived per-channel from its reading
+# interval - see common/detectors.py's flat_window_for.
+FLAT_VALUE_HOURS = float(os.environ.get("PATTERN_DETECTION__FLAT_VALUE_HOURS", "3"))
+
+SOURCE_STREAM = "stream"
 
 
 class ExplodeFields(FlatMapFunction):
-    """Flattens a decoded/calibrated message"""
+    """One record per numeric leaf, carrying the identity downstream needs.
+
+    mesh_id travels with every record because device_id alone is only unique
+    among currently-allowed Device rows - see docs/architecture.md.
+    """
+
+    def open(self, runtime_context):
+        # Imported here, not at module level - the established convention for
+        # every UDF in this codebase, since `common` resolves on the
+        # taskmanager rather than the submitting client.
+        from common import channels
+
+        self._channels = channels
 
     def flat_map(self, value: str):
         try:
@@ -44,32 +75,35 @@ class ExplodeFields(FlatMapFunction):
         except Exception:
             _udf_log_exception("Bad message, skipping")
             return
-        node_id = event.get("node_id")
+        device_id = event.get("node_id")
+        mesh_id = event.get("mesh_id")
         rx_time = event.get("rx_time")
-        for field, val in self._walk(event.get("payload") or {}):
-            yield json.dumps({"node_id": node_id, "field": field, "value": val, "time": rx_time})
-
-    def _walk(self, d: dict):
-        for key, val in d.items():
-            if isinstance(val, dict):
-                yield from self._walk(val)
-            elif isinstance(val, (int, float)) and not isinstance(val, bool):
-                yield key, val
+        payload_kind = event.get("payload_kind")
+        for channel, val in self._channels.channels_in(payload_kind, event.get("payload") or {}):
+            yield json.dumps(
+                {
+                    "mesh_id": mesh_id,
+                    "device_id": device_id,
+                    "channel": channel,
+                    "value": val,
+                    "time": rx_time,
+                }
+            )
 
 
 class ObservationKeySelector(KeySelector):
+    """Per (mesh_id, device_id, channel) - the finest grain these checks act on."""
+
     def get_key(self, value: str) -> str:
         try:
             obs = json.loads(value)
-            return f"{obs.get('node_id')}:{obs.get('field')}"
+            return f"{obs.get('mesh_id')}:{obs.get('device_id')}:{obs.get('channel')}"
         except Exception:
             return "unparseable"
 
 
 class DetectPatterns(KeyedBroadcastProcessFunction):
-    """Runs custom detectors (see common/detectors.py) per (node_id, field) keyed
-    stream.
-    """
+    """flat_value + plausibility, both driven by the registry catalog."""
 
     def open(self, runtime_context):
         from common import detectors
@@ -86,39 +120,60 @@ class DetectPatterns(KeyedBroadcastProcessFunction):
             _udf_log_exception("Bad observation, skipping")
             return
 
-        node_id = obs.get("node_id")
-        field = obs.get("field")
+        mesh_id = obs.get("mesh_id")
+        device_id = obs.get("device_id")
+        channel = obs.get("channel")
         obs_value = obs.get("value")
+        if obs_value is None:
+            return
+
+        config = self._lookup(ctx, channel)
+        intervals = self._lookup(ctx, f"{mesh_id}:{device_id}")
+        # A device's own reading interval overrides the variant default.
+        interval = (intervals.get("reading_interval_seconds") if intervals else None) or (
+            config.get("default_reading_interval_seconds") if config else None
+        )
+        window = self._detectors.flat_window_for(interval, hours=FLAT_VALUE_HOURS)
 
         recent = list(self._recent_values.get() or [])
         recent.append(float(obs_value))
-        recent = recent[-RECENT_VALUES_WINDOW:]
+        recent = recent[-window:]
         self._recent_values.update(recent)
 
-        if self._detectors.stuck_value_triggered(recent, window=RECENT_VALUES_WINDOW):
+        if self._detectors.stuck_value_triggered(recent, window=window):
+            span = f"{window} consecutive readings"
+            if interval:
+                span += f" (~{window * interval / 3600:.1f}h at a {interval}s reading interval)"
             yield self._alarm(
-                node_id, field, obs_value, "stuck_value",
-                f"Value stuck at {obs_value} for {RECENT_VALUES_WINDOW} consecutive readings",
+                mesh_id, device_id, channel, obs_value, "flat_value",
+                f"Value flat at {obs_value} for {span}",
             )
 
-        broadcast_state = ctx.get_broadcast_state(RULES_STATE)
-        rule_raw = broadcast_state.get(ctx.get_current_key())
-        if rule_raw:
-            rule = json.loads(rule_raw)
-            if rule.get("detector_name") == "range_check":
-                params = rule.get("params", {})
-                if self._detectors.range_check_triggered(obs_value, params.get("min"), params.get("max")):
-                    yield self._alarm(
-                        node_id, field, obs_value, "range_check",
-                        f"Value {obs_value} outside configured range [{params.get('min')}, {params.get('max')}]",
-                    )
+        if config:
+            valid_min, valid_max = config.get("valid_min"), config.get("valid_max")
+            if self._detectors.range_check_triggered(obs_value, valid_min, valid_max):
+                yield self._alarm(
+                    mesh_id, device_id, channel, obs_value, "plausibility",
+                    f"Value {obs_value} outside the catalog's plausible range [{valid_min}, {valid_max}]",
+                )
+
+    @staticmethod
+    def _lookup(ctx, key: str) -> dict:
+        if not key:
+            return {}
+        try:
+            raw = ctx.get_broadcast_state(QUALITY_CONFIG_STATE).get(key)
+            return json.loads(raw) if raw else {}
+        except Exception:
+            _udf_log_exception(f"Bad quality config for {key}")
+            return {}
 
     def process_broadcast_element(self, value: str, ctx):
-        broadcast_state = ctx.get_broadcast_state(RULES_STATE)
+        broadcast_state = ctx.get_broadcast_state(QUALITY_CONFIG_STATE)
         try:
             event = json.loads(value)
         except Exception:
-            _udf_log_exception("Bad rule event")
+            _udf_log_exception("Bad quality-config event")
             return
         key = event.get("key")
         if not key:
@@ -126,27 +181,29 @@ class DetectPatterns(KeyedBroadcastProcessFunction):
         if event.get("op") == "delete":
             broadcast_state.remove(key)
         else:
-            broadcast_state.put(
-                key,
-                json.dumps({"detector_name": event.get("detector_name", "range_check"), "params": event.get("params", {})}),
-            )
+            broadcast_state.put(key, json.dumps(event))
         yield from ()  # this method only mutates broadcast state, never emits output
 
     @staticmethod
-    def _alarm(node_id, field, value, detector, message) -> str:
+    def _alarm(mesh_id, device_id, channel, value, detector, message) -> str:
+        """Shared shape with quality_worker's batch alarms - one consumer routes
+        both to email (registry's consume_quality_alarms), one writer persists
+        both (writer/point_builders.py's build_alarm_points)."""
         return json.dumps(
             {
-                "node_id": node_id,
-                "field": field,
+                "mesh_id": mesh_id,
+                "device_id": device_id,
+                "channel": channel,
                 "detector": detector,
-                "triggered_at": datetime.datetime.now(datetime.timezone.utc).isoformat(),
+                "source": SOURCE_STREAM,
                 "value": value,
                 "message": message,
+                "triggered_at": datetime.datetime.now(datetime.timezone.utc).isoformat(),
             }
         )
 
 
-def build_pipeline(env, kafka_bootstrap: str, input_topic: str, alarms_topic: str, rules_topic: str):
+def build_pipeline(env, kafka_bootstrap: str, input_topic: str, alarms_topic: str, quality_config_topic: str):
     source = (
         KafkaSource.builder()
         .set_bootstrap_servers(kafka_bootstrap)
@@ -159,19 +216,19 @@ def build_pipeline(env, kafka_bootstrap: str, input_topic: str, alarms_topic: st
     stream = env.from_source(source, WatermarkStrategy.no_watermarks(), "calibrated-or-decoded-messages")
     exploded = stream.flat_map(ExplodeFields(), output_type=Types.STRING())
 
-    rules_source = (
+    config_source = (
         KafkaSource.builder()
         .set_bootstrap_servers(kafka_bootstrap)
-        .set_topics(rules_topic)
-        .set_group_id("flink-pattern-detection-rules-group")
+        .set_topics(quality_config_topic)
+        .set_group_id("flink-pattern-detection-quality-config-group")
         .set_starting_offsets(KafkaOffsetsInitializer.earliest())
         .set_value_only_deserializer(SimpleStringSchema())
         .build()
     )
-    rules_stream = env.from_source(rules_source, WatermarkStrategy.no_watermarks(), "detector-rules")
+    config_stream = env.from_source(config_source, WatermarkStrategy.no_watermarks(), "quality-config")
 
     keyed_stream = exploded.key_by(ObservationKeySelector(), key_type=Types.STRING())
-    broadcast_stream = rules_stream.broadcast(RULES_STATE)
+    broadcast_stream = config_stream.broadcast(QUALITY_CONFIG_STATE)
 
     alarms_stream = keyed_stream.connect(broadcast_stream).process(DetectPatterns(), output_type=Types.STRING())
 
@@ -225,7 +282,7 @@ def main():
             os.environ.get("CALIBRATED__KAFKA_TOPIC", "mesh.telemetry.calibrated.v1"),
         ),
         alarms_topic=os.environ.get("PATTERN_DETECTION__ALARMS_TOPIC", "mesh.telemetry.alarms.v1"),
-        rules_topic=os.environ.get("PATTERN_DETECTION__RULES_TOPIC", "mesh.rules.v1"),
+        quality_config_topic=os.environ.get("REGISTRY__QUALITY_CONFIG_KAFKA_TOPIC", "mesh.quality_config.v1"),
     )
 
     env.execute("mesh-pattern-detection")
