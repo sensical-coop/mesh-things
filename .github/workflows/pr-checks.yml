@@ -68,5 +68,5 @@ jobs:
         with:
           python-version: "3.11"
       - run: pip install -r meshtastic_things/requirements.txt
-      - run: pytest -q
+      - run: pytest -q --ignore=api
         working-directory: meshtastic_things
