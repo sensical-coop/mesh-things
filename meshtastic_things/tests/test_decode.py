@@ -10,6 +10,9 @@ from common import decode
 GATEWAY_ID = "!aabbccdd"
 MESH_ID = "mesh-1"
 
+RIGHT_KEY = bytes(range(32))
+WRONG_KEY = bytes(range(100, 132))
+
 
 def _build_envelope(mp: mesh_pb2.MeshPacket, channel_id: str = "LongFast", gateway_id: str = GATEWAY_ID) -> bytes:
     se = mqtt_pb2.ServiceEnvelope()
@@ -78,12 +81,10 @@ def test_encrypted_with_correct_key_produces_decoded_and_sighting():
 
 
 def test_encrypted_with_wrong_key_returns_none():
-    key_bytes = os.urandom(32)
-    wrong_key = os.urandom(32)
     data = mesh_pb2.Data(portnum=67, payload=b"irrelevant")
-    raw = _build_envelope(_encrypted_packet(1, 1, data, key_bytes))
+    raw = _build_envelope(_encrypted_packet(1, 1, data, RIGHT_KEY))
 
-    result = decode.decode_packet(raw, gateway_state=_gateway_state(wrong_key), rejected_nodes=set())
+    result = decode.decode_packet(raw, gateway_state=_gateway_state(WRONG_KEY), rejected_nodes=set())
     assert result is None
 
 
@@ -120,13 +121,12 @@ def _drops(raw, gateway_state, rejected_nodes=frozenset()):
 
 
 def test_a_wrong_mesh_key_says_so_rather_than_dropping_silently():
-    """The failure that cost real debugging time: a registered gateway whose
+    """A registered gateway whose
     channel transmits with a different key looks exactly like no traffic."""
-    key_bytes = os.urandom(32)
     data = mesh_pb2.Data(portnum=67, payload=b"irrelevant")
-    raw = _build_envelope(_encrypted_packet(1, 111, data, key_bytes))
+    raw = _build_envelope(_encrypted_packet(1, 111, data, RIGHT_KEY))
 
-    reasons = _drops(raw, _gateway_state(os.urandom(32)))
+    reasons = _drops(raw, _gateway_state(WRONG_KEY))
 
     assert len(reasons) == 1
     assert "decrypt" in reasons[0]

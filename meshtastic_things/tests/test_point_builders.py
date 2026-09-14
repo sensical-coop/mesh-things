@@ -8,7 +8,7 @@ def _event(payload_kind: str, payload: dict, **overrides) -> dict:
         "rx_time": 1700000000,
         "portnum": 0,
         "channel_id": "LongFast",
-        "gateway_id": "!aabb",
+        "gateway_id": 43707,
         "payload_kind": payload_kind,
         "payload": payload,
     }

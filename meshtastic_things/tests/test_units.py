@@ -1,5 +1,5 @@
 """common/units.py - the unit -> quantity_kind rule, and the one definition of
-the quality channels that keyapi and quality_worker both read."""
+the quality channels that registry and quality_worker both read."""
 import pytest
 
 from common.units import (

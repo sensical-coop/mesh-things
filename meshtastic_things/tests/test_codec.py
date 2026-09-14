@@ -44,7 +44,8 @@ def test_decode_plaintext_telemetry():
     assert result["packet_id"] == 1
     assert result["portnum"] == 67
     assert result["channel_id"] == "LongFast"
-    assert result["gateway_id"] == "!aabbccdd"
+    # The envelope carries "!aabbccdd"; the decoded event carries the number.
+    assert result["gateway_id"] == 0xAABBCCDD
     assert result["payload_kind"] == "telemetry:device_metrics"
     assert result["payload"]["device_metrics"]["battery_level"] == 87
 

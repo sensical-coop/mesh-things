@@ -1,75 +1,110 @@
 """Populate the TelemetryVariant/MeasurementType/TelemetryVariantMeasurement
 catalog from the Meshtastic Telemetry protobuf schema"""
+from collections import Counter
+
 from google.protobuf.descriptor import FieldDescriptor
 from meshtastic.protobuf import telemetry_pb2
 
 from django.core.management.base import BaseCommand
+from django.db import transaction
 
 from common.channels import QUALITY
 from common.units import QUALITY_CHANNELS, quantity_kind_for
 
+from registry.measurement_catalog_seed import defaults_for
 from registry.models import MeasurementType, TelemetryVariant, TelemetryVariantMeasurement
 
-# Non-numeric fields (e.g. host_metrics.user_string) aren't part of this catalog.
 _SKIP_CPP_TYPES = (FieldDescriptor.CPPTYPE_STRING, FieldDescriptor.CPPTYPE_MESSAGE)
 
-# The data-quality metrics quality_worker writes to InfluxDB's `quality`
-# measurement.
+# The data-quality metrics quality_worker writes to InfluxDB's `quality` measurement.
 _QUALITY_SEED = [
-    (field_name, unit, quantity_kind_for(unit), description)
+    (field_name, {"native_unit": unit, "quantity_kind": quantity_kind_for(unit), "description": description})
     for field_name, (unit, description) in QUALITY_CHANNELS.items()
 ]
+
+
+def _is_catalogued(field) -> bool:
+    """Whether a protobuf field is one numeric channel.
+
+    Repeated numerics arrive as a list, so nothing downstream can write them.
+    """
+    if field.cpp_type in _SKIP_CPP_TYPES:
+        return False
+    # protobuf >= 6 dropped FieldDescriptor.label in favour of is_repeated.
+    is_repeated = getattr(field, "is_repeated", None)
+    if is_repeated is None:
+        is_repeated = field.label == FieldDescriptor.LABEL_REPEATED
+    return not is_repeated
+
+
+def _fill_blanks(instance, **curated) -> bool:
+    """Fill empty columns, never overwriting one already set. True if anything changed."""
+    blanks = [name for name, value in curated.items() if value and not getattr(instance, name)]
+    if not blanks:
+        return False
+    for name in blanks:
+        setattr(instance, name, curated[name])
+    instance.save(update_fields=blanks)
+    return True
 
 
 class Command(BaseCommand):
     help = "Seed TelemetryVariant/MeasurementType/TelemetryVariantMeasurement from the Telemetry protobuf schema."
 
+    @transaction.atomic
     def handle(self, *args, **options):
         variant_fields = telemetry_pb2.Telemetry.DESCRIPTOR.oneofs_by_name["variant"].fields
-        telemetry_variants = measurement_types = links = 0
+        created, backfilled = Counter(), Counter()
 
         for variant_field in variant_fields:
             payload_kind = f"telemetry:{variant_field.name}"
-            telemetry_variant, created = TelemetryVariant.objects.get_or_create(
-                payload_kind=payload_kind, defaults={"name": variant_field.message_type.name}
+            name = variant_field.message_type.name
+            telemetry_variant, was_created = TelemetryVariant.objects.get_or_create(
+                payload_kind=payload_kind, defaults={"name": name}
             )
-            telemetry_variants += created
+            created["variants"] += was_created
+            # Sensor discovery creates variants bare, so an existing row may have no name.
+            if not was_created:
+                backfilled["variants"] += _fill_blanks(telemetry_variant, name=name)
 
             for field in variant_field.message_type.fields:
-                if field.cpp_type in _SKIP_CPP_TYPES:
+                if not _is_catalogued(field):
                     continue
-                measurement_type, created = MeasurementType.objects.get_or_create(
-                    payload_kind=payload_kind, field_name=field.name
+                curated = defaults_for(payload_kind, field.name)
+                measurement_type, was_created = MeasurementType.objects.get_or_create(
+                    payload_kind=payload_kind, field_name=field.name, defaults=curated
                 )
-                measurement_types += created
-                _, created = TelemetryVariantMeasurement.objects.get_or_create(
+                created["measurement_types"] += was_created
+                if not was_created:
+                    backfilled["measurement_types"] += _fill_blanks(measurement_type, **curated)
+                _, was_created = TelemetryVariantMeasurement.objects.get_or_create(
                     telemetry_variant=telemetry_variant, measurement_type=measurement_type
                 )
-                links += created
+                created["links"] += was_created
 
-        quality_variant, created = TelemetryVariant.objects.get_or_create(
-            payload_kind=QUALITY,
-            defaults={"name": "Data quality metrics"},
+        quality_variant, was_created = TelemetryVariant.objects.get_or_create(
+            payload_kind=QUALITY, defaults={"name": "Data quality metrics"}
         )
-        telemetry_variants += created
-        for field_name, unit, quantity_kind, description in _QUALITY_SEED:
-            measurement_type, created = MeasurementType.objects.get_or_create(
-                payload_kind=QUALITY,
-                field_name=field_name,
-                defaults={
-                    "native_unit": unit,
-                    "quantity_kind": quantity_kind,
-                    "description": description,
-                },
+        created["variants"] += was_created
+        if not was_created:
+            backfilled["variants"] += _fill_blanks(quality_variant, name="Data quality metrics")
+
+        for field_name, curated in _QUALITY_SEED:
+            measurement_type, was_created = MeasurementType.objects.get_or_create(
+                payload_kind=QUALITY, field_name=field_name, defaults=curated
             )
-            measurement_types += created
-            _, created = TelemetryVariantMeasurement.objects.get_or_create(
+            created["measurement_types"] += was_created
+            if not was_created:
+                backfilled["measurement_types"] += _fill_blanks(measurement_type, **curated)
+            _, was_created = TelemetryVariantMeasurement.objects.get_or_create(
                 telemetry_variant=quality_variant, measurement_type=measurement_type
             )
-            links += created
+            created["links"] += was_created
 
         self.stdout.write(
-            f"Created {telemetry_variants} new TelemetryVariant, {measurement_types} new MeasurementType, "
-            f"{links} new TelemetryVariantMeasurement rows "
+            f"TelemetryVariant: {created['variants']} created, {backfilled['variants']} backfilled. "
+            f"MeasurementType: {created['measurement_types']} created, "
+            f"{backfilled['measurement_types']} backfilled. "
+            f"TelemetryVariantMeasurement: {created['links']} created "
             f"({len(variant_fields)} telemetry variants + the quality namespace)."
         )
