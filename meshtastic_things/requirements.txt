@@ -10,6 +10,7 @@ pyarrow
 protobuf>=4.21.12
 mypy~=1.10.0
 mypy-protobuf~=3.3.0
+pytest
 types-protobuf~=5.26.0.20240422
 types-tabulate~=0.9.0.20240106
 types-requests~=2.31.0.20240406
