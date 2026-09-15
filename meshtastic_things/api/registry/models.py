@@ -5,6 +5,9 @@ from django.contrib.auth.models import PermissionsMixin
 from django.db import models
 from django.utils.functional import cached_property
 
+from common import node_ids
+from common.channels import channel_name
+
 
 class OwnerManager(BaseUserManager):
     """Owners authenticate via bearer API key"""
@@ -90,6 +93,11 @@ class Mesh(models.Model):
     class Meta:
         db_table = "meshes"
 
+    def __str__(self) -> str:
+        if not self.label or self.label == self.channel_id:
+            return self.channel_id
+        return f"{self.label} ({self.channel_id})"
+
 
 def _max_three_admin_keys(value: list[str]) -> None:
     from django.core.exceptions import ValidationError
@@ -114,6 +122,9 @@ class PostprocessingBlueprint(models.Model):
             models.UniqueConstraint(fields=["owner", "name"], name="uq_blueprint_owner_name")
         ]
 
+    def __str__(self) -> str:
+        return self.name
+
 
 class PostprocessingStep(models.Model):
     """One step for a blueprint, run in `order`"""
@@ -134,6 +145,9 @@ class PostprocessingStep(models.Model):
         constraints = [
             models.UniqueConstraint(fields=["blueprint", "order"], name="uq_step_blueprint_order")
         ]
+
+    def __str__(self) -> str:
+        return f"{self.order}. {self.function_name}"
 
 
 class Device(models.Model):
@@ -176,6 +190,14 @@ class Device(models.Model):
             ),
         ]
 
+    def __str__(self) -> str:
+        """Node number in the wire form a Meshtastic client shows, plus whatever
+        name is known for it."""
+        described = self.label or self.name or self.short_name
+        if described:
+            return f"{described} ({node_ids.to_hex(self.device_id)})"
+        return f"{'gateway' if self.is_gateway else 'node'} {node_ids.to_hex(self.device_id)}"
+
 
 class MeasurementType(models.Model):
     """Definition of one physical quantity"""
@@ -206,6 +228,9 @@ class MeasurementType(models.Model):
         db_table = "measurement_types"
         constraints = [models.UniqueConstraint(fields=["payload_kind", "field_name"], name="uq_measurement_type")]
 
+    def __str__(self) -> str:
+        return channel_name(self.payload_kind, self.field_name)
+
 
 class TelemetryVariant(models.Model):
     """Meshtastic Telemetry protobuf "variant"""
@@ -222,6 +247,9 @@ class TelemetryVariant(models.Model):
 
     class Meta:
         db_table = "telemetry_variants"
+
+    def __str__(self) -> str:
+        return self.name or self.payload_kind
 
 
 class TelemetryVariantMeasurement(models.Model):
@@ -247,6 +275,9 @@ class TelemetryVariantMeasurement(models.Model):
             )
         ]
 
+    def __str__(self) -> str:
+        return f"{self.measurement_type} on {self.telemetry_variant}"
+
 
 class DeviceTelemetryVariant(models.Model):
     """
@@ -266,6 +297,9 @@ class DeviceTelemetryVariant(models.Model):
             models.UniqueConstraint(fields=["device", "telemetry_variant"], name="uq_device_telemetry_variant")
         ]
 
+    def __str__(self) -> str:
+        return f"{self.telemetry_variant} on {self.device}"
+
 
 class Measurement(models.Model):
     """One measurement channel a DeviceTelemetryVariant produces"""
@@ -284,3 +318,6 @@ class Measurement(models.Model):
                 name="uq_measurement_device_telemetry_variant_type",
             )
         ]
+
+    def __str__(self) -> str:
+        return f"{self.measurement_type} on {self.device_telemetry_variant.device}"

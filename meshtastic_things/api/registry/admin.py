@@ -1,6 +1,8 @@
 from django.contrib import admin
 from django.contrib.auth.admin import UserAdmin
 
+from common import node_ids
+
 from .models import (
     Device,
     DeviceTelemetryVariant,
@@ -11,6 +13,7 @@ from .models import (
     PostprocessingBlueprint,
     PostprocessingStep,
     TelemetryVariant,
+    TelemetryVariantMeasurement,
 )
 
 @admin.register(Owner)
@@ -33,6 +36,7 @@ class OwnerAdmin(UserAdmin):
 class MeshAdmin(admin.ModelAdmin):
     # psk_b64 is a password field
     list_display = ("channel_id", "label", "owner", "created_at")
+    list_select_related = ("owner",)
     exclude = ("psk_b64",)
     readonly_fields = ("id", "created_at", "updated_at")
     search_fields = ("channel_id", "label")
@@ -42,7 +46,7 @@ class MeshAdmin(admin.ModelAdmin):
 class DeviceAdmin(admin.ModelAdmin):
     # admin_keys_b64 is a password field
     list_display = (
-        "device_id",
+        "node_id",
         "label",
         "mesh",
         "is_gateway",
@@ -57,9 +61,14 @@ class DeviceAdmin(admin.ModelAdmin):
         "created_at",
     )
     list_filter = ("is_gateway", "is_allowed")
+    list_select_related = ("mesh",)
     exclude = ("admin_keys_b64",)
     readonly_fields = ("id", "created_at", "updated_at")
-    search_fields = ("device_id", "label")
+    search_fields = ("device_id", "label", "name", "short_name")
+
+    @admin.display(description="Node ID", ordering="device_id")
+    def node_id(self, obj):
+        return f"{obj.device_id} ({node_ids.to_hex(obj.device_id)})"
 
 
 @admin.register(MeasurementType)
@@ -80,6 +89,7 @@ class PostprocessingStepInline(admin.TabularInline):
 @admin.register(PostprocessingBlueprint)
 class PostprocessingBlueprintAdmin(admin.ModelAdmin):
     list_display = ("name", "owner", "created_at", "updated_at")
+    list_select_related = ("owner",)
     readonly_fields = ("id", "created_at", "updated_at")
     search_fields = ("name", "owner__email")
     inlines = [PostprocessingStepInline]
@@ -92,11 +102,23 @@ class TelemetryVariantAdmin(admin.ModelAdmin):
     search_fields = ("payload_kind", "name", "model")
 
 
+@admin.register(TelemetryVariantMeasurement)
+class TelemetryVariantMeasurementAdmin(admin.ModelAdmin):
+    """The curated plausible range per channel, read by the quality checks."""
+
+    list_display = ("measurement_type", "telemetry_variant", "valid_min", "valid_max")
+    list_select_related = ("measurement_type", "telemetry_variant")
+    list_filter = ("telemetry_variant",)
+    readonly_fields = ("id", "created_at", "updated_at")
+    search_fields = ("measurement_type__field_name", "telemetry_variant__payload_kind")
+
+
 @admin.register(DeviceTelemetryVariant)
 class DeviceTelemetryVariantAdmin(admin.ModelAdmin):
     list_display = ("device", "telemetry_variant", "first_seen", "last_seen")
+    list_select_related = ("device", "telemetry_variant")
     readonly_fields = ("id", "device", "telemetry_variant", "first_seen", "last_seen")
-    search_fields = ("device__device_id",)
+    search_fields = ("device__device_id", "device__label")
 
     def has_add_permission(self, request):
         return False
@@ -105,6 +127,7 @@ class DeviceTelemetryVariantAdmin(admin.ModelAdmin):
 @admin.register(Measurement)
 class MeasurementAdmin(admin.ModelAdmin):
     list_display = ("device_telemetry_variant", "measurement_type", "first_seen", "last_seen")
+    list_select_related = ("measurement_type", "device_telemetry_variant__device")
     readonly_fields = ("id", "device_telemetry_variant", "measurement_type", "first_seen", "last_seen")
     search_fields = ("device_telemetry_variant__device__device_id", "measurement_type__field_name")
 
