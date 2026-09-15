@@ -1,26 +1,46 @@
 import json
 import os
 import asyncio
-import uuid
 from datetime import datetime, timezone
 
 import boto3
 import pyarrow as pa
 import pyarrow.parquet as pq
 from aiohttp import web
+from botocore.exceptions import ClientError
 import structlog
 from kafka import KafkaConsumer
 from tools.healthcheck import HealthState, KafkaConsumerHealth
 
 log = structlog.get_logger()
 
+# One object per partition
+PARTITION_FILENAME = "data.parquet"
+UNKNOWN_MESH = "unknown"
+_MISSING_OBJECT_CODES = {"NoSuchKey", "404", "NotFound"}
+
+SCHEMA = pa.schema(
+    [
+        ("node_id", pa.int64()),
+        ("packet_id", pa.int64()),
+        ("portnum", pa.int64()),
+        ("rx_time", pa.int64()),
+        ("hop_start", pa.int64()),
+        ("channel_id", pa.string()),
+        ("gateway_id", pa.int64()),
+        ("payload_kind", pa.string()),
+        ("payload_json", pa.string()),
+    ]
+)
+
+# Identifies a row within its partition to avoid duplication
+_ROW_KEY = ("node_id", "packet_id", "rx_time", "payload_kind")
 
 def _flatten(event: dict) -> dict:
-    """Flatten a decoded message to a stable, typed schema for Parquet.
+    """Flatten a decoded message to SCHEMA.
 
     The "payload" shape varies across portnums (telemetry sub-metrics, position,
-    nodeinfo, ...), which pyarrow's schema inference doesn't handle well within a
-    single batch.
+    nodeinfo, ...), so it is carried as JSON instead of as columns.
     """
     return {
         "node_id": event.get("node_id"),
@@ -30,10 +50,14 @@ def _flatten(event: dict) -> dict:
         "hop_start": event.get("hop_start"),
         "channel_id": event.get("channel_id"),
         "gateway_id": event.get("gateway_id"),
-        "mesh_id": event.get("mesh_id"),
         "payload_kind": event.get("payload_kind"),
         "payload_json": json.dumps(event.get("payload")),
     }
+
+
+def _dedupe(rows: list[dict]) -> list[dict]:
+    """Last occurrence of each row key takes precedence"""
+    return list({tuple(r.get(k) for k in _ROW_KEY): r for r in rows}.values())
 
 
 class S3Writer(object):
@@ -82,29 +106,48 @@ class S3Writer(object):
             except Exception as e:
                 log.warning(f"Could not create/verify bucket {self.s3_bucket}, will retry on write", error=str(e))
 
+    def _partition_key(self, mesh_id, now: datetime) -> str:
+        # Every partition is the same depth
+        return "/".join(
+            [
+                self.s3_prefix,
+                f"mesh_id={mesh_id or UNKNOWN_MESH}",
+                f"dt={now:%Y-%m-%d}",
+                f"hour={now:%H}",
+                PARTITION_FILENAME,
+            ]
+        )
+
+    def _read_partition(self, key: str) -> list[dict]:
+        """Rows already archived under this key, empty if there are none yet"""
+        try:
+            body = self.s3_client.get_object(Bucket=self.s3_bucket, Key=key)["Body"].read()
+        except ClientError as e:
+            if e.response.get("Error", {}).get("Code") in _MISSING_OBJECT_CODES:
+                return []
+            raise
+        return pq.read_table(pa.BufferReader(body)).to_pylist()
+
     def flush(self, records: list[dict]) -> None:
-        """Grouped by (mesh_id, node_id) and writes one file per group per "flush"
+        """Roll each (mesh_id, dt, hour) partition into a single object.
+
+        Parquet cannot be appended to, so the partition is read back and
+        rewritten whole.
         """
         if not records:
             return
         now = datetime.now(timezone.utc)
-        groups: dict[tuple, list[dict]] = {}
+        groups: dict[str | None, list[dict]] = {}
         for r in records:
-            groups.setdefault((r.get("mesh_id"), r.get("node_id")), []).append(r)
+            groups.setdefault(r.get("mesh_id"), []).append(r)
 
-        for (mesh_id, node_id), group_records in groups.items():
-            table = pa.Table.from_pylist([_flatten(r) for r in group_records])
-            parts = [self.s3_prefix]
-            if mesh_id:
-                parts.append(f"mesh_id={mesh_id}")
-            if node_id is not None:
-                parts.append(f"node_id={node_id}")
-            parts += [f"dt={now:%Y-%m-%d}", f"hour={now:%H}"]
-            key = "/".join(parts) + f"/part-{uuid.uuid4()}.parquet"
+        for mesh_id, group_records in groups.items():
+            key = self._partition_key(mesh_id, now)
+            rows = _dedupe(self._read_partition(key) + [_flatten(r) for r in group_records])
             buf = pa.BufferOutputStream()
-            pq.write_table(table, buf)
+            pq.write_table(pa.Table.from_pylist(rows, schema=SCHEMA), buf)
             self.s3_client.put_object(Bucket=self.s3_bucket, Key=key, Body=buf.getvalue().to_pybytes())
-            log.info(f"Flushed {len(group_records)} records to s3://{self.s3_bucket}/{key}")
+            log.info(f"Flushed {len(group_records)} records into s3://{self.s3_bucket}/{key} ({len(rows)} total)")
 
     async def write_kafka_s3(self):
         batch_size = int(os.environ.get("S3_WRITER__BATCH_SIZE", 1000))
@@ -133,12 +176,24 @@ class S3Writer(object):
 
             try:
                 self.flush(buffer)
+            except Exception as e:
+                # Drop the buffer and re-read from the last commit
+                self._rewind_to_committed()
+                log.exception("S3 write failed, rewound to retry", exc_info=e)
+            else:
                 self.kafka_consumer.commit()
                 log.debug("Commit offset")
-                buffer = []
-                last_flush = now
-            except Exception as e:
-                log.exception("S3 write failed, retrying next poll", exc_info=e)
+            buffer = []
+            last_flush = now
+
+    def _rewind_to_committed(self) -> None:
+        """Re-read everything since the last commit"""
+        for topic_partition in self.kafka_consumer.assignment():
+            offset = self.kafka_consumer.committed(topic_partition)
+            if offset is None:
+                self.kafka_consumer.seek_to_beginning(topic_partition)
+            else:
+                self.kafka_consumer.seek(topic_partition, offset)
 
     async def health_handler(self, request):
         self.health_state.kafka_connected = self.consumer_health.is_healthy()
