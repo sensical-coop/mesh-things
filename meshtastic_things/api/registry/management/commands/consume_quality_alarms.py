@@ -18,6 +18,7 @@ from django.core.management.base import BaseCommand
 
 from kafka import KafkaConsumer
 
+from registry.consumer_loop import consume_forever
 from registry.emailing import send_templated_email
 from registry.models import Device
 
@@ -48,22 +49,11 @@ class Command(BaseCommand):
         )
         consumer.subscribe([topic])
         log.info("Starting quality-alarms consumer", topic=topic)
-        try:
-            while True:
-                messages = consumer.poll(timeout_ms=1000, max_records=500)
-                if not messages:
-                    continue
-                for records in messages.values():
-                    for record in records:
-                        if record.value is None:
-                            continue
-                        try:
-                            self._handle(json.loads(record.value))
-                        except Exception as e:
-                            log.warning("Failed to handle quality alarm", error=str(e), raw=record.value)
-                consumer.commit()
-        finally:
-            consumer.close()
+        consume_forever(consumer, self._handle_record, "handle quality alarm")
+
+    @staticmethod
+    def _handle_record(value: bytes) -> None:
+        Command._handle(json.loads(value))
 
     @staticmethod
     def _handle(event: dict) -> None:

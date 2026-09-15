@@ -52,32 +52,49 @@ class InfluxWriter(object):
             if not messages:
                 continue
 
-            points = []
+            await self.write_batch(messages)
 
-            for topic_partition, consumer_records in messages.items():
-                try:
-                    log.info(f'Got the following messages for topic: {topic_partition.topic}:')
-                    for record in consumer_records:
-                        try:
-                            log.debug(f'{record.key} [{record.timestamp}]: {record.value}')
-                            event = json.loads(record.value)
-                            if event is not None:
-                                points.extend(get_points(event))
-                        except Exception as e:
-                            log.exception(f"Bad message skipped", exc_info=e)
-                except Exception as e:
-                    log.exception(f"Issue while opening records", exc_info=e)
+    async def write_batch(self, messages) -> None:
+        points = []
 
-            if points:
-                try:
-                    async with InfluxDBClientAsync(url=self.influx_url, token=os.environ['INFLUX__TOKEN'], org=os.environ['INFLUX__ORG']) as influxdb_client:
-                        influx_write_api = influxdb_client.write_api()
-                        await influx_write_api.write(bucket=os.environ['INFLUX__BUCKET'], record=points)
+        for topic_partition, consumer_records in messages.items():
+            try:
+                log.info(f'Got the following messages for topic: {topic_partition.topic}:')
+                for record in consumer_records:
+                    try:
+                        log.debug(f'{record.key} [{record.timestamp}]: {record.value}')
+                        event = json.loads(record.value)
+                        if event is not None:
+                            points.extend(get_points(event))
+                    except Exception as e:
+                        log.exception("Bad message skipped", exc_info=e)
+            except Exception as e:
+                log.exception("Issue while opening records", exc_info=e)
 
-                    self.kafka_consumer.commit()
-                    log.debug("Commit offset")
-                except Exception as e:
-                    log.exception(f"Write failed, retrying next poll", exc_info=e)
+        if points:
+            try:
+                async with InfluxDBClientAsync(url=self.influx_url, token=os.environ['INFLUX__TOKEN'], org=os.environ['INFLUX__ORG']) as influxdb_client:
+                    influx_write_api = influxdb_client.write_api()
+                    await influx_write_api.write(bucket=os.environ['INFLUX__BUCKET'], record=points)
+            except Exception as e:
+                self._rewind(messages)
+                log.exception("Write failed, rewound to retry next poll", exc_info=e)
+                return
+
+        # Commits a batch that produced no points
+        self.kafka_consumer.commit()
+        log.debug("Commit offset")
+
+    def _rewind(self, messages) -> None:
+        """Re-read this batch on the next poll.
+
+        poll() has already advanced the fetch position, so skipping the commit
+        is not enough on its own - without this the batch is never redelivered
+        and the records are lost.
+        """
+        for topic_partition, consumer_records in messages.items():
+            if consumer_records:
+                self.kafka_consumer.seek(topic_partition, consumer_records[0].offset)
 
     async def health_handler(self, request):
         self.health_state.kafka_connected = self.consumer_health.is_healthy()

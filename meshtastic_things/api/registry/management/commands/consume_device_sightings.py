@@ -10,6 +10,7 @@ from django.core.management.base import BaseCommand
 from django.utils import timezone
 from kafka import KafkaConsumer
 
+from registry.consumer_loop import consume_forever
 from registry.models import Device, Mesh
 
 log = structlog.get_logger()
@@ -29,25 +30,13 @@ class Command(BaseCommand):
         )
         consumer.subscribe([topic])
         log.info("Starting device-sightings consumer", topic=topic)
-        try:
-            while True:
-                messages = consumer.poll(timeout_ms=1000, max_records=500)
-                if not messages:
-                    continue
-                for records in messages.values():
-                    for record in records:
-                        if record.value is None:
-                            continue
-                        try:
-                            event = json.loads(record.value)
-                            if event.get("op") != "upsert":
-                                continue
-                            self._upsert(event)
-                        except Exception as e:
-                            log.warning("Failed to upsert device sighting", error=str(e), raw=record.value)
-                consumer.commit()
-        finally:
-            consumer.close()
+        consume_forever(consumer, self._handle_record, "upsert device sighting")
+
+    @staticmethod
+    def _handle_record(value: bytes) -> None:
+        event = json.loads(value)
+        if event.get("op") == "upsert":
+            Command._upsert(event)
 
     @staticmethod
     def _upsert(event: dict) -> None:

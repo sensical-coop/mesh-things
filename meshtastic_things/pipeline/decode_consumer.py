@@ -7,7 +7,6 @@ import time
 
 import structlog
 from aiohttp import web
-from dotenv import load_dotenv
 from kafka import KafkaConsumer, KafkaProducer
 
 from common import decode
@@ -122,30 +121,43 @@ class DecodeConsumer(object):
             if not messages:
                 continue
 
-            commit_ok = True
-            for topic_partition, records in messages.items():
-                for record in records:
-                    try:
-                        events = decode.decode_packet(
-                            record.value,
-                            self.gateway_state,
-                            self.rejected_nodes,
-                            on_drop=lambda reason: log.debug("Dropping packet", reason=reason),
-                        )
-                    except Exception as e:
-                        # Not retryable - a malformed record won't decode differently next time.
-                        log.exception("Failed to decode packet", exc_info=e)
-                        continue
-                    if events is None:
-                        continue
-                    try:
-                        self._publish(events)
-                    except Exception as e:
-                        log.exception("Failed to publish decoded events, retrying next poll", exc_info=e)
-                        commit_ok = False
+            self.decode_batch(messages)
 
-            if commit_ok:
-                self.raw_consumer.commit()
+    def decode_batch(self, messages) -> None:
+        """Decode and publish one poll batch, then advance the offset.
+
+        A publish failure rewinds that partition to the record that failed and
+        stops reading it.
+        """
+        retry_from = {}
+
+        for topic_partition, records in messages.items():
+            for record in records:
+                try:
+                    events = decode.decode_packet(
+                        record.value,
+                        self.gateway_state,
+                        self.rejected_nodes,
+                        on_drop=lambda reason: log.debug("Dropping packet", reason=reason),
+                    )
+                except Exception as e:
+                    # Not retryable - a malformed record won't decode differently next time.
+                    log.exception("Failed to decode packet", exc_info=e)
+                    continue
+                if events is None:
+                    continue
+                try:
+                    self._publish(events)
+                except Exception as e:
+                    log.exception("Failed to publish decoded events, rewound to retry", exc_info=e)
+                    retry_from[topic_partition] = record.offset
+                    break
+
+        for topic_partition, offset in retry_from.items():
+            self.raw_consumer.seek(topic_partition, offset)
+        # Safe to commit even after a rewind: the rewound partitions commit the
+        # offset they will resume from, the clean ones commit their full progress.
+        self.raw_consumer.commit()
 
     def _publish(self, events):
         self.producer.send(self.decoded_topic, value=events["decoded"]).get(timeout=10)
@@ -197,6 +209,9 @@ def main():
     args = parser.parse_args()
 
     if args.local:
+        # Only needed for local development.
+        from dotenv import load_dotenv
+
         load_dotenv("../.env")
         kafka_bootstrap_server = os.environ['KAFKA_BOOTSTRAP_LOCAL']
         log.warn('Local development mode')

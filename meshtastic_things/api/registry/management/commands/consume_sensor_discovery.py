@@ -13,6 +13,7 @@ from kafka import KafkaConsumer
 
 from common.units import quantity_kind_for
 
+from registry.consumer_loop import consume_forever
 from registry.models import Device, DeviceTelemetryVariant, Measurement, MeasurementType, TelemetryVariant
 
 log = structlog.get_logger()
@@ -32,25 +33,13 @@ class Command(BaseCommand):
         )
         consumer.subscribe([topic])
         log.info("Starting sensor-discovery consumer", topic=topic)
-        try:
-            while True:
-                messages = consumer.poll(timeout_ms=1000, max_records=500)
-                if not messages:
-                    continue
-                for records in messages.values():
-                    for record in records:
-                        if record.value is None:
-                            continue
-                        try:
-                            event = json.loads(record.value)
-                            if event.get("op") != "upsert":
-                                continue
-                            self._upsert(event)
-                        except Exception as e:
-                            log.warning("Failed to upsert sensor discovery", error=str(e), raw=record.value)
-                consumer.commit()
-        finally:
-            consumer.close()
+        consume_forever(consumer, self._handle_record, "upsert sensor discovery")
+
+    @staticmethod
+    def _handle_record(value: bytes) -> None:
+        event = json.loads(value)
+        if event.get("op") == "upsert":
+            Command._upsert(event)
 
     @staticmethod
     def _upsert(event: dict) -> None:
