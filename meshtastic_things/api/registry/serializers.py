@@ -24,7 +24,7 @@ class OwnerPublicSerializer(serializers.ModelSerializer):
 
     class Meta:
         model = Owner
-        fields = ["id", "name", "is_superuser", "created_at"]
+        fields = ["id", "name", "created_at"]
         read_only_fields = fields
 
 

@@ -58,6 +58,22 @@ class OwnerPublicDirectoryTests(RegistryTestCase):
         self.assertEqual(resp.status_code, 200)
         self.assertEqual(resp.json()["email"], "carol-public@example.com")
 
+    def test_public_routes_do_not_name_the_superusers(self):
+        """Unauthenticated, so this would tell an attacker which account to target."""
+        owner = self.create_owner(name="Dave", email="dave-public@example.com")
+        self.promote_to_superuser(owner)
+
+        self.assertNotIn("is_superuser", self.client.get("/owners").json()[0])
+        self.assertNotIn("is_superuser", self.client.get(f"/owners/{owner['id']}").json())
+
+    def test_own_profile_still_reports_superuser_status(self):
+        owner = self.create_owner(name="Erin", email="erin-public@example.com")
+        self.promote_to_superuser(owner)
+
+        resp = self.client.get("/owners/me", **self.auth_headers(owner))
+
+        self.assertTrue(resp.json()["is_superuser"])
+
 
 class OwnerMeTests(RegistryTestCase):
     def test_get_own_owner_profile(self):
