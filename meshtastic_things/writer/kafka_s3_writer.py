@@ -57,6 +57,3 @@ def main():
         log.info("Closing connections...")
         s3_writer.kafka_consumer.close()
         sys.exit(0)
-
-
-main()

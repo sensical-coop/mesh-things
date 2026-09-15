@@ -2,7 +2,6 @@ import argparse
 import os
 import sys
 import asyncio
-from datetime import datetime
 
 import structlog
 from dotenv import load_dotenv
@@ -57,6 +56,3 @@ def main():
         log.info("Closing connections...")
         influx_writer.kafka_consumer.close()
         sys.exit(0)
-
-
-main()
