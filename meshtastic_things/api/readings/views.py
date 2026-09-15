@@ -5,6 +5,7 @@ from rest_framework.response import Response
 from rest_framework.views import APIView
 
 from common.channels import channel_name, origin_of_measurement
+from registry.models import Mesh
 
 from .influx_client import get_client
 from .measurement_catalog import get_measurement_types
@@ -21,9 +22,12 @@ class ReadingsAPIView(APIView):
     permission_classes = [IsAuthenticated]
 
 
-def _require_owned_device(request, mesh_id, node_id: int) -> None:
-    """Reject a device the caller does not own, without revealing whether it exists."""
-    if not request.user.is_superuser and (str(mesh_id), node_id) not in request.user.devices:
+def _require_owned_mesh(request, mesh_id) -> None:
+    """Reject a mesh the caller does not own, without revealing whether it exists.
+    """
+    if request.user.is_superuser:
+        return
+    if not Mesh.objects.filter(pk=mesh_id, owner_id=request.user.id).exists():
         raise NotFound("Device not found")
 
 
@@ -72,7 +76,7 @@ class ReadingsView(ReadingsAPIView):
     """
 
     def get(self, request, mesh_id, node_id):
-        _require_owned_device(request, mesh_id, node_id)
+        _require_owned_mesh(request, mesh_id)
         params = request.query_params
         measurement = params.get("measurement")
         if not measurement:
@@ -107,7 +111,7 @@ class LatestView(ReadingsAPIView):
     """
 
     def get(self, request, mesh_id, node_id):
-        _require_owned_device(request, mesh_id, node_id)
+        _require_owned_mesh(request, mesh_id)
         params = request.query_params
         measurement = params.get("measurement")
         lookback = params.get("lookback", "-30d")
@@ -154,7 +158,7 @@ class QualityView(ReadingsAPIView):
     """
 
     def get(self, request, mesh_id, node_id):
-        _require_owned_device(request, mesh_id, node_id)
+        _require_owned_mesh(request, mesh_id)
         params = request.query_params
         start = params.get("start", "-1h")
         stop = params.get("stop", "now()")

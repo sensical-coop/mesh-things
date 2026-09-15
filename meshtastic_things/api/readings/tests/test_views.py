@@ -126,8 +126,36 @@ class AuthenticationTests(ReadingsTestCase):
 
 
 class DeviceScopingTests(ReadingsTestCase):
-    """A key only reaches its owner's devices, and a node number in a mesh
-    they do not own is not theirs."""
+    """A key reaches the meshes it owns, and nothing else.
+
+    Scoping is per mesh: a Device has no owner, and non-gateway devices are
+    created from observed traffic rather than registered.
+    """
+
+    def test_an_unregistered_node_on_your_own_mesh_is_readable(self):
+        # Nodes are auto-discovered, so telemetry can arrive before the Device
+        # row exists. The owner of the mesh it arrived on may still read it.
+        resp = self.client.get(self.node_url("latest", node_id=4242), **self.auth_headers())
+
+        self.assertEqual(resp.status_code, 200)
+
+    def test_an_unregistered_node_on_someone_elses_mesh_is_404(self):
+        other = Owner.objects.create_user(email="other-unreg@example.com", name="Other")
+        other_mesh = Mesh.objects.create(owner=other, channel_id=self.OTHER_CHANNEL, psk_b64="AQ==")
+
+        resp = self.client.get(
+            self.node_url("latest", mesh_id=str(other_mesh.id), node_id=4242), **self.auth_headers()
+        )
+
+        self.assertEqual(resp.status_code, 404)
+
+    def test_a_mesh_that_does_not_exist_is_404(self):
+        resp = self.client.get(
+            self.node_url("latest", mesh_id="00000000-0000-0000-0000-000000000000", node_id=1),
+            **self.auth_headers(),
+        )
+
+        self.assertEqual(resp.status_code, 404)
 
     def test_own_device_is_allowed(self):
         self.assertEqual(self.client.get(self.node_url("latest"), **self.auth_headers()).status_code, 200)

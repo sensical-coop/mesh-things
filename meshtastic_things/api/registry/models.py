@@ -68,15 +68,6 @@ class Owner(AbstractBaseUser, PermissionsMixin):
         return self.visible_devices.values_list("id", "mesh_id", "device_id")
 
     @cached_property
-    def devices(self) -> frozenset[tuple[str, int]]:
-        """Scoping set for the readings role.
-
-        A Meshtastic node number is only unique among currently-allowed
-        registrations, so the mesh travels with it.
-        """
-        return frozenset((str(mesh_id), device_id) for _, mesh_id, device_id in self._device_addresses())
-
-    @cached_property
     def devices_by_uuid(self) -> dict[str, tuple[str, int]]:
         """Registration ID to the store-native address it resolves to."""
         return {
