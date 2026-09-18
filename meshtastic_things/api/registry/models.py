@@ -282,7 +282,7 @@ class TelemetryVariantMeasurement(models.Model):
 class DeviceTelemetryVariant(models.Model):
     """
     Auto-created.
-    Read via GET /devices/{id}/telemetry-variants.
+    Read via GET /devices/{uuid}/telemetry-variants.
     """
 
     id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)

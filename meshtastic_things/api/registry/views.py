@@ -7,9 +7,9 @@ from django.contrib.auth.password_validation import validate_password
 from django.core.cache import cache
 from django.core.exceptions import ValidationError as DjangoValidationError
 from django.db import IntegrityError
-from django.db.models import Q
 from django.middleware.csrf import get_token as get_csrf_token
 from django.utils import timezone
+from drf_spectacular.utils import OpenApiParameter, OpenApiResponse, OpenApiTypes, extend_schema
 from rest_framework import status
 from rest_framework.exceptions import AuthenticationFailed, NotFound, ParseError, PermissionDenied, Throttled, ValidationError
 from rest_framework.permissions import AllowAny, IsAuthenticated
@@ -34,9 +34,13 @@ from .models import (
 )
 from .permissions import IsSuperuser, IsVerifiedOwner
 from .serializers import (
+    AlgorithmSerializer,
+    DetailSerializer,
     DeviceCreateSerializer,
     DeviceReadSerializer,
     DeviceUpdateSerializer,
+    OwnerDevicesSerializer,
+    OwnerProfileSerializer,
     MeasurementTypeCreateSerializer,
     MeasurementTypeReadSerializer,
     MeasurementTypeUpdateSerializer,
@@ -65,6 +69,33 @@ from .throttling import ResendVerificationThrottle
 log = structlog.get_logger()
 
 
+def _query(name, description, type_=OpenApiTypes.STR, **kwargs):
+    return OpenApiParameter(name, type_, OpenApiParameter.QUERY, description=description, **kwargs)
+
+
+def _flag(name, description):
+    return _query(name, description, OpenApiTypes.BOOL)
+
+
+DEVICE_FILTER_PARAMS = [
+    _query("mesh_id", "Restrict to devices on one mesh.", OpenApiTypes.UUID),
+    _flag("is_gateway", "Restrict to gateways, or to plain nodes when false."),
+    _flag("is_allowed", "Restrict to allowed registrations, or to rejected ones when false."),
+    _flag(
+        "has_postprocessing",
+        "Restrict to devices with a blueprint attached, or to those without one when false.",
+    ),
+]
+
+MEASUREMENT_FILTER_PARAMS = [
+    _query("kind", "Restrict to one namespace.", enum=["telemetry", "device", "computed"]),
+    _query("payload_kind", "Restrict to one exact payload kind, such as `telemetry:environment_metrics`."),
+    _query("field_name", "Restrict to one field name, such as `temperature`."),
+]
+
+NO_CONTENT = OpenApiResponse(description="Deleted.")
+
+
 class HealthView(APIView):
     """Report whether the service and its database are reachable."""
 
@@ -73,6 +104,12 @@ class HealthView(APIView):
     permission_classes = [AllowAny]
     throttle_classes = []
 
+    @extend_schema(
+        responses={
+            200: OpenApiResponse(description="Both the service and its database are reachable."),
+            503: OpenApiResponse(description="The database is unreachable."),
+        }
+    )
     def get(self, request):
         try:
             Mesh.objects.exists()
@@ -86,6 +123,7 @@ class MetricsView(APIView):
 
     permission_classes = [AllowAny]
 
+    @extend_schema(responses=MetricsResponseSerializer)
     def get(self, request):
         body = {
             "devices": Device.objects.count(),
@@ -96,20 +134,49 @@ class MetricsView(APIView):
         return Response(MetricsResponseSerializer(body).data)
 
 
+def _owner_serializer_for(request, owner=None):
+    """The full record for the owner themselves and for superusers, otherwise
+    the public directory.
+
+    These routes are unauthenticated, avoid emails or anything like that.
+    """
+    if request.user.is_superuser:
+        return OwnerReadSerializer
+    if owner is not None and request.user.is_authenticated and request.user.id == owner.id:
+        return OwnerReadSerializer
+    return OwnerPublicSerializer
+
+
 class OwnerListCreateView(APIView):
     permission_classes = [AllowAny]
 
+    @extend_schema(
+        operation_id="owners_list",
+        responses=OpenApiResponse(
+            response=OwnerPublicSerializer(many=True),
+            description=(
+                "The public fields shown here. A superuser receives the full "
+                "record for every owner."
+            ),
+        )
+    )
     def get(self, request):
-        """List registered owners. Email addresses are not included."""
-        owners = Owner.objects.all()
-        return Response(OwnerPublicSerializer(owners, many=True).data)
+        """List registered owners.
 
+        A superuser sees the full record for every owner. Everyone else,
+        including an authenticated owner reading their own row, gets the public
+        fields only, so that the rows are all the same shape. Use the profile
+        route to read your own record in full.
+        """
+        owners = Owner.objects.all()
+        return Response(_owner_serializer_for(request)(owners, many=True).data)
+
+    @extend_schema(request=OwnerCreateSerializer, responses={201: OwnerWithApiKeySerializer})
     def post(self, request):
         """Register an owner and return its API key.
 
-        The only write on this API that needs no authentication. The key is
-        shown in this response and cannot be retrieved again afterwards. A new
-        owner stays inactive until its email address is verified.
+        The key is shown in this response and cannot be retrieved again afterwards.
+        A new owner stays inactive until its email address is verified.
         """
         serializer = OwnerCreateSerializer(data=request.data)
         serializer.is_valid(raise_exception=True)
@@ -143,6 +210,12 @@ class OwnerVerifyEmailView(APIView):
     authentication_classes = []
     permission_classes = [AllowAny]
 
+    @extend_schema(
+        parameters=[
+            _query("token", "The token from the verification link.", required=True),
+        ],
+        responses=DetailSerializer,
+    )
     def get(self, request):
         token = request.query_params.get("token")
         if not token:
@@ -171,6 +244,7 @@ class OwnerResendVerificationView(APIView):
     permission_classes = [IsAuthenticated]
     throttle_classes = [ResendVerificationThrottle]
 
+    @extend_schema(request=None, responses=DetailSerializer)
     def post(self, request):
         owner = request.user
         if owner.is_active:
@@ -194,6 +268,7 @@ class CsrfCookieView(APIView):
     permission_classes = [AllowAny]
     throttle_classes = []
 
+    @extend_schema(responses=DetailSerializer)
     def get(self, request):
         get_csrf_token(request)
         return Response({"detail": "CSRF cookie set"})
@@ -211,6 +286,7 @@ class OwnerLoginView(APIView):
 
     permission_classes = [AllowAny]
 
+    @extend_schema(request=OwnerLoginSerializer, responses=OwnerProfileSerializer)
     def post(self, request):
         serializer = OwnerLoginSerializer(data=request.data)
         serializer.is_valid(raise_exception=True)
@@ -241,6 +317,7 @@ class OwnerLogoutView(APIView):
     authentication_classes = []
     permission_classes = [AllowAny]
 
+    @extend_schema(request=None, responses=DetailSerializer)
     def post(self, request):
         auth_logout(request)
         return Response({"detail": "Logged out"})
@@ -256,6 +333,7 @@ class OwnerRequestPasswordResetView(APIView):
     authentication_classes = []
     permission_classes = [AllowAny]
 
+    @extend_schema(request=OwnerRequestPasswordResetSerializer, responses=DetailSerializer)
     def post(self, request):
         serializer = OwnerRequestPasswordResetSerializer(data=request.data)
         serializer.is_valid(raise_exception=True)
@@ -278,6 +356,7 @@ class OwnerResetPasswordView(APIView):
     authentication_classes = []
     permission_classes = [AllowAny]
 
+    @extend_schema(request=OwnerResetPasswordSerializer, responses=DetailSerializer)
     def post(self, request):
         serializer = OwnerResetPasswordSerializer(data=request.data)
         serializer.is_valid(raise_exception=True)
@@ -305,27 +384,42 @@ class OwnerResetPasswordView(APIView):
 
 
 class OwnerDetailView(APIView):
-    """Return one owner's public details. Email addresses are not included."""
+    """Return one owner.
+
+    The full record comes back when the caller is the owner being requested, or
+    a superuser. Everyone else gets the public fields only.
+    """
 
     permission_classes = [AllowAny]
 
+    @extend_schema(
+        responses=OpenApiResponse(
+            response=OwnerPublicSerializer,
+            description=(
+                "The public fields shown here. The owner themselves and any "
+                "superuser receive the full record."
+            ),
+        )
+    )
     def get(self, request, owner_id):
         try:
             owner = Owner.objects.get(pk=owner_id)
         except (Owner.DoesNotExist, ValueError, TypeError):
             raise NotFound("Owner not found")
-        return Response(OwnerPublicSerializer(owner).data)
+        return Response(_owner_serializer_for(request, owner)(owner).data)
 
 
 class OwnerMeView(APIView):
     permission_classes = [IsAuthenticated]
 
+    @extend_schema(responses=OwnerProfileSerializer)
     def get(self, request):
         """Return the authenticated owner's own record, including their devices."""
         data = OwnerReadSerializer(request.user).data
         data["devices"] = _devices_for_owner(request.user)
         return Response(data)
 
+    @extend_schema(request=OwnerUpdateSerializer, responses=OwnerReadSerializer)
     def put(self, request):
         """Update the authenticated owner's name or email address.
 
@@ -360,6 +454,7 @@ class OwnerMeView(APIView):
                 log.warning("verification_email_send_failed", owner_id=str(owner.id), error=str(e))
         return Response(OwnerReadSerializer(owner).data)
 
+    @extend_schema(responses={204: NO_CONTENT})
     def delete(self, request):
         """Delete the authenticated owner, along with their meshes and devices.
 
@@ -392,6 +487,7 @@ class OwnerRotateKeyView(APIView):
 
     permission_classes = [IsVerifiedOwner]
 
+    @extend_schema(request=None, responses=OwnerWithApiKeySerializer)
     def post(self, request):
         new_api_key = generate_api_key()
         request.user.api_key_hash = hash_api_key(new_api_key)
@@ -405,6 +501,7 @@ class OwnerChangePasswordView(APIView):
 
     permission_classes = [IsVerifiedOwner]
 
+    @extend_schema(request=OwnerChangePasswordSerializer, responses=DetailSerializer)
     def post(self, request):
         serializer = OwnerChangePasswordSerializer(data=request.data)
         serializer.is_valid(raise_exception=True)
@@ -434,6 +531,7 @@ class OwnerDeviceIdsView(APIView):
 
     permission_classes = [IsVerifiedOwner]
 
+    @extend_schema(responses=OwnerDevicesSerializer)
     def get(self, request):
         return Response({"devices": _devices_for_owner(request.user)})
 
@@ -450,9 +548,9 @@ def _require_mesh_ownership(mesh: Mesh, owner: Owner) -> None:
         raise PermissionDenied("You do not own this mesh")
 
 
-def _get_device_or_404(id) -> Device:
+def _get_device_or_404(device_uuid) -> Device:
     try:
-        return Device.objects.select_related("mesh").get(pk=id)
+        return Device.objects.select_related("mesh").get(pk=device_uuid)
     except (Device.DoesNotExist, ValueError, TypeError):
         raise NotFound("Device not found")
 
@@ -460,6 +558,7 @@ def _get_device_or_404(id) -> Device:
 class MeshListCreateView(APIView):
     permission_classes = [IsVerifiedOwner]
 
+    @extend_schema(responses=MeshSerializer(many=True))
     def get(self, request):
         """List the caller's meshes, or every mesh for a superuser.
 
@@ -468,6 +567,7 @@ class MeshListCreateView(APIView):
         qs = Mesh.objects.all() if request.user.is_superuser else Mesh.objects.filter(owner=request.user)
         return Response(MeshSerializer(qs, many=True, context={"viewer_id": request.user.id}).data)
 
+    @extend_schema(request=MeshSerializer, responses={201: MeshSerializer})
     def post(self, request):
         """Create a mesh owned by the caller."""
         serializer = MeshSerializer(data=request.data)
@@ -481,12 +581,14 @@ class MeshListCreateView(APIView):
 class MeshDetailView(APIView):
     permission_classes = [IsVerifiedOwner]
 
+    @extend_schema(responses=MeshSerializer)
     def get(self, request, mesh_id):
         """Return one mesh."""
         mesh = _get_mesh_or_404(mesh_id)
         _require_mesh_ownership(mesh, request.user)
         return Response(MeshSerializer(mesh, context={"viewer_id": request.user.id}).data)
 
+    @extend_schema(request=MeshUpdateSerializer, responses=MeshSerializer)
     def put(self, request, mesh_id):
         """Update a mesh.
 
@@ -511,6 +613,7 @@ class MeshDetailView(APIView):
                     raise BadGateway(f"Failed to publish key change, rolled back: {e}")
         return Response(MeshSerializer(updated, context={"viewer_id": request.user.id}).data)
 
+    @extend_schema(responses={204: NO_CONTENT})
     def delete(self, request, mesh_id):
         """Delete a mesh and every device registered on it.
 
@@ -541,6 +644,7 @@ class MeshDevicesView(APIView):
 
     permission_classes = [IsVerifiedOwner]
 
+    @extend_schema(responses=DeviceReadSerializer(many=True))
     def get(self, request, mesh_id):
         mesh = _get_mesh_or_404(mesh_id)
         _require_mesh_ownership(mesh, request.user)
@@ -554,6 +658,7 @@ class MeshDevicesView(APIView):
 class DeviceListCreateView(APIView):
     permission_classes = [IsVerifiedOwner]
 
+    @extend_schema(parameters=DEVICE_FILTER_PARAMS, responses=DeviceReadSerializer(many=True))
     def get(self, request):
         """List the caller's registered devices, or every device for a superuser.
 
@@ -579,6 +684,7 @@ class DeviceListCreateView(APIView):
             qs = qs.filter(postprocessing_blueprint__isnull=has_postprocessing.lower() not in ("true", "1"))
         return Response(DeviceReadSerializer(qs, many=True, context={"viewer_id": request.user.id}).data)
 
+    @extend_schema(request=DeviceCreateSerializer, responses={201: DeviceReadSerializer})
     def post(self, request):
         """Register a device on a mesh the caller owns.
 
@@ -626,20 +732,22 @@ class DeviceListCreateView(APIView):
 class DeviceDetailView(APIView):
     permission_classes = [IsVerifiedOwner]
 
-    def get(self, request, id):
+    @extend_schema(responses=DeviceReadSerializer)
+    def get(self, request, device_uuid):
         """Return one registered device."""
-        device = _get_device_or_404(id)
+        device = _get_device_or_404(device_uuid)
         _require_mesh_ownership(device.mesh, request.user)
         return Response(DeviceReadSerializer(device, context={"viewer_id": request.user.id}).data)
 
-    def put(self, request, id):
+    @extend_schema(request=DeviceUpdateSerializer, responses=DeviceReadSerializer)
+    def put(self, request, device_uuid):
         """Update a registered device.
 
         Position and identity fields are filled in from what the device reports
         until they are set here, after which the values given take precedence.
         Disallowing a gateway stops its traffic being decoded.
         """
-        device = _get_device_or_404(id)
+        device = _get_device_or_404(device_uuid)
         _require_mesh_ownership(device.mesh, request.user)
         changing_allowed = "is_allowed" in request.data
         previous_allowed = device.is_allowed
@@ -702,13 +810,14 @@ class DeviceDetailView(APIView):
                 raise BadGateway(f"Failed to publish device {action}, rolled back: {e}")
         return Response(DeviceReadSerializer(updated, context={"viewer_id": request.user.id}).data)
 
-    def delete(self, request, id):
+    @extend_schema(responses={204: NO_CONTENT})
+    def delete(self, request, device_uuid):
         """Delete a device registration.
 
         The device is deregistered from the decoder first, and the record is
         kept if that fails.
         """
-        device = _get_device_or_404(id)
+        device = _get_device_or_404(device_uuid)
         _require_mesh_ownership(device.mesh, request.user)
         publisher = get_publisher()
         try:
@@ -730,8 +839,9 @@ class DeviceTelemetryVariantsView(APIView):
 
     permission_classes = [IsVerifiedOwner]
 
-    def get(self, request, id):
-        device = _get_device_or_404(id)
+    @extend_schema(responses=DeviceTelemetryVariantSerializer(many=True))
+    def get(self, request, device_uuid):
+        device = _get_device_or_404(device_uuid)
         _require_mesh_ownership(device.mesh, request.user)
         variants = device.telemetry_variants.select_related("telemetry_variant")
         return Response(DeviceTelemetryVariantSerializer(variants, many=True).data)
@@ -745,8 +855,9 @@ class DeviceMeasurementsView(APIView):
 
     permission_classes = [IsVerifiedOwner]
 
-    def get(self, request, id):
-        device = _get_device_or_404(id)
+    @extend_schema(responses=DeviceMeasurementSerializer(many=True))
+    def get(self, request, device_uuid):
+        device = _get_device_or_404(device_uuid)
         _require_mesh_ownership(device.mesh, request.user)
         measurements = (
             Measurement.objects.filter(device_telemetry_variant__device=device)
@@ -764,7 +875,8 @@ def _require_superuser(request) -> None:
 def filter_measurement_types(qs, request):
     kind = request.query_params.get("kind")
     if kind:
-        qs = qs.filter(Q(payload_kind=kind) | Q(payload_kind__startswith=f"{kind}:"))
+        # Every payload_kind is "<namespace>:<measurement>", so kind is the namespace.
+        qs = qs.filter(payload_kind__startswith=f"{kind}:")
     payload_kind = request.query_params.get("payload_kind")
     if payload_kind:
         qs = qs.filter(payload_kind=payload_kind)
@@ -774,9 +886,9 @@ def filter_measurement_types(qs, request):
     return qs
 
 
-def _get_measurement_type_or_404(measurement_type_id) -> MeasurementType:
+def _get_measurement_type_or_404(measurement_id) -> MeasurementType:
     try:
-        return MeasurementType.objects.get(pk=measurement_type_id)
+        return MeasurementType.objects.get(pk=measurement_id)
     except (MeasurementType.DoesNotExist, ValueError, TypeError):
         raise NotFound("MeasurementType not found")
 
@@ -791,6 +903,7 @@ def _get_telemetry_variant_or_404(telemetry_variant_id) -> TelemetryVariant:
 class MeasurementTypeListCreateView(APIView):
     permission_classes = [IsVerifiedOwner]
 
+    @extend_schema(parameters=MEASUREMENT_FILTER_PARAMS, responses=MeasurementTypeReadSerializer(many=True))
     def get(self, request):
         """List the shared catalog of measurement types and their units.
 
@@ -798,8 +911,8 @@ class MeasurementTypeListCreateView(APIView):
         `derived:<blueprint>`.
 
         Args:
-            kind: Restrict to one namespace, such as `telemetry`, `derived` or
-                `quality`.
+            kind: Restrict to one namespace, one of `telemetry`, `device` or
+                `computed`.
             payload_kind: Restrict to one exact payload kind, such as
                 `telemetry:environment_metrics`.
             field_name: Restrict to one field name, such as `temperature`.
@@ -808,6 +921,7 @@ class MeasurementTypeListCreateView(APIView):
             MeasurementTypeReadSerializer(filter_measurement_types(MeasurementType.objects.all(), request), many=True).data
         )
 
+    @extend_schema(request=MeasurementTypeCreateSerializer, responses={201: MeasurementTypeReadSerializer})
     def post(self, request):
         """Add a measurement type to the shared catalog. Superusers only."""
         _require_superuser(request)
@@ -826,23 +940,26 @@ class MeasurementTypeListCreateView(APIView):
 class MeasurementTypeDetailView(APIView):
     permission_classes = [IsVerifiedOwner]
 
-    def get(self, request, measurement_type_id):
+    @extend_schema(responses=MeasurementTypeReadSerializer)
+    def get(self, request, measurement_id):
         """Return one measurement type."""
-        return Response(MeasurementTypeReadSerializer(_get_measurement_type_or_404(measurement_type_id)).data)
+        return Response(MeasurementTypeReadSerializer(_get_measurement_type_or_404(measurement_id)).data)
 
-    def put(self, request, measurement_type_id):
+    @extend_schema(request=MeasurementTypeUpdateSerializer, responses=MeasurementTypeReadSerializer)
+    def put(self, request, measurement_id):
         """Update a measurement type. Its payload kind and field name are fixed. Superusers only."""
         _require_superuser(request)
-        measurement_type = _get_measurement_type_or_404(measurement_type_id)
+        measurement_type = _get_measurement_type_or_404(measurement_id)
         serializer = MeasurementTypeUpdateSerializer(measurement_type, data=request.data, partial=True)
         serializer.is_valid(raise_exception=True)
         updated = serializer.save()
         return Response(MeasurementTypeReadSerializer(updated).data)
 
-    def delete(self, request, measurement_type_id):
+    @extend_schema(responses={204: NO_CONTENT})
+    def delete(self, request, measurement_id):
         """Remove a measurement type from the catalog. Superusers only."""
         _require_superuser(request)
-        _get_measurement_type_or_404(measurement_type_id).delete()
+        _get_measurement_type_or_404(measurement_id).delete()
         return Response(status=status.HTTP_204_NO_CONTENT)
 
 
@@ -855,6 +972,7 @@ class TelemetryVariantListCreateView(APIView):
 
     permission_classes = [IsVerifiedOwner]
 
+    @extend_schema(responses=TelemetryVariantReadSerializer(many=True))
     def get(self, request):
         return Response(TelemetryVariantReadSerializer(TelemetryVariant.objects.all(), many=True).data)
 
@@ -862,10 +980,12 @@ class TelemetryVariantListCreateView(APIView):
 class TelemetryVariantDetailView(APIView):
     permission_classes = [IsVerifiedOwner]
 
+    @extend_schema(responses=TelemetryVariantReadSerializer)
     def get(self, request, telemetry_variant_id):
         """Return one telemetry variant."""
         return Response(TelemetryVariantReadSerializer(_get_telemetry_variant_or_404(telemetry_variant_id)).data)
 
+    @extend_schema(request=TelemetryVariantUpdateSerializer, responses=TelemetryVariantReadSerializer)
     def put(self, request, telemetry_variant_id):
         """Update a telemetry variant. Its payload kind is fixed. Superusers only.
 
@@ -882,6 +1002,7 @@ class TelemetryVariantDetailView(APIView):
         _publish_quality_config(updated.measurement_links.select_related("measurement_type", "telemetry_variant"))
         return Response(TelemetryVariantReadSerializer(updated).data)
 
+    @extend_schema(responses={204: NO_CONTENT})
     def delete(self, request, telemetry_variant_id):
         """Delete a telemetry variant. Superusers only."""
         _require_superuser(request)
@@ -894,6 +1015,7 @@ class TelemetryVariantMeasurementsView(APIView):
 
     permission_classes = [IsVerifiedOwner]
 
+    @extend_schema(responses=TelemetryVariantMeasurementReadSerializer(many=True))
     def get(self, request, telemetry_variant_id):
         telemetry_variant = _get_telemetry_variant_or_404(telemetry_variant_id)
         links = telemetry_variant.measurement_links.select_related("measurement_type").all()
@@ -910,28 +1032,34 @@ def _publish_quality_config(links) -> None:
             log.warning("quality_config_publish_failed", link_id=str(link.id), error=str(e))
 
 
-def _get_telemetry_variant_measurement_or_404(telemetry_variant_measurement_id) -> TelemetryVariantMeasurement:
+def _get_telemetry_variant_measurement_or_404(telemetry_variant_id, link_id) -> TelemetryVariantMeasurement:
+    """Scoped to the parent, so a link id from another variant is a 404 rather than an edit."""
     try:
-        return TelemetryVariantMeasurement.objects.get(pk=telemetry_variant_measurement_id)
+        return TelemetryVariantMeasurement.objects.get(pk=link_id, telemetry_variant_id=telemetry_variant_id)
     except (TelemetryVariantMeasurement.DoesNotExist, ValueError, TypeError):
-        raise NotFound("TelemetryVariantMeasurement not found")
+        raise NotFound("Measurement not found on this telemetry variant")
 
 
 class TelemetryVariantMeasurementDetailView(APIView):
     permission_classes = [IsVerifiedOwner]
 
-    def get(self, request, telemetry_variant_measurement_id):
+    @extend_schema(responses=TelemetryVariantMeasurementReadSerializer)
+    def get(self, request, telemetry_variant_id, link_id):
         """Return one measurement channel, including its plausible value range."""
-        link = _get_telemetry_variant_measurement_or_404(telemetry_variant_measurement_id)
+        link = _get_telemetry_variant_measurement_or_404(telemetry_variant_id, link_id)
         return Response(TelemetryVariantMeasurementReadSerializer(link).data)
 
-    def put(self, request, telemetry_variant_measurement_id):
+    @extend_schema(
+        request=TelemetryVariantMeasurementUpdateSerializer,
+        responses=TelemetryVariantMeasurementReadSerializer,
+    )
+    def put(self, request, telemetry_variant_id, link_id):
         """Set the plausible value range for a channel. Superusers only.
 
         Readings outside the range are flagged by the quality checks.
         """
         _require_superuser(request)
-        link = _get_telemetry_variant_measurement_or_404(telemetry_variant_measurement_id)
+        link = _get_telemetry_variant_measurement_or_404(telemetry_variant_id, link_id)
         serializer = TelemetryVariantMeasurementUpdateSerializer(link, data=request.data, partial=True)
         serializer.is_valid(raise_exception=True)
         updated = serializer.save()
@@ -948,6 +1076,7 @@ class AlgorithmListView(APIView):
 
     permission_classes = [IsVerifiedOwner]
 
+    @extend_schema(responses=AlgorithmSerializer(many=True))
     def get(self, request):
         discover()
         return Response([spec.as_dict() for spec in sorted(REGISTRY.values(), key=lambda s: s.name)])
@@ -968,6 +1097,7 @@ def _require_blueprint_ownership(blueprint: PostprocessingBlueprint, owner: Owne
 class PostprocessingBlueprintListCreateView(APIView):
     permission_classes = [IsVerifiedOwner]
 
+    @extend_schema(responses=PostprocessingBlueprintSerializer(many=True))
     def get(self, request):
         """List the caller's postprocessing blueprints, or every one for a superuser."""
         qs = (
@@ -977,6 +1107,7 @@ class PostprocessingBlueprintListCreateView(APIView):
         )
         return Response(PostprocessingBlueprintSerializer(qs.prefetch_related("steps"), many=True).data)
 
+    @extend_schema(request=PostprocessingBlueprintSerializer, responses={201: PostprocessingBlueprintSerializer})
     def post(self, request):
         """Create a postprocessing blueprint, an ordered set of steps that compute
         new channels from a device's readings."""
@@ -992,12 +1123,14 @@ class PostprocessingBlueprintListCreateView(APIView):
 class PostprocessingBlueprintDetailView(APIView):
     permission_classes = [IsVerifiedOwner]
 
+    @extend_schema(responses=PostprocessingBlueprintSerializer)
     def get(self, request, blueprint_id):
         """Return one postprocessing blueprint and its steps."""
         blueprint = _get_blueprint_or_404(blueprint_id)
         _require_blueprint_ownership(blueprint, request.user)
         return Response(PostprocessingBlueprintSerializer(blueprint).data)
 
+    @extend_schema(request=PostprocessingBlueprintSerializer, responses=PostprocessingBlueprintSerializer)
     def put(self, request, blueprint_id):
         """Update a postprocessing blueprint.
 
@@ -1014,6 +1147,7 @@ class PostprocessingBlueprintDetailView(APIView):
             raise Conflict(f"You already have a blueprint named {request.data.get('name')!r}")
         return Response(PostprocessingBlueprintSerializer(updated).data)
 
+    @extend_schema(responses={204: NO_CONTENT})
     def delete(self, request, blueprint_id):
         """Delete a postprocessing blueprint.
 

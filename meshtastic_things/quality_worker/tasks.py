@@ -4,7 +4,7 @@ import os
 import structlog
 from celery import shared_task
 
-from common.channels import DERIVED, ORIGIN_MEASURED, QUALITY
+from common.channels import DERIVED_KIND, ORIGIN_MEASURED, QUALITY_KIND
 from common.units import QUALITY_CHANNELS
 from common.influx_query import duration_seconds, split_channel
 
@@ -54,9 +54,9 @@ def scan_devices() -> dict:
     blueprint_runs = completeness_runs = 0
     for device in devices:
         if device.get("postprocessing_blueprint_id"):
-            run_blueprint.delay(device["id"])
+            run_blueprint.delay(device["uuid"])
             blueprint_runs += 1
-        check_completeness.delay(device["id"])
+        check_completeness.delay(device["uuid"])
         completeness_runs += 1
     log.info("scan_complete", devices=len(devices), blueprints=blueprint_runs, completeness=completeness_runs)
     return {"devices": len(devices), "blueprint_runs": blueprint_runs, "completeness_runs": completeness_runs}
@@ -69,7 +69,7 @@ def run_blueprint(device_uuid: str, lookback: str | None = None) -> dict:
     lookback = lookback or BLUEPRINT_LOOKBACK
     registry, influx = get_registry_client(), get_influx_io()
 
-    devices = {d["id"]: d for d in registry.devices()}
+    devices = {d["uuid"]: d for d in registry.devices()}
     device = devices.get(device_uuid)
     if device is None:
         log.warning("device_not_found", device_uuid=device_uuid)
@@ -80,7 +80,7 @@ def run_blueprint(device_uuid: str, lookback: str | None = None) -> dict:
 
     blueprint = registry.blueprint(blueprint_id)
     steps = blueprint.get("steps") or []
-    mesh_id, device_id = device["mesh_id"], device["device_id"]
+    mesh_id, device_id = device["mesh_id"], device["node_id"]
 
     # Only load channels that no other step produces - the rest come from the
     # namespace as the run proceeds.
@@ -132,7 +132,7 @@ def run_blueprint(device_uuid: str, lookback: str | None = None) -> dict:
             if row.get("channel")
         }
         get_alarm_publisher().publish_discovery(
-            mesh_id, device_id, DERIVED, list(outputs), resolve_output_units(steps, catalog_units)
+            mesh_id, device_id, DERIVED_KIND, list(outputs), resolve_output_units(steps, catalog_units)
         )
 
     log.info(
@@ -158,12 +158,12 @@ def check_completeness(device_uuid: str, lookback: str | None = None) -> dict:
     lookback = lookback or COMPLETENESS_LOOKBACK
     registry, influx = get_registry_client(), get_influx_io()
 
-    devices = {d["id"]: d for d in registry.devices()}
+    devices = {d["uuid"]: d for d in registry.devices()}
     device = devices.get(device_uuid)
     if device is None:
         return {"status": "device_not_found"}
 
-    mesh_id, device_id = device["mesh_id"], device["device_id"]
+    mesh_id, device_id = device["mesh_id"], device["node_id"]
     if not mesh_id:
         return {"status": "no_mesh_id"}
 
@@ -173,10 +173,11 @@ def check_completeness(device_uuid: str, lookback: str | None = None) -> dict:
     results = []
 
     for row in registry.device_measurements(device_uuid):
-        if row.get("origin") != ORIGIN_MEASURED:
+        measurement_type = row["measurement_type"]
+        if measurement_type["origin"] != ORIGIN_MEASURED:
             continue
-        channel = row["channel"]
-        interval = _reading_interval_for(device, row["payload_kind"], variant_intervals)
+        channel = measurement_type["channel"]
+        interval = _reading_interval_for(device, measurement_type["payload_kind"], variant_intervals)
         if not interval:
             continue
         try:
@@ -232,6 +233,6 @@ def check_completeness(device_uuid: str, lookback: str | None = None) -> dict:
     # Register the quality channels against this device so they appear in
     # GET /devices/{id}/measurements too
     if results:
-        publisher.publish_discovery(mesh_id, device_id, QUALITY, list(QUALITY_FIELDS), QUALITY_FIELD_UNITS)
+        publisher.publish_discovery(mesh_id, device_id, QUALITY_KIND, list(QUALITY_FIELDS), QUALITY_FIELD_UNITS)
 
     return {"status": "ok", "channels": results}

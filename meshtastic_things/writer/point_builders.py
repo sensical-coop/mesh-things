@@ -3,14 +3,25 @@ from datetime import datetime, timezone
 import structlog
 from influxdb_client import Point
 
+from common.channels import (
+    ALARMS,
+    DEVICE,
+    NODEINFO,
+    NODEINFO_KIND,
+    POSITION,
+    POSITION_KIND,
+    TELEMETRY,
+    measurement_of,
+)
+
 log = structlog.get_logger()
 
 MIN_FEASIBLE_TIME = 1577836800  # 2020-01-01 in epoch (s)
 
 # payload_kind values that are intentionally not persisted (logged at debug though).
 SKIP_PAYLOAD_KINDS = {
-    "portnum:1",  # TEXT_MESSAGE_APP - free text, not a timeseries metric
-    "portnum:5",  # ROUTING_APP - mesh routing/ack control traffic
+    f"{DEVICE}:portnum_1",  # TEXT_MESSAGE_APP - free text, not a timeseries metric
+    f"{DEVICE}:portnum_5",  # ROUTING_APP - mesh routing/ack control traffic
 }
 
 
@@ -70,7 +81,7 @@ def build_telemetry_points(event: dict) -> list[Point]:
 
 def build_position_points(event: dict) -> list[Point]:
     payload = event.get("payload") or {}
-    point_dict = _base_point_dict(event, "position")
+    point_dict = _base_point_dict(event, POSITION)
     if "latitude_i" in payload:
         point_dict["fields"]["latitude"] = payload["latitude_i"] / 1e7
     if "longitude_i" in payload:
@@ -87,7 +98,7 @@ def build_position_points(event: dict) -> list[Point]:
 
 def build_nodeinfo_points(event: dict) -> list[Point]:
     payload = event.get("payload") or {}
-    point_dict = _base_point_dict(event, "nodeinfo")
+    point_dict = _base_point_dict(event, NODEINFO)
     for tag_field in ("long_name", "short_name", "hw_model", "role"):
         if payload.get(tag_field):
             point_dict["tags"][tag_field] = str(payload[tag_field])
@@ -100,8 +111,7 @@ def build_generic_points(event: dict) -> list[Point]:
     """Fallback for any payload_kind without a dedicated builder above, so a
     brand-new portnum gets *something* persisted without requiring a code change first."""
     payload = event.get("payload") or {}
-    portnum = event.get("portnum", "unknown")
-    point_dict = _base_point_dict(event, f"portnum_{portnum}")
+    point_dict = _base_point_dict(event, measurement_of(event.get("payload_kind")))
     for key, value in payload.items():
         if isinstance(value, bool) or isinstance(value, (int, float)):
             point_dict["fields"][key] = value
@@ -141,7 +151,7 @@ def build_alarm_points(event: dict) -> list[Point]:
         fields["value"] = float(value)
 
     point_dict = {
-        "measurement": "alarms",
+        "measurement": ALARMS,
         "tags": tags,
         "fields": fields,
         "time": event["triggered_at"],
@@ -157,10 +167,10 @@ def get_points(event: dict) -> list[Point]:
     if payload_kind in SKIP_PAYLOAD_KINDS:
         log.debug("Skipping payload kind", payload_kind=payload_kind)
         return []
-    if payload_kind.startswith("telemetry"):
+    if payload_kind.startswith(TELEMETRY):
         return build_telemetry_points(event)
-    if payload_kind == "position":
+    if payload_kind == POSITION_KIND:
         return build_position_points(event)
-    if payload_kind == "nodeinfo":
+    if payload_kind == NODEINFO_KIND:
         return build_nodeinfo_points(event)
     return build_generic_points(event)

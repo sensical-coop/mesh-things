@@ -36,11 +36,26 @@ class MetricsResponseSerializer(serializers.Serializer):
 
 
 class OwnerReadSerializer(serializers.ModelSerializer):
-    """Includes email"""
+    """The full record, for the owner themselves and for superusers.
+
+    `last_login` tracks password logins only: a bearer-key request never
+    updates it, so it is null for an owner who has only ever used their API key.
+    """
 
     class Meta:
         model = Owner
-        fields = ["id", "name", "email", "is_superuser", "is_active", "email_verified_at", "created_at"]
+        fields = [
+            "id",
+            "name",
+            "email",
+            "is_superuser",
+            "is_staff",
+            "is_active",
+            "email_verified_at",
+            "email_verification_sent_at",
+            "last_login",
+            "created_at",
+        ]
         read_only_fields = fields
 
 
@@ -161,7 +176,7 @@ def _validate_location_pair(serializer, attrs):
 class DeviceCreateSerializer(serializers.Serializer):
     """POST /devices input"""
 
-    device_id = serializers.IntegerField()
+    node_id = serializers.IntegerField(source="device_id")
     mesh_id = serializers.UUIDField()
     # Required
     is_gateway = serializers.BooleanField()
@@ -186,8 +201,14 @@ class DeviceCreateSerializer(serializers.Serializer):
 
 
 class DeviceReadSerializer(serializers.ModelSerializer):
-    """admin_keys_b64 is ONLY shown to the device's actual mesh owner (superusers can't see this)"""
+    """admin_keys_b64 is ONLY shown to the device's actual mesh owner (superusers can't see this).
 
+    `uuid` is the registration; `node_id` is the Meshtastic node number.
+    The storage column is `device_id`.
+    """
+
+    uuid = serializers.UUIDField(source="id", read_only=True)
+    node_id = serializers.IntegerField(source="device_id", read_only=True)
     mesh_id = serializers.UUIDField(read_only=True)
     postprocessing_blueprint_id = serializers.UUIDField(read_only=True)
     admin_keys_b64 = serializers.ListField(child=serializers.CharField(), read_only=True)
@@ -195,8 +216,8 @@ class DeviceReadSerializer(serializers.ModelSerializer):
     class Meta:
         model = Device
         fields = [
-            "id",
-            "device_id",
+            "uuid",
+            "node_id",
             "mesh_id",
             "label",
             "is_gateway",
@@ -227,8 +248,42 @@ class DeviceReadSerializer(serializers.ModelSerializer):
         return data
 
 
+class OwnerProfileSerializer(OwnerReadSerializer):
+    """An owner's own record together with the devices they may access."""
+
+    devices = DeviceReadSerializer(many=True, read_only=True)
+
+    class Meta(OwnerReadSerializer.Meta):
+        fields = OwnerReadSerializer.Meta.fields + ["devices"]
+
+
+class OwnerDevicesSerializer(serializers.Serializer):
+    """Documents the body of the owner device listing."""
+
+    devices = DeviceReadSerializer(many=True, read_only=True)
+
+
+class DetailSerializer(serializers.Serializer):
+    """The single-message body used by the routes that return no resource."""
+
+    detail = serializers.CharField()
+
+
+class AlgorithmSerializer(serializers.Serializer):
+    """One entry of the postprocessing function registry."""
+
+    name = serializers.CharField()
+    inputs = serializers.ListField(child=serializers.CharField())
+    outputs = serializers.ListField(child=serializers.CharField())
+    params = serializers.ListField(child=serializers.CharField())
+    optional_params = serializers.ListField(child=serializers.CharField())
+    mode = serializers.CharField()
+    doc = serializers.CharField(allow_null=True)
+    output_units = serializers.DictField(child=serializers.CharField(allow_null=True))
+
+
 class DeviceUpdateSerializer(serializers.ModelSerializer):
-    """device_id/mesh are fixed at creation. Role is editable"""
+    """node_id/mesh are fixed at creation. Role is editable"""
 
     admin_keys_b64 = serializers.ListField(
         child=serializers.CharField(),
@@ -277,7 +332,7 @@ class DeviceUpdateSerializer(serializers.ModelSerializer):
 class MeasurementTypeReadSerializer(serializers.ModelSerializer):
     """Freely readable by any verified owner."""
 
-    origin = serializers.SerializerMethodField() # "measured" | "derived" | "quality"
+    origin = serializers.SerializerMethodField()  # "measured" | "device" | "computed"
     channel = serializers.SerializerMethodField()
 
     class Meta:
@@ -297,7 +352,7 @@ class MeasurementTypeReadSerializer(serializers.ModelSerializer):
 
 
 class MeasurementTypeCreateSerializer(serializers.ModelSerializer):
-    """POST /measurement-types - superuser-only"""
+    """POST /measurements - superuser-only"""
 
     class Meta:
         model = MeasurementType
@@ -309,7 +364,7 @@ class MeasurementTypeCreateSerializer(serializers.ModelSerializer):
 
 
 class MeasurementTypeUpdateSerializer(serializers.ModelSerializer):
-    """PUT /measurement-types/{id} - payload_kind/field_name are immutable"""
+    """PUT /measurements/{id} - payload_kind/field_name are immutable"""
 
     class Meta:
         model = MeasurementType
@@ -321,7 +376,7 @@ class TelemetryVariantReadSerializer(serializers.ModelSerializer):
     class Meta:
         model = TelemetryVariant
         fields = [
-            "id", "payload_kind", "name", "model", "datasheet_url", "description",
+            "id", "payload_kind", "name", "description",
             "default_reading_interval_seconds", "created_at", "updated_at",
         ]
         read_only_fields = fields
@@ -332,12 +387,12 @@ class TelemetryVariantUpdateSerializer(serializers.ModelSerializer):
 
     class Meta:
         model = TelemetryVariant
-        fields = ["name", "model", "datasheet_url", "description", "default_reading_interval_seconds"]
+        fields = ["name", "description", "default_reading_interval_seconds"]
         extra_kwargs = {field: {"required": False} for field in fields}
 
 
 class TelemetryVariantMeasurementReadSerializer(serializers.ModelSerializer):
-    """GET /telemetry-variants/{id}/measurement-types.  Readable by
+    """GET /telemetry-variants/{id}/measurements. Readable by
     any verified owner, same as MeasurementTypeReadSerializer."""
 
     measurement_type = MeasurementTypeReadSerializer(read_only=True)
@@ -349,7 +404,7 @@ class TelemetryVariantMeasurementReadSerializer(serializers.ModelSerializer):
 
 
 class TelemetryVariantMeasurementUpdateSerializer(serializers.ModelSerializer):
-    """PUT /telemetry-variant-measurements/{id}. Only the curated
+    """PUT /telemetry-variants/{id}/measurements/{link_id}. Only the curated
     plausibility range is editable"""
 
     class Meta:
@@ -359,7 +414,7 @@ class TelemetryVariantMeasurementUpdateSerializer(serializers.ModelSerializer):
 
 
 class DeviceTelemetryVariantSerializer(serializers.ModelSerializer):
-    """GET /devices/{id}/telemetry-variants - which telemetry types this device
+    """GET /devices/{uuid}/telemetry-variants - which telemetry types this device
     has actually been seen reporting. Read-only (auto-discovered)"""
 
     telemetry_variant = TelemetryVariantReadSerializer(read_only=True)
@@ -371,33 +426,22 @@ class DeviceTelemetryVariantSerializer(serializers.ModelSerializer):
 
 
 class DeviceMeasurementSerializer(serializers.ModelSerializer):
-    """GET /devices/{id}/measurements - a flat list of the channels for this device"""
+    """GET /devices/{uuid}/measurements - a flat list of the channels for this device"""
 
+    # payload_kind/channel/origin live on the nested catalog entry, not here too.
     measurement_type = MeasurementTypeReadSerializer(read_only=True)
-    payload_kind = serializers.CharField(source="measurement_type.payload_kind", read_only=True)
-    channel = serializers.SerializerMethodField()
-    origin = serializers.SerializerMethodField()
     telemetry_variant_id = serializers.UUIDField(source="device_telemetry_variant.telemetry_variant_id", read_only=True)
 
     class Meta:
         model = Measurement
         fields = [
             "id",
-            "payload_kind",
-            "channel",
-            "origin",
             "telemetry_variant_id",
             "measurement_type",
             "first_seen",
             "last_seen",
         ]
         read_only_fields = fields
-
-    def get_channel(self, obj) -> str:
-        return channel_name(obj.measurement_type.payload_kind, obj.measurement_type.field_name)
-
-    def get_origin(self, obj) -> str:
-        return origin_of(obj.measurement_type.payload_kind)
 
 
 class PostprocessingStepSerializer(serializers.ModelSerializer):

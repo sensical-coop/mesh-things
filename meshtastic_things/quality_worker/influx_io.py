@@ -9,12 +9,13 @@ import structlog
 from influxdb_client import InfluxDBClient, Point, WritePrecision
 from influxdb_client.client.write_api import SYNCHRONOUS
 
+from common.channels import DERIVED, QUALITY
 from common.influx_query import split_channel, validate_mesh_id, validate_range_bound
 
 log = structlog.get_logger()
 
 # Computed series live here, tagged with the blueprint
-DERIVED_MEASUREMENT = "derived"
+DERIVED_MEASUREMENT = DERIVED
 
 class InfluxIO:
     def __init__(self, url: str, token: str, org: str, bucket: str):
@@ -75,7 +76,7 @@ from(bucket: "{self.bucket}")
         """Completeness/ratio metrics as their own timeseries."""
         mesh_id = validate_mesh_id(mesh_id)
         point = (
-            Point("quality")
+            Point(QUALITY)
             .tag("mesh_id", mesh_id)
             .tag("node_id", str(int(device_id)))
             .tag("channel", channel)

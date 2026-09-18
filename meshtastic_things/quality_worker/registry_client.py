@@ -36,7 +36,7 @@ class RegistryClient:
         return self._get(f"/devices/{device_uuid}/measurements")
 
     def measurement_types(self) -> list[dict]:
-        return self._get("/measurement-types")
+        return self._get("/measurements")
 
 
 _client: RegistryClient | None = None

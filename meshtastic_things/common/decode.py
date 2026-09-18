@@ -1,9 +1,10 @@
 from common import codec
+from common.channels import NODEINFO_KIND, POSITION_KIND, TELEMETRY
 
 
 def _discovered_fields(payload_kind: str, payload: dict) -> list[str]:
     """telemetry:<variant> only, numeric leaf fields only."""
-    if not payload_kind.startswith("telemetry:"):
+    if not payload_kind.startswith(f"{TELEMETRY}:"):
         return []
     variant = payload_kind.split(":", 1)[1]
     sub = payload.get(variant)
@@ -20,12 +21,12 @@ def _build_sighting(mesh_id: str, decoded: dict) -> dict:
         "op": "upsert",
     }
     payload = decoded["payload"]
-    if decoded["payload_kind"] == "position":
+    if decoded["payload_kind"] == POSITION_KIND:
         lat_i, lon_i = payload.get("latitude_i"), payload.get("longitude_i")
         if lat_i is not None and lon_i is not None:
             sighting["latitude"] = lat_i / 1e7
             sighting["longitude"] = lon_i / 1e7
-    elif decoded["payload_kind"] == "nodeinfo":
+    elif decoded["payload_kind"] == NODEINFO_KIND:
         for src_field, sighting_key in (
             ("long_name", "name"),
             ("short_name", "short_name"),

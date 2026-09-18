@@ -7,6 +7,8 @@ from datetime import datetime, timezone
 import structlog
 from kafka import KafkaProducer
 
+from common.channels import ALARMS_KIND
+
 log = structlog.get_logger()
 
 SOURCE_BATCH = "batch"
@@ -26,6 +28,7 @@ def build_alarm(
     return {
         "mesh_id": str(mesh_id),
         "device_id": int(device_id),
+        "payload_kind": ALARMS_KIND,
         "channel": channel,
         "detector": detector,
         "source": source,

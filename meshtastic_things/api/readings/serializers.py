@@ -7,26 +7,27 @@ class PointSerializer(serializers.Serializer):
 
 
 class SeriesSerializer(serializers.Serializer):
-    field = serializers.CharField()
+    channel = serializers.CharField()
     points = PointSerializer(many=True)
 
 
 class ReadingsResponseSerializer(serializers.Serializer):
     mesh_id = serializers.CharField()
     node_id = serializers.IntegerField()
-    measurement = serializers.CharField()
+    payload_kind = serializers.CharField()
     series = SeriesSerializer(many=True)
 
 
 class LatestReadingSerializer(serializers.Serializer):
-    measurement = serializers.CharField()
-    field = serializers.CharField()
+    payload_kind = serializers.CharField()
+    field_name = serializers.CharField()
+    channel = serializers.CharField()
     value = serializers.JSONField(allow_null=True)
     time = serializers.CharField()
     unit = serializers.CharField(allow_null=True)
     quantity_kind = serializers.CharField(allow_null=True)
     vocabulary_uri = serializers.CharField(allow_null=True)
-    # "measured", "derived", "quality"
+    # "measured", "device" or "computed"
     origin = serializers.CharField()
 
 

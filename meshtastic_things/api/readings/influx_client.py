@@ -11,6 +11,11 @@ from common.influx_query import (  # noqa: F401
 )
 
 
+# writer/point_builders.py stores these on every point. Ignore them
+METADATA_FIELDS = ("packet_id", "timestamp_quality")
+_METADATA_FIELDS_FLUX = "[" + ", ".join(f'"{f}"' for f in METADATA_FIELDS) + "]"
+
+
 class InfluxQueryClient:
     def __init__(self, url: str, token: str, org: str, bucket: str):
         self._client = InfluxDBClient(url=url, token=token, org=org)
@@ -79,7 +84,7 @@ from(bucket: "{self.bucket}")
         return self._records_to_series(self._query_api.query(flux))
 
     def latest_all(self, mesh_id: str, node_id: int, lookback: str = "-30d") -> list[dict]:
-        """No-?measurement= variant of latest() - combined query across every
+        """No-?payload_kind= variant of latest() - combined query across every
         field; grouping by (_measurement, _field) avoids the schema-collision issue."""
         mesh_id = _validate_mesh_id(mesh_id)
         lookback = _validate_range_bound(lookback, "lookback")
@@ -88,6 +93,7 @@ from(bucket: "{self.bucket}")
 from(bucket: "{self.bucket}")
   |> range(start: {lookback})
   |> filter(fn: (r) => r.mesh_id == "{mesh_id}" and r.node_id == "{int(node_id)}")
+  |> filter(fn: (r) => not contains(value: r._field, set: {_METADATA_FIELDS_FLUX}))
   |> group(columns: ["_measurement", "_field"])
   |> last()
 '''
@@ -96,7 +102,7 @@ from(bucket: "{self.bucket}")
     def device_metrics(self, mesh_id: str, node_id: int, start: str, stop: str) -> dict:
         """Aggregates the `quality` and `alarms` measurements the batch/stream
         quality tiers already write - no new computation, see
-        docs/pending.md#9."""
+        docs/done.md#9."""
         mesh_id = _validate_mesh_id(mesh_id)
         start = _validate_range_bound(start, "start")
         stop = _validate_range_bound(stop, "stop")

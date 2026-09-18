@@ -8,7 +8,7 @@ from meshtastic.protobuf import telemetry_pb2
 from django.core.management.base import BaseCommand
 from django.db import transaction
 
-from common.channels import QUALITY
+from common.channels import QUALITY_KIND, TELEMETRY
 from common.units import QUALITY_CHANNELS, quantity_kind_for
 
 from registry.measurement_catalog_seed import defaults_for
@@ -57,7 +57,7 @@ class Command(BaseCommand):
         created, backfilled = Counter(), Counter()
 
         for variant_field in variant_fields:
-            payload_kind = f"telemetry:{variant_field.name}"
+            payload_kind = f"{TELEMETRY}:{variant_field.name}"
             name = variant_field.message_type.name
             telemetry_variant, was_created = TelemetryVariant.objects.get_or_create(
                 payload_kind=payload_kind, defaults={"name": name}
@@ -83,7 +83,7 @@ class Command(BaseCommand):
                 created["links"] += was_created
 
         quality_variant, was_created = TelemetryVariant.objects.get_or_create(
-            payload_kind=QUALITY, defaults={"name": "Data quality metrics"}
+            payload_kind=QUALITY_KIND, defaults={"name": "Data quality metrics"}
         )
         created["variants"] += was_created
         if not was_created:
@@ -91,7 +91,7 @@ class Command(BaseCommand):
 
         for field_name, curated in _QUALITY_SEED:
             measurement_type, was_created = MeasurementType.objects.get_or_create(
-                payload_kind=QUALITY, field_name=field_name, defaults=curated
+                payload_kind=QUALITY_KIND, field_name=field_name, defaults=curated
             )
             created["measurement_types"] += was_created
             if not was_created:

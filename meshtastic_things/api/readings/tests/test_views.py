@@ -195,13 +195,13 @@ class DeviceScopingTests(ReadingsTestCase):
 
 class ReadingsViewTests(ReadingsTestCase):
     def test_readings_shape(self):
-        resp = self.client.get(self.node_url(), {"measurement": "device_metrics"}, **self.auth_headers())
+        resp = self.client.get(self.node_url(), {"payload_kind": "telemetry:device_metrics"}, **self.auth_headers())
 
         self.assertEqual(resp.status_code, 200)
         body = resp.json()
         self.assertEqual(body["mesh_id"], self.mesh_id)
         self.assertEqual(body["node_id"], self.NODE_ID)
-        self.assertEqual(body["series"][0]["field"], "battery_level")
+        self.assertEqual(body["series"][0]["channel"], "device_metrics.battery_level")
 
     def test_measurement_is_required(self):
         self.assertEqual(self.client.get(self.node_url(), **self.auth_headers()).status_code, 400)
@@ -232,7 +232,7 @@ class QualityViewTests(ReadingsTestCase):
 
 
 class LatestAllTests(ReadingsTestCase):
-    """Omitting ?measurement= returns every channel"""
+    """Omitting ?payload_kind= returns every channel"""
 
     def setUp(self):
         super().setUp()
@@ -262,11 +262,43 @@ class LatestAllTests(ReadingsTestCase):
         self.assertIsNone(reading["unit"])
 
     def test_measurement_given_uses_the_series_shape(self):
-        resp = self.client.get(self.node_url("latest"), {"measurement": "device_metrics"}, **self.auth_headers())
+        resp = self.client.get(self.node_url("latest"), {"payload_kind": "telemetry:device_metrics"}, **self.auth_headers())
 
-        self.assertEqual(resp.json()["measurement"], "device_metrics")
+        self.assertEqual(resp.json()["payload_kind"], "telemetry:device_metrics")
         self.assertNotIn("readings", resp.json())
         self.fake_client.latest_all.assert_not_called()
+
+    def test_a_reading_speaks_the_same_vocabulary_as_the_catalog(self):
+        """Storage flattens `telemetry:device_metrics` to `device_metrics`;
+        the API must not hand that back as the payload_kind."""
+        reading = self.client.get(self.node_url("latest"), **self.auth_headers()).json()["readings"][0]
+
+        self.assertEqual(reading["payload_kind"], "telemetry:device_metrics")
+        self.assertEqual(reading["field_name"], "battery_level")
+        self.assertEqual(reading["channel"], "device_metrics.battery_level")
+
+    def test_an_uncatalogued_channel_still_gets_its_namespace_back(self):
+        MeasurementType.objects.all().delete()
+
+        reading = self.client.get(self.node_url("latest"), **self.auth_headers()).json()["readings"][0]
+
+        self.assertEqual(reading["payload_kind"], "telemetry:device_metrics")
+        self.assertEqual(reading["field_name"], "battery_level")
+
+    def test_channel_is_always_payload_kind_and_field_name(self):
+        """The three fields have to agree, or a consumer cannot join a reading
+        to its catalog row."""
+        for reading in self.client.get(self.node_url("latest"), **self.auth_headers()).json()["readings"]:
+            with self.subTest(channel=reading["channel"]):
+                measurement = reading["payload_kind"].split(":", 1)[-1]
+                self.assertEqual(reading["channel"], f"{measurement}.{reading['field_name']}")
+
+    def test_asking_by_channel_reports_the_namespaced_payload_kind(self):
+        resp = self.client.get(
+            self.node_url(), {"channel": "device_metrics.battery_level"}, **self.auth_headers()
+        )
+
+        self.assertEqual(resp.json()["payload_kind"], "telemetry:device_metrics")
 
 
 class DeviceUuidAddressingTests(ReadingsTestCase):
