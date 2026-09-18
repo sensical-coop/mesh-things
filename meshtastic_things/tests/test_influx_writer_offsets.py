@@ -85,11 +85,11 @@ def test_failed_write_rewinds_to_the_start_of_the_batch_and_does_not_commit(monk
 
 
 def test_batch_with_nothing_to_persist_still_commits(monkeypatch):
-    # portnum:1 is in SKIP_PAYLOAD_KINDS, so the batch yields no points. Those
-    # offsets must still advance or the consumer replays them forever.
+    # device:portnum_1 is in SKIP_PAYLOAD_KINDS, so the batch yields no points.
+    # Those offsets must still advance or the consumer replays them forever.
     writer = _make_writer(monkeypatch)
     skipped = {"node_id": 1, "packet_id": 1, "rx_time": 1757000000,
-               "portnum": 1, "payload_kind": "portnum:1", "payload": {}}
+               "portnum": 1, "payload_kind": "device:portnum_1", "payload": {}}
     messages = {TOPIC_PARTITION: [_Record(10, skipped)]}
 
     with patch("writer.influx_writer.InfluxDBClientAsync") as client:

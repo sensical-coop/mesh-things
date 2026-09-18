@@ -1,11 +1,4 @@
-"""setup.py's console_scripts call main() themselves.
-
-A module-level main() call therefore runs the service twice over: once while the
-entry point imports the module, and never again because the first one blocks in
-its event loop. It also makes the module impossible to import - from a test, or
-from anything that just wants to read a constant out of it. Two writers shipped
-that way and it went unnoticed because the service still started.
-"""
+"""setup.py's console_scripts call main() themselves."""
 import ast
 import re
 from pathlib import Path
@@ -18,7 +11,6 @@ SETUP = ROOT / "setup.py"
 # 'kafka_influx_writer=writer.kafka_influx_writer:main'
 _ENTRY = re.compile(r"'([\w.]+)=([\w.]+):(\w+)'")
 ENTRY_POINTS = _ENTRY.findall(SETUP.read_text())
-
 
 def _module_path(module: str) -> Path:
     return ROOT.joinpath(*module.split(".")).with_suffix(".py")

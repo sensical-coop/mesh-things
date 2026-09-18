@@ -72,7 +72,7 @@ def test_encrypted_with_correct_key_produces_decoded_and_sighting():
     result = decode.decode_packet(raw, gateway_state=_gateway_state(key_bytes), rejected_nodes=set())
 
     assert result is not None
-    assert result["decoded"]["payload_kind"] == "position"
+    assert result["decoded"]["payload_kind"] == "device:position"
     assert result["decoded"]["mesh_id"] == MESH_ID
     assert result["sighting"]["key"] == f"{MESH_ID}:999"
     assert result["sighting"]["latitude"] == 12.3456789

@@ -1,6 +1,9 @@
 from writer.point_builders import get_points
 
 
+from common.portnum_registry import classify
+
+
 def _event(payload_kind: str, payload: dict, **overrides) -> dict:
     event = {
         "node_id": 123,
@@ -58,7 +61,7 @@ def test_mesh_id_tag_omitted_when_absent():
 
 def test_position_is_persisted_not_dropped():
     event = _event(
-        "position",
+        "device:position",
         {"latitude_i": 413830000, "longitude_i": 24540000, "altitude": 100},
         portnum=3,
     )
@@ -74,7 +77,7 @@ def test_position_is_persisted_not_dropped():
 
 def test_nodeinfo_is_persisted_with_name_tags():
     event = _event(
-        "nodeinfo",
+        "device:nodeinfo",
         {"id": "!abc123", "long_name": "Test Node", "short_name": "TN"},
         portnum=4,
     )
@@ -88,7 +91,7 @@ def test_nodeinfo_is_persisted_with_name_tags():
 
 
 def test_unknown_portnum_falls_back_to_generic_builder():
-    event = _event("portnum:99", {"some_metric": 42, "some_text": "ignored"}, portnum=99)
+    event = _event("device:portnum_99", {"some_metric": 42, "some_text": "ignored"}, portnum=99)
 
     points = get_points(event)
 
@@ -99,14 +102,27 @@ def test_unknown_portnum_falls_back_to_generic_builder():
     assert "some_text" not in line  # non-numeric fields aren't persisted by the fallback
 
 
+def test_an_unknown_portnum_is_stored_under_a_portnum_prefixed_measurement():
+    from common.channels import channels_in
+
+    payload_kind = classify(99, None)
+    payload = {"some_metric": 42}
+
+    line = get_points(_event(payload_kind, payload, portnum=99))[0].to_line_protocol()
+
+    assert payload_kind == "device:portnum_99"
+    assert line.startswith("portnum_99,")
+    assert next(iter(channels_in(payload_kind, payload)))[0] == "portnum_99.some_metric"
+
+
 def test_skip_list_portnums_are_dropped():
-    event = _event("portnum:1", {"text": "hello"}, portnum=1)
+    event = _event(classify(1, None), {"some_metric": 42}, portnum=1)
 
     assert get_points(event) == []
+    assert get_points(_event(classify(99, None), {"some_metric": 42}, portnum=99)) != []
 
 
 def _alarm(**overrides):
-    """The shape both quality checks produce"""
     alarm = {
         "mesh_id": "11111111-2222-3333-4444-555555555555",
         "device_id": 222,

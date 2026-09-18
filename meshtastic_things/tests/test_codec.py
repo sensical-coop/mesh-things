@@ -73,7 +73,7 @@ def test_decode_encrypted_with_correct_key():
     result = codec.decode_message(raw, key_bytes=key_bytes)
 
     assert result is not None
-    assert result["payload_kind"] == "position"
+    assert result["payload_kind"] == "device:position"
     assert result["payload"]["latitude_i"] == 123456789
 
 
