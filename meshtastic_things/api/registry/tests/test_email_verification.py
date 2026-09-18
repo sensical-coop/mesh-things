@@ -10,7 +10,6 @@ from registry.throttling import ResendVerificationThrottle
 
 from .helpers import RegistryTestCase
 
-
 def _extract_token(email) -> str:
     match = re.search(r"token=(\S+)", email.body)
     assert match, email.body

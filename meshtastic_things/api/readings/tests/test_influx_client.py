@@ -1,4 +1,4 @@
-"""Tests for influx route params """
+"""Tests for influx route params"""
 from unittest.mock import MagicMock
 
 from django.test import SimpleTestCase
@@ -31,7 +31,7 @@ class TimeseriesFluxTests(SimpleTestCase):
         return self.client._query_api.query.call_args.args[0]
 
     def test_windowed_query_aggregates_numeric_fields_only(self):
-        """Test for "unsupported input type for mean aggregate: string" """
+        # Guards Flux's 'unsupported input type for mean aggregate: string'.
         flux = self._flux(window="6h")
 
         self.assertIn('import "types"', flux)

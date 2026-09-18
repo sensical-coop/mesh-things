@@ -1,9 +1,4 @@
-"""Offset handling shared by the registry's Kafka consumers.
-
-poll() advances the fetch position, so committing past a record that failed for
-a transient reason loses it silently. Bad data must still be skipped, though,
-or one unparseable record blocks the partition forever.
-"""
+"""Offset handling shared by the registry's Kafka consumers."""
 from unittest.mock import MagicMock
 
 from django.db import IntegrityError, OperationalError
