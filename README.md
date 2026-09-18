@@ -47,5 +47,38 @@ build protobufs locally — see [`scripts/regen-protos.sh`](meshtastic_things/sc
 
 **Warning**: Nothing reaches InfluxDB until a mesh has a **registered gateway** (registration authorizes decoding).
 
+## Layout
 
+| Path | What |
+|---|---|
+| [`bridge/`](meshtastic_things/bridge/) | MQTT → Kafka raw ingest |
+| [`flink/`](meshtastic_things/flink/) | Streaming jobs (full tier): decode/decrypt, calibration, and the two stream-tier quality checks |
+| [`pipeline/`](meshtastic_things/pipeline/) | Pure-Python decode consumer (lite tier), no Flink needed |
+| [`writer/`](meshtastic_things/writer/) | Kafka → InfluxDB and Kafka → Parquet/S3 writers |
+| [`api/`](meshtastic_things/api/) | Django/DRF project, one image with two roles picked by `APP_ROLE`: `registry` (owners, meshes, devices, sensor catalog, postprocessing blueprints) and `readings` (read API over InfluxDB, scoped against registry's own database) |
+| [`quality_worker/`](meshtastic_things/quality_worker/) | Celery batch tier: postprocessing blueprints + completeness analysis |
+| [`common/`](meshtastic_things/common/) | Shared: codec, calibration, detectors, channel naming, algorithm registry |
+| [`examples/`](meshtastic_things/examples/) | Standalone scripts against both API roles |
+| [`tests/`](meshtastic_things/tests/) | pytest suite (`registry` and `readings` have their own Django test runner, under `api/*/tests/`) |
+
+## Docs
+
+| Doc | For |
+|---|---|
+| [tutorial/index.html](docs/tutorial/index.html) | New to this repo: core concepts end to end, plus a real three-bug case study |
+| [architecture.md](docs/architecture.md) | How it fits together, and why |
+| [api-reference.md](docs/api-reference.md) | curl examples for both APIs |
+| [data-quality.md](docs/data-quality.md) | Blueprints, fault detection, alarms |
+| [flink.md](docs/flink.md) | Redeploying jobs, savepoints, the gotchas |
+| [kafka-cookbook.md](docs/kafka-cookbook.md) | Inspecting topics, injecting test messages |
+| [s3-access.md](docs/s3-access.md) | Reading the Parquet archive externally |
+| [deploy.md](docs/deploy.md) | Deploying to a VPS: firewall, TLS, production `.env`, admin UIs |
+| [testing.md](docs/testing.md) | Running the three test suites |
+| [debugging.md](docs/debugging.md) | Logs, health checks, and real bugs hit while building this |
+| [pending.md](docs/pending.md) | The single list of what is still open |
+| [done.md](docs/done.md) | Finished work, kept for the reasoning, plus what was evaluated and rejected |
+| [known-gaps.md](docs/known-gaps.md) | Record of findings from investigations, kept for how they were found |
+
+Also useful: [`api.http` / `api-authenticated.http`](meshtastic_things/examples/) are
+REST Client scratch files covering every endpoint.
 

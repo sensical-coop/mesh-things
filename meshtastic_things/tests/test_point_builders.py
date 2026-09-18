@@ -3,7 +3,6 @@ from writer.point_builders import get_points
 
 from common.portnum_registry import classify
 
-
 def _event(payload_kind: str, payload: dict, **overrides) -> dict:
     event = {
         "node_id": 123,
@@ -17,7 +16,6 @@ def _event(payload_kind: str, payload: dict, **overrides) -> dict:
     }
     event.update(overrides)
     return event
-
 
 def test_telemetry_produces_one_point_with_expected_fields():
     event = _event(
@@ -35,7 +33,6 @@ def test_telemetry_produces_one_point_with_expected_fields():
     assert "node_id=123" in line
     assert "channel_id=LongFast" in line
 
-
 def test_mesh_id_is_tagged_when_present():
     """node_id alone is not unique"""
     event = _event(
@@ -50,14 +47,12 @@ def test_mesh_id_is_tagged_when_present():
     line = points[0].to_line_protocol()
     assert "mesh_id=11111111-2222-3333-4444-555555555555" in line
 
-
 def test_mesh_id_tag_omitted_when_absent():
     event = _event("telemetry:device_metrics", {"time": 1700000010, "device_metrics": {"battery_level": 87}})
 
     points = get_points(event)
 
     assert "mesh_id" not in points[0].to_line_protocol()
-
 
 def test_position_is_persisted_not_dropped():
     event = _event(
@@ -74,7 +69,6 @@ def test_position_is_persisted_not_dropped():
     assert "latitude=41.383" in line
     assert "longitude=2.454" in line
 
-
 def test_nodeinfo_is_persisted_with_name_tags():
     event = _event(
         "device:nodeinfo",
@@ -89,7 +83,6 @@ def test_nodeinfo_is_persisted_with_name_tags():
     assert line.startswith("nodeinfo,")
     assert "short_name=TN" in line
 
-
 def test_unknown_portnum_falls_back_to_generic_builder():
     event = _event("device:portnum_99", {"some_metric": 42, "some_text": "ignored"}, portnum=99)
 
@@ -100,7 +93,6 @@ def test_unknown_portnum_falls_back_to_generic_builder():
     assert line.startswith("portnum_99,")
     assert "some_metric=42" in line
     assert "some_text" not in line  # non-numeric fields aren't persisted by the fallback
-
 
 def test_an_unknown_portnum_is_stored_under_a_portnum_prefixed_measurement():
     from common.channels import channels_in
@@ -114,13 +106,11 @@ def test_an_unknown_portnum_is_stored_under_a_portnum_prefixed_measurement():
     assert line.startswith("portnum_99,")
     assert next(iter(channels_in(payload_kind, payload)))[0] == "portnum_99.some_metric"
 
-
 def test_skip_list_portnums_are_dropped():
     event = _event(classify(1, None), {"some_metric": 42}, portnum=1)
 
     assert get_points(event) == []
     assert get_points(_event(classify(99, None), {"some_metric": 42}, portnum=99)) != []
-
 
 def _alarm(**overrides):
     alarm = {
@@ -136,7 +126,6 @@ def _alarm(**overrides):
     alarm.update(overrides)
     return alarm
 
-
 def test_alarm_event_is_persisted():
     points = get_points(_alarm())
 
@@ -145,7 +134,6 @@ def test_alarm_event_is_persisted():
     assert line.startswith("alarms,")
     assert "detector=flat_value" in line
     assert "value=21.5" in line
-
 
 def test_alarm_point_is_tagged_with_the_full_identity():
     # node_id alone isn't globally unique
@@ -156,13 +144,11 @@ def test_alarm_point_is_tagged_with_the_full_identity():
     assert r"channel=environment_metrics.temperature" in line
     assert "source=stream" in line
 
-
 def test_batch_tier_alarm_is_persisted_too():
     line = get_points(_alarm(detector="completeness", source="batch", value=0.5))[0].to_line_protocol()
 
     assert "detector=completeness" in line
     assert "source=batch" in line
-
 
 def test_device_wide_alarm_omits_the_channel_tag():
     # absence checks for devices.
@@ -170,7 +156,6 @@ def test_device_wide_alarm_omits_the_channel_tag():
 
     assert "channel=" not in line
     assert "detector=absence" in line
-
 
 def test_legacy_alarm_shape_still_writes():
     legacy = {
@@ -188,13 +173,11 @@ def test_legacy_alarm_shape_still_writes():
     assert r"channel=temperature" in line
     assert "mesh_id" not in line
 
-
 def test_alarm_without_a_value_still_writes_its_message():
     line = get_points(_alarm(value=None))[0].to_line_protocol()
 
     assert "value=" not in line
     assert "message=" in line
-
 
 def test_multiple_telemetry_submetrics_produce_multiple_points():
     event = _event(

@@ -8,7 +8,6 @@ from registry.models import Mesh, Owner
 
 from .helpers import RegistryTestCase
 
-
 def _alarm(mesh_id, device_id=1, detector="absence", channel=None, **overrides):
     event = {
         "mesh_id": str(mesh_id),

@@ -8,7 +8,6 @@ from registry.models import DeviceTelemetryVariant, Measurement, MeasurementType
 
 from .helpers import RegistryTestCase, SeededCatalogTestCase
 
-
 def _seed_discovery(
     mesh: dict,
     device_id: int,
@@ -16,8 +15,6 @@ def _seed_discovery(
     fields: list[str],
     field_units: dict[str, str | None] | None = None,
 ) -> None:
-    """Drives the real consume_sensor_discovery.py upsert logic with a
-    synthetic event - mirrors test_devices.py's _seed_device_sighting."""
     event = {
         "mesh_id": mesh["id"],
         "device_id": device_id,
@@ -70,9 +67,10 @@ class SensorDiscoveryConsumerTests(SeededCatalogTestCase):
         )
 
     def test_published_units_fill_in_a_computed_channels_empty_catalog_row(self):
-        """A derived channel has no protobuf field to inherit a unit from, so
-        its producer sends one - otherwise the row is created bare and nothing
-        downstream can label the series. See quality_worker's publish_discovery."""
+        """A derived channel has no protobuf field to inherit a unit from, so its producer
+        sends one - otherwise the row is created bare and nothing downstream can label the
+        series."""
+
         owner = self.create_owner()
         mesh = self.create_mesh(owner)
         self.create_node(owner, mesh, device_id=1)
@@ -102,9 +100,9 @@ class SensorDiscoveryConsumerTests(SeededCatalogTestCase):
         )
 
     def test_published_units_never_overwrite_a_curated_one(self):
-        """Discovery is a default, not an authority: a superuser correcting the
-        catalog through the API outranks it, and a producer republishing every
-        run must not undo that."""
+        """Discovery is a default, not an authority: a superuser correcting the catalog through
+        the API outranks it, and a producer republishing every run must not undo that."""
+
         owner = self.create_owner()
         mesh = self.create_mesh(owner)
         self.create_node(owner, mesh, device_id=1)
@@ -176,9 +174,7 @@ class SensorDiscoveryConsumerTests(SeededCatalogTestCase):
 
 
 class DeviceTelemetryVariantsEndpointTests(RegistryTestCase):
-    """GET /devices/{uuid}/telemetry-variants - which telemetry types this device
-    reports. Split from the old /sensors, which conflated this with the
-    channels underneath (see DeviceMeasurementsEndpointTests)."""
+    """GET /devices/{uuid}/telemetry-variants - which telemetry types this device reports."""
 
     def test_lists_variants_without_nesting_measurements(self):
         owner = self.create_owner()
@@ -232,8 +228,8 @@ class DeviceTelemetryVariantsEndpointTests(RegistryTestCase):
 
 
 class DeviceMeasurementsEndpointTests(SeededCatalogTestCase):
-    """GET /devices/{uuid}/measurements - a flat list of the channels a device
-    actually produces, across all its variants."""
+    """GET /devices/{uuid}/measurements - a flat list of the channels a device actually
+    produces, across all its variants."""
 
     def test_flat_list_carries_channel_and_measurement_type(self):
         owner = self.create_owner()
@@ -535,9 +531,8 @@ class TelemetryVariantMeasurementApiTests(SeededCatalogTestCase):
 
 
 class MeasurementTypeFilterTests(SeededCatalogTestCase):
-    """The catalog mixes namespaces - telemetry:<variant> for real sensor
-    fields, computed:<measurement> for what this pipeline works out - so
-    filtering matters."""
+    """The catalog mixes namespaces - telemetry:<variant> for real sensor fields,
+    computed:<measurement> for what this pipeline works out - so filtering matters."""
 
     def setUp(self):
         super().setUp()
@@ -587,9 +582,8 @@ class MeasurementTypeFilterTests(SeededCatalogTestCase):
 
 
 class QualityAndDerivedCatalogTests(SeededCatalogTestCase):
-    """Computed channels (blueprint outputs, quality metrics) are catalogued
-    and per-device-linked the same way measured ones are - see
-    docs/data-quality.md#where-everything-lives."""
+    """Computed channels (blueprint outputs, quality metrics) are catalogued and per-device-
+    linked the same way measured ones are - see docs/data-quality.md#where-everything-lives."""
 
     def setUp(self):
         super().setUp()

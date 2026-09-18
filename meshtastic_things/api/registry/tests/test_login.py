@@ -10,7 +10,6 @@ from registry.views import LOGIN_FAILED_RATE_LIMIT
 
 from .helpers import RegistryTestCase
 
-
 def _extract_token(email) -> str:
     match = re.search(r"token=(\S+)", email.body)
     assert match, email.body

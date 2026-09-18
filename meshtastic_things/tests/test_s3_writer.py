@@ -10,8 +10,7 @@ from writer.s3_writer import PARTITION_FILENAME, UNKNOWN_MESH, S3Writer, _flatte
 
 
 class _FakeS3:
-    """In-memory FakeS3
-    """
+    """In-memory FakeS3"""
 
     def __init__(self):
         self.objects: dict[str, bytes] = {}
@@ -32,14 +31,12 @@ class _FakeS3:
     def rows(self, key) -> list[dict]:
         return pq.read_table(pa.BufferReader(self.objects[key])).to_pylist()
 
-
 def _make_s3_writer():
     writer = object.__new__(S3Writer)
     writer.s3_client = _FakeS3()
     writer.s3_bucket = "bucket"
     writer.s3_prefix = "telemetry"
     return writer
-
 
 def _record(node_id, mesh_id=None, packet_id=1, rx_time=1757000000):
     event = {"node_id": node_id, "packet_id": packet_id, "rx_time": rx_time,
@@ -52,13 +49,11 @@ def _record(node_id, mesh_id=None, packet_id=1, rx_time=1757000000):
 MESH_A = "11111111-2222-3333-4444-555555555555"
 MESH_B = "99999999-8888-7777-6666-555544443333"
 
-
 def test_flatten_omits_mesh_id_because_it_is_the_partition_key():
     row = _flatten({"node_id": 123, "mesh_id": MESH_A, "payload": {}})
 
     assert "mesh_id" not in row
     assert row["node_id"] == 123
-
 
 def test_flush_writes_one_object_per_mesh_regardless_of_device_count():
     writer = _make_s3_writer()
@@ -76,7 +71,6 @@ def test_flush_writes_one_object_per_mesh_regardless_of_device_count():
     assert any(f"mesh_id={MESH_B}/dt=" in k for k in keys)
     assert not any("node_id=" in k for k in keys)
 
-
 def test_a_record_without_a_mesh_id_keeps_the_tree_uniform():
     writer = _make_s3_writer()
 
@@ -86,14 +80,12 @@ def test_a_record_without_a_mesh_id_keeps_the_tree_uniform():
     assert key.startswith(f"telemetry/mesh_id={UNKNOWN_MESH}/dt=")
     assert key.endswith(PARTITION_FILENAME)
 
-
 def test_flush_is_a_noop_for_empty_records():
     writer = _make_s3_writer()
 
     writer.flush([])
 
     assert writer.s3_client.put_count == 0
-
 
 def test_a_second_flush_rolls_into_the_same_object():
     writer = _make_s3_writer()
@@ -105,7 +97,6 @@ def test_a_second_flush_rolls_into_the_same_object():
     key = next(iter(writer.s3_client.objects))
     assert sorted(r["packet_id"] for r in writer.s3_client.rows(key)) == [1, 2]
 
-
 def test_replaying_the_same_records_does_not_duplicate_rows():
     writer = _make_s3_writer()
     records = [_record(1, MESH_A, packet_id=1), _record(1, MESH_A, packet_id=2)]
@@ -115,7 +106,6 @@ def test_replaying_the_same_records_does_not_duplicate_rows():
 
     key = next(iter(writer.s3_client.objects))
     assert sorted(r["packet_id"] for r in writer.s3_client.rows(key)) == [1, 2]
-
 
 def test_an_unreadable_partition_is_not_overwritten():
     writer = _make_s3_writer()
@@ -127,7 +117,6 @@ def test_an_unreadable_partition_is_not_overwritten():
         writer.flush([_record(1, MESH_A, packet_id=2)])
 
     assert writer.s3_client.objects == before
-
 
 def test_rewind_seeks_every_partition_back_to_its_commit():
     # poll() has already advanced the fetch position and a failed flush has to
@@ -142,7 +131,6 @@ def test_rewind_seeks_every_partition_back_to_its_commit():
 
     assert sorted(c.args[1] for c in writer.kafka_consumer.seek.call_args_list) == [10, 40]
 
-
 def test_rewind_starts_from_the_beginning_when_nothing_is_committed():
     writer = _make_s3_writer()
     partition = object()
@@ -154,7 +142,6 @@ def test_rewind_starts_from_the_beginning_when_nothing_is_committed():
 
     writer.kafka_consumer.seek_to_beginning.assert_called_once_with(partition)
     writer.kafka_consumer.seek.assert_not_called()
-
 
 def test_rows_keep_a_declared_schema_across_flushes():
     # An all-null column in one batch must not get a different type from the next.
@@ -168,7 +155,6 @@ def test_rows_keep_a_declared_schema_across_flushes():
     assert schema.field("gateway_id").type == pa.int64()
     assert schema.field("node_id").type == pa.int64()
 
-
 def _materialise(writer, root):
     """Write the fake bucket out as a directory tree, the way a reader sees it."""
     for key, body in writer.s3_client.objects.items():
@@ -176,7 +162,6 @@ def _materialise(writer, root):
         path.parent.mkdir(parents=True, exist_ok=True)
         path.write_bytes(body)
     return root / writer.s3_prefix
-
 
 def test_archive_reads_back_through_pyarrow_and_pandas(tmp_path):
     """The layout has to survive a plain read."""

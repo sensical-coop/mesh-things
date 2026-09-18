@@ -29,7 +29,6 @@ from common.units import (
 def test_known_units_classify(unit, expected):
     assert quantity_kind_for(unit) == expected
 
-
 def test_unknown_unit_is_none_not_other():
     """Test for 'We don't know' vs 'we know it's uncategorised'"""
     # Only the second should be in the catalog
@@ -37,14 +36,12 @@ def test_unknown_unit_is_none_not_other():
     assert quantity_kind_for(None) is None
     assert quantity_kind_for("") is None
 
-
 def test_every_quality_channel_has_a_classifiable_unit():
     # Important so that an unclassifiable channel never ends
     # with a null quantity_kind.
     for field_name, (unit, description) in QUALITY_CHANNELS.items():
         assert quantity_kind_for(unit) is not None, f"{field_name} has unclassifiable unit {unit!r}"
         assert description, f"{field_name} has no description"
-
 
 def test_algorithm_output_units_are_all_in_the_table():
     """Names an wrongly decorated algorithm rather than breaking the whole collection."""

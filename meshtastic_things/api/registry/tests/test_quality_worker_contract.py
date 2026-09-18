@@ -3,7 +3,6 @@
 from registry.models import MeasurementType
 from .helpers import SeededCatalogTestCase, RegistryTestCase
 
-
 def _seed_quality_discovery(test, mesh, device_id):
     from .test_sensor_discovery import _seed_discovery
 

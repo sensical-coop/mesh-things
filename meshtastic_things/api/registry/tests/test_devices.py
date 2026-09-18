@@ -6,11 +6,9 @@ from registry.serializers import DeviceReadSerializer
 
 from .helpers import RegistryTestCase
 
-
 def _get_device_admin_keys(device_id: str) -> list[str]:
     """Read admin_keys_b64 straight from the DB"""
     return list(Device.objects.get(pk=uuid.UUID(device_id)).admin_keys_b64)
-
 
 def _seed_device_sighting(mesh: dict, device_id: int, **telemetry) -> None:
     event = {"mesh_id": mesh["id"], "device_id": device_id, "op": "upsert", **telemetry}

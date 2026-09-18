@@ -126,11 +126,7 @@ class AuthenticationTests(ReadingsTestCase):
 
 
 class DeviceScopingTests(ReadingsTestCase):
-    """A key reaches the meshes it owns, and nothing else.
-
-    Scoping is per mesh: a Device has no owner, and non-gateway devices are
-    created from observed traffic rather than registered.
-    """
+    """A key reaches the meshes it owns, and nothing else."""
 
     def test_an_unregistered_node_on_your_own_mesh_is_readable(self):
         # Nodes are auto-discovered, so telemetry can arrive before the Device
@@ -269,8 +265,8 @@ class LatestAllTests(ReadingsTestCase):
         self.fake_client.latest_all.assert_not_called()
 
     def test_a_reading_speaks_the_same_vocabulary_as_the_catalog(self):
-        """Storage flattens `telemetry:device_metrics` to `device_metrics`;
-        the API must not hand that back as the payload_kind."""
+        """Storage flattens `telemetry:device_metrics` to `device_metrics`; the API must not
+        hand that back as the payload_kind."""
         reading = self.client.get(self.node_url("latest"), **self.auth_headers()).json()["readings"][0]
 
         self.assertEqual(reading["payload_kind"], "telemetry:device_metrics")
@@ -286,8 +282,8 @@ class LatestAllTests(ReadingsTestCase):
         self.assertEqual(reading["field_name"], "battery_level")
 
     def test_channel_is_always_payload_kind_and_field_name(self):
-        """The three fields have to agree, or a consumer cannot join a reading
-        to its catalog row."""
+        """The three fields have to agree, or a consumer cannot join a reading to its catalog
+        row."""
         for reading in self.client.get(self.node_url("latest"), **self.auth_headers()).json()["readings"]:
             with self.subTest(channel=reading["channel"]):
                 measurement = reading["payload_kind"].split(":", 1)[-1]

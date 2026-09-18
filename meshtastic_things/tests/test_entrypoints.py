@@ -15,7 +15,6 @@ ENTRY_POINTS = _ENTRY.findall(SETUP.read_text())
 def _module_path(module: str) -> Path:
     return ROOT.joinpath(*module.split(".")).with_suffix(".py")
 
-
 def test_setup_py_declares_entry_points():
     assert ENTRY_POINTS, "no console_scripts found - did setup.py's format change?"
 

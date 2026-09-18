@@ -228,4 +228,6 @@ caddy/credentials/*
 
 # Convention to avoid commiting local files
 *ignore.*
+# Internal files
 plans/
+pending*

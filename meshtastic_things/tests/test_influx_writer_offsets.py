@@ -1,8 +1,4 @@
-"""Offset handling for the InfluxDB writer.
-
-poll() advances the fetch position, so a batch that isn't committed is not
-redelivered - it has to be seeked back to explicitly.
-"""
+"""Offset handling for the InfluxDB writer."""
 import asyncio
 import json
 from unittest.mock import AsyncMock, MagicMock, patch
@@ -28,7 +24,6 @@ class _Partition:
 
 TOPIC_PARTITION = _Partition()
 
-
 def _telemetry(node_id: int) -> dict:
     return {
         "node_id": node_id,
@@ -38,7 +33,6 @@ def _telemetry(node_id: int) -> dict:
         "payload_kind": "telemetry:environment_metrics",
         "payload": {"environment_metrics": {"temperature": 21.5}},
     }
-
 
 def _make_writer(monkeypatch):
     monkeypatch.setenv("INFLUX__TOKEN", "t")
@@ -51,14 +45,12 @@ def _make_writer(monkeypatch):
     writer.kafka_consumer = MagicMock()
     return writer
 
-
 def _influx_client(write_side_effect=None):
     client = MagicMock()
     client.write_api.return_value.write = AsyncMock(side_effect=write_side_effect)
     client.__aenter__ = AsyncMock(return_value=client)
     client.__aexit__ = AsyncMock(return_value=False)
     return client
-
 
 def test_successful_write_commits_and_does_not_rewind(monkeypatch):
     writer = _make_writer(monkeypatch)
@@ -69,7 +61,6 @@ def test_successful_write_commits_and_does_not_rewind(monkeypatch):
 
     writer.kafka_consumer.commit.assert_called_once()
     writer.kafka_consumer.seek.assert_not_called()
-
 
 def test_failed_write_rewinds_to_the_start_of_the_batch_and_does_not_commit(monkeypatch):
     writer = _make_writer(monkeypatch)
@@ -82,7 +73,6 @@ def test_failed_write_rewinds_to_the_start_of_the_batch_and_does_not_commit(monk
     # Rewound to the first offset of the batch, not the last.
     writer.kafka_consumer.seek.assert_called_once_with(TOPIC_PARTITION, 10)
     writer.kafka_consumer.commit.assert_not_called()
-
 
 def test_batch_with_nothing_to_persist_still_commits(monkeypatch):
     # device:portnum_1 is in SKIP_PAYLOAD_KINDS, so the batch yields no points.
@@ -99,7 +89,6 @@ def test_batch_with_nothing_to_persist_still_commits(monkeypatch):
     writer.kafka_consumer.commit.assert_called_once()
     writer.kafka_consumer.seek.assert_not_called()
 
-
 def test_a_malformed_record_does_not_block_the_batch(monkeypatch):
     writer = _make_writer(monkeypatch)
     bad = _Record(10, _telemetry(1))
@@ -112,7 +101,6 @@ def test_a_malformed_record_does_not_block_the_batch(monkeypatch):
     # Unparseable records are skipped, not retried - only the good one is written.
     writer.kafka_consumer.commit.assert_called_once()
     writer.kafka_consumer.seek.assert_not_called()
-
 
 def test_rewind_covers_every_partition_in_the_batch(monkeypatch):
     writer = _make_writer(monkeypatch)

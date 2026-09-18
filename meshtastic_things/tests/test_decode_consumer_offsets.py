@@ -1,9 +1,4 @@
-"""Offset handling for the lite decode consumer.
-
-poll() advances the fetch position, so a batch that isn't committed is not
-redelivered. Unlike the InfluxDB writer this publishes per record, so the
-rewind point is the record that failed, not the start of the batch.
-"""
+"""Offset handling for the lite decode consumer."""
 from unittest.mock import MagicMock, patch
 
 from pipeline.decode_consumer import DecodeConsumer
@@ -20,7 +15,6 @@ class _Partition:
         self.topic = "mesh.telemetry.raw.v1"
         self.partition = partition
 
-
 def _make_consumer():
     consumer = object.__new__(DecodeConsumer)
     consumer.raw_consumer = MagicMock()
@@ -28,10 +22,8 @@ def _make_consumer():
     consumer.rejected_nodes = set()
     return consumer
 
-
 def _events(node_id: int) -> dict:
     return {"decoded": {"node_id": node_id}}
-
 
 def test_clean_batch_commits_and_does_not_rewind():
     consumer = _make_consumer()
@@ -45,7 +37,6 @@ def test_clean_batch_commits_and_does_not_rewind():
     assert consumer._publish.call_count == 3
     consumer.raw_consumer.commit.assert_called_once()
     consumer.raw_consumer.seek.assert_not_called()
-
 
 def test_publish_failure_rewinds_to_the_failed_record_not_the_batch_start():
     consumer = _make_consumer()
@@ -62,7 +53,6 @@ def test_publish_failure_rewinds_to_the_failed_record_not_the_batch_start():
     # Committing the rewound position is what makes the retry durable.
     consumer.raw_consumer.commit.assert_called_once()
 
-
 def test_publish_failure_stops_reading_that_partition():
     consumer = _make_consumer()
     consumer._publish = MagicMock(side_effect=[None, Exception("kafka down"), None])
@@ -75,7 +65,6 @@ def test_publish_failure_stops_reading_that_partition():
     # Publishing 12 after 11 failed would put it on the topic ahead of 11, and
     # then republish it after the rewind.
     assert consumer._publish.call_count == 2
-
 
 def test_an_undecodable_record_is_skipped_not_retried():
     consumer = _make_consumer()
@@ -90,7 +79,6 @@ def test_an_undecodable_record_is_skipped_not_retried():
     consumer.raw_consumer.commit.assert_called_once()
     consumer.raw_consumer.seek.assert_not_called()
 
-
 def test_a_dropped_packet_still_commits():
     # decode_packet returns None for an unregistered gateway or a rejected node.
     consumer = _make_consumer()
@@ -104,7 +92,6 @@ def test_a_dropped_packet_still_commits():
     consumer._publish.assert_not_called()
     consumer.raw_consumer.commit.assert_called_once()
     consumer.raw_consumer.seek.assert_not_called()
-
 
 def test_only_the_failing_partition_is_rewound():
     consumer = _make_consumer()

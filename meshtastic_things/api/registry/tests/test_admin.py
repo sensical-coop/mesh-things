@@ -93,8 +93,8 @@ class AdminRegistrationTests(RegistryTestCase):
                 self.assertIn(model, registered)
 
     def test_device_admin_calls_the_node_number_node_id(self):
-        """The API renamed this to node_id; the admin was the last place still
-        showing the raw column name."""
+        """The API renamed this to node_id; the admin was the last place still showing the raw
+        column name."""
         device_admin = admin.site._registry[Device]
 
         self.assertIn("node_id", device_admin.list_display)
@@ -109,12 +109,7 @@ class AdminRegistrationTests(RegistryTestCase):
 
 
 class AdminMountTests(RegistryTestCase):
-    """The admin is the one route with a trailing slash.
-
-    Mounted at `admin` rather than `admin/`, every page reverses to
-    `/adminregistry/...` and the whole admin is unreachable past its index. The
-    API sets `APPEND_SLASH = False`, so nothing corrects that for us.
-    """
+    """The admin is the one route with a trailing slash."""
 
     def test_admin_pages_live_under_a_slashed_prefix(self):
         self.assertEqual(reverse("admin:index"), "/admin/")
