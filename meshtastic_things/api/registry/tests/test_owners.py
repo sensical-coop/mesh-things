@@ -74,6 +74,167 @@ class OwnerPublicDirectoryTests(RegistryTestCase):
 
         self.assertTrue(resp.json()["is_superuser"])
 
+    def test_a_plain_owner_reading_the_list_gets_the_public_shape(self):
+        """The list stays one shape, so an owner's own row is not widened there."""
+        owner = self.create_owner(name="Frank", email="frank-public@example.com")
+
+        listed = self.client.get("/owners", **self.auth_headers(owner)).json()[0]
+
+        self.assertNotIn("email", listed)
+        self.assertNotIn("is_superuser", listed)
+
+    def test_an_owner_reads_their_own_detail_in_full(self):
+        owner = self.create_owner(name="Gail", email="gail-self@example.com")
+
+        body = self.client.get(f"/owners/{owner['id']}", **self.auth_headers(owner)).json()
+
+        self.assertEqual(body["email"], "gail-self@example.com")
+        self.assertFalse(body["is_superuser"])
+        self.assertTrue(body["is_active"])
+        self.assertNotIn("api_key", body)
+
+    def test_an_owner_reading_someone_elses_detail_gets_the_public_shape(self):
+        owner = self.create_owner(name="Hugo", email="hugo-self@example.com")
+        other = self.create_owner(name="Ivy", email="ivy-self@example.com")
+
+        body = self.client.get(f"/owners/{other['id']}", **self.auth_headers(owner)).json()
+
+        self.assertNotIn("email", body)
+        self.assertNotIn("is_superuser", body)
+
+    def test_anonymous_detail_is_unchanged_by_self_access(self):
+        owner = self.create_owner(name="Jo", email="jo-self@example.com")
+
+        body = self.client.get(f"/owners/{owner['id']}").json()
+
+        self.assertEqual(sorted(body), ["created_at", "id", "name"])
+
+
+class OwnerFullRecordFieldTests(RegistryTestCase):
+    """The fields the full record carries beyond the public directory."""
+
+    EXPECTED = [
+        "created_at",
+        "email",
+        "email_verification_sent_at",
+        "email_verified_at",
+        "id",
+        "is_active",
+        "is_staff",
+        "is_superuser",
+        "last_login",
+        "name",
+    ]
+
+    def test_profile_carries_exactly_the_documented_fields(self):
+        owner = self.create_owner(name="Kim", email="kim-fields@example.com")
+
+        body = self.client.get("/owners/me", **self.auth_headers(owner)).json()
+
+        self.assertEqual(sorted(k for k in body if k != "devices"), self.EXPECTED)
+
+    def test_own_detail_carries_the_same_fields_as_the_profile(self):
+        owner = self.create_owner(name="Lee", email="lee-fields@example.com")
+
+        profile = self.client.get("/owners/me", **self.auth_headers(owner)).json()
+        detail = self.client.get(f"/owners/{owner['id']}", **self.auth_headers(owner)).json()
+
+        self.assertEqual(sorted(detail), sorted(k for k in profile if k != "devices"))
+
+    def test_is_staff_is_reported_separately_from_is_superuser(self):
+        """Django admin access is a distinct capability - promoting to superuser
+        alone does not grant it."""
+        owner = self.create_owner(name="Mo", email="mo-fields@example.com")
+        self.promote_to_superuser(owner)
+
+        body = self.client.get("/owners/me", **self.auth_headers(owner)).json()
+
+        self.assertTrue(body["is_superuser"])
+        self.assertFalse(body["is_staff"])
+
+    def test_last_login_is_null_until_a_password_login(self):
+        """A bearer-key request never updates it."""
+        owner = self.create_owner(name="Nia", email="nia-fields@example.com")
+
+        before = self.client.get("/owners/me", **self.auth_headers(owner)).json()
+        self.assertIsNone(before["last_login"])
+
+        self.client.post(
+            "/owners/login",
+            {"email": "nia-fields@example.com", "password": self.DEFAULT_PASSWORD},
+            format="json",
+        )
+
+        after = self.client.get("/owners/me", **self.auth_headers(owner)).json()
+        self.assertIsNotNone(after["last_login"])
+
+    def test_email_verification_sent_at_is_set_at_signup(self):
+        owner = self.create_owner(name="Ola", email="ola-fields@example.com")
+
+        body = self.client.get("/owners/me", **self.auth_headers(owner)).json()
+
+        self.assertIsNotNone(body["email_verification_sent_at"])
+
+    def test_the_public_shape_carries_none_of_them(self):
+        owner = self.create_owner(name="Pia", email="pia-fields@example.com")
+
+        body = self.client.get(f"/owners/{owner['id']}").json()
+
+        for field in ("email", "is_staff", "is_superuser", "last_login", "email_verification_sent_at"):
+            self.assertNotIn(field, body)
+
+
+class OwnerSuperuserDirectoryTests(RegistryTestCase):
+    """A superuser reads the directory in full, on the same routes."""
+
+    def setUp(self):
+        super().setUp()
+        self.admin = self.create_owner(name="Admin", email="admin-directory@example.com")
+        self.promote_to_superuser(self.admin)
+
+    def test_list_includes_email_and_superuser_status(self):
+        self.create_owner(name="Gina", email="gina-directory@example.com")
+
+        resp = self.client.get("/owners", **self.auth_headers(self.admin))
+
+        self.assertEqual(resp.status_code, 200)
+        by_email = {o["email"]: o for o in resp.json()}
+        self.assertTrue(by_email["admin-directory@example.com"]["is_superuser"])
+        self.assertFalse(by_email["gina-directory@example.com"]["is_superuser"])
+
+    def test_detail_includes_email_and_verification_state(self):
+        other = self.create_owner(name="Hank", email="hank-directory@example.com")
+
+        resp = self.client.get(f"/owners/{other['id']}", **self.auth_headers(self.admin))
+
+        self.assertEqual(resp.status_code, 200)
+        body = resp.json()
+        self.assertEqual(body["email"], "hank-directory@example.com")
+        self.assertFalse(body["is_superuser"])
+        self.assertTrue(body["is_active"])
+        self.assertIsNotNone(body["email_verified_at"])
+
+    def test_detail_of_an_unverified_owner_reports_it(self):
+        resp = self.client.post(
+            "/owners",
+            {"name": "Iris", "email": "iris-directory@example.com", "password": self.DEFAULT_PASSWORD},
+            format="json",
+        )
+        unverified_id = resp.json()["id"]
+
+        body = self.client.get(f"/owners/{unverified_id}", **self.auth_headers(self.admin)).json()
+
+        self.assertFalse(body["is_active"])
+        self.assertIsNone(body["email_verified_at"])
+
+    def test_the_api_key_is_never_included(self):
+        self.create_owner(name="Jane", email="jane-directory@example.com")
+
+        listed = self.client.get("/owners", **self.auth_headers(self.admin)).json()
+
+        for body in listed:
+            self.assertNotIn("api_key", body)
+
 
 class OwnerMeTests(RegistryTestCase):
     def test_get_own_owner_profile(self):
@@ -96,7 +257,7 @@ class OwnerMeTests(RegistryTestCase):
         devices = resp.json()["devices"]
         self.assertEqual(len(devices), 1)
         self.assertEqual(devices[0]["mesh_id"], mesh["id"])
-        self.assertEqual(devices[0]["device_id"], 7)
+        self.assertEqual(devices[0]["node_id"], 7)
         self.assertEqual(devices[0]["label"], "office gateway")
         self.assertEqual(devices[0]["is_gateway"], True)
         self.assertEqual(devices[0]["admin_keys_b64"], [])  # the caller owns this device
@@ -204,7 +365,7 @@ class OwnerDeletionCascadeTests(RegistryTestCase):
         allowed_gateway = self.create_gateway(owner, mesh, device_id=1)
         rejected_gateway = self.create_gateway(owner, mesh, device_id=2)
         self.client.put(
-            f"/devices/{rejected_gateway['id']}", {"is_allowed": False}, format="json", **self.auth_headers(owner)
+            f"/devices/{rejected_gateway['uuid']}", {"is_allowed": False}, format="json", **self.auth_headers(owner)
         )
         self.fake_publisher.publish_gateway_delete.reset_mock()
 
@@ -213,14 +374,14 @@ class OwnerDeletionCascadeTests(RegistryTestCase):
         self.assertEqual(resp.status_code, 204)
         self.assertEqual(self.fake_publisher.publish_gateway_delete.call_count, 1)
         self.assertFalse(
-            Device.objects.filter(pk__in=[allowed_gateway["id"], rejected_gateway["id"]]).exists()
+            Device.objects.filter(pk__in=[allowed_gateway["uuid"], rejected_gateway["uuid"]]).exists()
         )
 
     def test_delete_own_owner_unrejects_rejected_nodes(self):
         owner = self.create_owner(name="Alice", email="alice-node-cascade@example.com")
         mesh = self.create_mesh(owner)
         node = self.create_node(owner, mesh, device_id=5)
-        self.client.put(f"/devices/{node['id']}", {"is_allowed": False}, format="json", **self.auth_headers(owner))
+        self.client.put(f"/devices/{node['uuid']}", {"is_allowed": False}, format="json", **self.auth_headers(owner))
         self.fake_publisher.publish_node_unreject.reset_mock()
 
         resp = self.client.delete("/owners/me", **self.auth_headers(owner))

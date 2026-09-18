@@ -19,19 +19,19 @@ class SuperuserBypassTests(RegistryTestCase):
             200,
         )
         self.assertEqual(
-            self.client.get(f"/devices/{gateway['id']}", **self.auth_headers(admin)).status_code, 200
+            self.client.get(f"/devices/{gateway['uuid']}", **self.auth_headers(admin)).status_code, 200
         )
         self.assertEqual(
             self.client.put(
-                f"/devices/{gateway['id']}",
+                f"/devices/{gateway['uuid']}",
                 {"label": "renamed by admin"},
                 format="json",
                 **self.auth_headers(admin),
             ).status_code,
             200,
         )
-        self.assertEqual(self.client.get(f"/devices/{node['id']}", **self.auth_headers(admin)).status_code, 200)
-        self.assertEqual(self.client.delete(f"/devices/{node['id']}", **self.auth_headers(admin)).status_code, 204)
+        self.assertEqual(self.client.get(f"/devices/{node['uuid']}", **self.auth_headers(admin)).status_code, 200)
+        self.assertEqual(self.client.delete(f"/devices/{node['uuid']}", **self.auth_headers(admin)).status_code, 204)
 
     def test_superuser_list_routes_return_every_owner(self):
         owner_a = self.create_owner(name="A", email="su-list-a@example.com")
@@ -60,7 +60,7 @@ class SuperuserBypassTests(RegistryTestCase):
 
         resp = self.client.post(
             "/devices",
-            {"device_id": 99, "mesh_id": mesh["id"], "is_gateway": True},
+            {"node_id": 99, "mesh_id": mesh["id"], "is_gateway": True},
             format="json",
             **self.auth_headers(admin),
         )
@@ -76,7 +76,7 @@ class SuperuserBypassTests(RegistryTestCase):
 
         self.assertNotIn("psk_b64", self.client.get(f"/meshes/{mesh['id']}", **self.auth_headers(admin)).json())
         self.assertNotIn(
-            "admin_keys_b64", self.client.get(f"/devices/{node['id']}", **self.auth_headers(admin)).json()
+            "admin_keys_b64", self.client.get(f"/devices/{node['uuid']}", **self.auth_headers(admin)).json()
         )
 
     def test_non_superuser_still_scoped_to_own_resources(self):

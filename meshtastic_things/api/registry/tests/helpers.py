@@ -63,7 +63,7 @@ class RegistryTestCase(APITestCase):
     def create_gateway(self, owner, mesh, device_id=1, label=None) -> dict:
         resp = self.client.post(
             "/devices",
-            {"device_id": device_id, "mesh_id": mesh["id"], "is_gateway": True, "label": label},
+            {"node_id": device_id, "mesh_id": mesh["id"], "is_gateway": True, "label": label},
             format="json",
             **self.auth_headers(owner),
         )
@@ -74,7 +74,7 @@ class RegistryTestCase(APITestCase):
         resp = self.client.post(
             "/devices",
             {
-                "device_id": device_id,
+                "node_id": device_id,
                 "mesh_id": mesh["id"],
                 "is_gateway": False,
                 "label": label,

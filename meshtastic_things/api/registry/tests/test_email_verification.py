@@ -75,7 +75,7 @@ class VerifyEmailTests(RegistryTestCase):
         self.assertEqual(
             self.client.post(
                 "/devices",
-                {"device_id": 1, "mesh_id": "00000000-0000-0000-0000-000000000000", "is_gateway": False},
+                {"node_id": 1, "mesh_id": "00000000-0000-0000-0000-000000000000", "is_gateway": False},
                 format="json",
                 **self.auth_headers(owner),
             ).status_code,

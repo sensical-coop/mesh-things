@@ -25,7 +25,7 @@ class MetricsViewTests(RegistryTestCase):
         before = self.client.get("/metrics").json()["active_gateways"]
 
         self.client.put(
-            f"/devices/{gateway['id']}",
+            f"/devices/{gateway['uuid']}",
             {"is_allowed": False},
             format="json",
             **self.auth_headers(owner),

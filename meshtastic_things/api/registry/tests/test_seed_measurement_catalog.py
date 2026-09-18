@@ -26,13 +26,13 @@ class SeedMeasurementCatalogTests(TestCase):
 
         seeded = set(TelemetryVariant.objects.values_list("payload_kind", flat=True))
 
-        self.assertEqual(seeded, _EXPECTED_VARIANTS | {"quality"})
+        self.assertEqual(seeded, _EXPECTED_VARIANTS | {"computed:quality"})
 
     def test_seeds_the_quality_namespace_with_units(self):
         call_command("seed_measurement_catalog", stdout=StringIO())
 
         rows = {
-            m.field_name: m for m in MeasurementType.objects.filter(payload_kind="quality")
+            m.field_name: m for m in MeasurementType.objects.filter(payload_kind="computed:quality")
         }
         self.assertEqual(
             set(rows), {"completeness_ratio", "observed", "expected", "largest_gap_seconds"}
