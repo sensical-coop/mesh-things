@@ -21,28 +21,24 @@ def test_caddyfile_exists_where_this_test_expects_it():
 
 def test_readings_are_routed_to_their_own_upstream():
     """The whole point of two roles: read traffic must not reach the process that owns the
-    catalog and the keys.
-"""
+    catalog and the keys."""
     assert re.search(r"handle /readings/\*\s*\{\s*reverse_proxy readings-api:8091", _caddyfile())
 
 def test_everything_else_falls_through_to_the_registry_role():
     assert re.search(r"handle\s*\{\s*reverse_proxy registry-api:8090", _caddyfile())
 
 def test_nothing_is_stripped_from_the_path():
-    """`handle_path` would strip a prefix, which is what the app paths used to compensate for.
-"""
+    """`handle_path` would strip a prefix, which is what the app paths used to compensate for."""
     assert "handle_path" not in _caddyfile()
 
 def test_the_readings_role_owns_exactly_the_segment_caddy_forwards():
     """Caddy routes on `/readings/`, so the readings urlconf has to mount that same segment -
-    it is not stripped on the way in.
-"""
+    it is not stripped on the way in."""
     assert 'path("readings/"' in READINGS_URLCONF.read_text()
 
 def test_no_registry_route_shadows_the_readings_segment():
     """A registry route starting with `readings` would be unreachable: Caddy sends anything
-    under /readings/ to the other role.
-"""
+    under /readings/ to the other role."""
     segments = set(re.findall(r'path\("([^"/<]*)', REGISTRY_URLS.read_text()))
 
     assert "readings" not in segments

@@ -42,8 +42,7 @@ def test_surrounding_whitespace_is_tolerated():
 )
 def test_flux_injection_attempts_are_rejected(value):
     """The real security boundary: these end up inside a raw Flux query, so anything that isn't
-    a bound on its own must fail rather than be trimmed into something valid.
-"""
+    a bound on its own must fail rather than be trimmed into something valid."""
     with pytest.raises(ValueError):
         validate_range_bound(value, "start")
 

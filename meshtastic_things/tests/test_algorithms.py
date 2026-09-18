@@ -7,8 +7,7 @@ from common.algorithms import POINTWISE, AlgorithmSpec, discover, get, validate_
 @pytest.fixture(autouse=True)
 def _restore_registry():
     """Tests that register throwaway algorithms must not leak into the real registry, which
-    other tests (and registry's validation) read from.
-"""
+    other tests (and registry's validation) read from."""
     discover()
     original = dict(algorithms.REGISTRY)
     yield
@@ -160,8 +159,7 @@ def test_dew_point_rejects_zero_humidity():
 
 def test_every_shipped_algorithm_declares_a_unit_for_every_output():
     """Guards the next algorithm added, not the current five - an undeclared output silently
-    produces an unlabelled channel.
-"""
+    produces an unlabelled channel."""
     for spec in discover().values():
         for output in spec.outputs:
             assert output in spec.output_units, f"{spec.name} declares no unit for output {output!r}"
@@ -207,8 +205,7 @@ def test_inheriting_from_something_that_isnt_an_input_is_rejected():
 
 def test_unclassifiable_unit_is_rejected_at_import_time():
     """Caught here rather than silently writing a unit the catalog can't classify into a
-    quantity_kind months later.
-"""
+    quantity_kind months later."""
     with pytest.raises(ValueError, match="common.units"):
 
         @algorithms.algorithm(

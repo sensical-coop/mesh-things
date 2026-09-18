@@ -117,8 +117,7 @@ class TestFlatWindowFor:
 
 class TestOriginOf:
     """`origin` tells a consumer whether a channel is a sensor reading or something the system
-    computed - so it doesn't plot completeness_ratio next to temperature.
-"""
+    computed - so it doesn't plot completeness_ratio next to temperature."""
 
     def test_telemetry_is_measured(self):
         assert origin_of("telemetry:environment_metrics") == ORIGIN_MEASURED
@@ -140,8 +139,7 @@ class TestOriginOf:
 
 class TestComputedChannelNames:
     """A payload_kind's measurement half has to name the InfluxDB series that actually exists,
-    or the catalog's channel matches nothing.
-"""
+    or the catalog's channel matches nothing."""
 
     def test_derived_channel_matches_the_influx_series(self):
         # Every blueprint output goes to measurement "derived", attributed by

@@ -1,6 +1,5 @@
 """docker-compose.yml (the base file) must be safe to run on a public IP by itself Avoid
-someone adding a service with a `ports:` entry bound to 0.0.0.0
-"""
+someone adding a service with a `ports:` entry bound to 0.0.0.0"""
 import re
 from pathlib import Path
 
@@ -71,8 +70,7 @@ def test_the_base_file_actually_exposes_things():
 @pytest.mark.parametrize("service", sorted(BASE_EXPOSED))
 def test_only_caddy_binds_a_public_interface_by_default(service):
     """The base file alone is the production invocation now - nothing else layers on top to
-    close ports the way docker-compose.prod.yml used to.
-"""
+    close ports the way docker-compose.prod.yml used to."""
     for entry in BASE_SERVICES[service].get("ports") or []:
         host_ip = _published(entry)
         if service in PUBLIC_SERVICES:
@@ -90,8 +88,7 @@ def test_caddy_still_serves_80_and_443():
 def test_mailhog_does_not_exist_outside_the_dev_overlay():
     """mailhog captures every owner's email-verification link - it must not be a container a
     production invocation (base file alone) can start at all, not just one whose ports
-    happen to be closed.
-"""
+    happen to be closed."""
     assert "mailhog" not in BASE_SERVICES
     assert "mailhog" in DEV_SERVICES
 
@@ -138,8 +135,7 @@ def test_each_admin_ui_is_proxied_and_behind_auth(service, address_var):
 def test_the_admin_auth_snippet_reads_credentials_from_files_not_env():
     """Compose interpolates env_file values, eating the "$" segments of a password hash - which
     silently breaks auth and takes the whole gateway down on an invalid-credential parse
-    error.
-"""
+    error."""
     caddyfile = CADDYFILE.read_text()
     snippet = re.search(r"\(admin_ui\) \{(.*?)\n\}", caddyfile, re.S)
 
@@ -150,14 +146,12 @@ def test_the_admin_auth_snippet_reads_credentials_from_files_not_env():
 
 def test_basic_auth_pins_the_hash_algorithm():
     """One algorithm applies to every account in the block, so leaving it implicit invites a
-    credential that parses and then never authenticates.
-"""
+    credential that parses and then never authenticates."""
     assert re.search(r"basic_auth\s+bcrypt\s*\{", CADDYFILE.read_text())
 
 def test_a_locked_placeholder_credential_is_committed():
     """Caddy refuses to start with an empty basic_auth block, which would take the API down
-    too.
-"""
+    too."""
     locked = CREDENTIALS_DIR / "00-locked.txt"
 
     assert locked.is_file()
@@ -184,8 +178,7 @@ def test_caddy_mounts_the_credentials_directory_read_only():
 def test_the_admin_ui_ports_are_not_published_by_default():
     """The admin sites are extra ports on Caddy in docker-compose.dev.yml; in production (base
     file alone) they're hostnames on 443 instead, so those publications must not be part of
-    the base file at all.
-"""
+    the base file at all."""
     base_caddy_ports = {str(e).split(":")[-2] for e in BASE_SERVICES["caddy"]["ports"]}
 
     assert base_caddy_ports == {"80", "443"}
@@ -200,8 +193,7 @@ FLINK_SUBMITTERS = ["flink-job", "calibration-job", "pattern-detection-job", "ab
 @pytest.mark.parametrize("service", FLINK_SUBMITTERS)
 def test_submitters_do_not_restart(service):
     """`restart: unless-stopped` on a submitter means every exit resubmits the job - which is
-    how the stack used to accumulate duplicate jobs competing for slots.
-"""
+    how the stack used to accumulate duplicate jobs competing for slots."""
     assert _services(BASE_FILES)[service].get("restart") == "no", (
         f"{service} must be restart: \"no\" - it is a one-shot submitter"
     )
@@ -219,8 +211,7 @@ def test_submitters_go_through_the_idempotent_script(service):
 @pytest.mark.parametrize("service", FLINK_SUBMITTERS[1:])
 def test_submitter_chain_waits_for_completion_not_start(service):
     """One-shot containers make `service_started` meaningless - it fires before the previous
-    job was accepted by the cluster.
-"""
+    job was accepted by the cluster."""
     deps = _services(BASE_FILES)[service].get("depends_on") or {}
     upstream = {k: v for k, v in deps.items() if k in FLINK_SUBMITTERS}
 
@@ -232,8 +223,7 @@ def test_submitter_chain_waits_for_completion_not_start(service):
 
 def test_submitted_job_names_match_what_the_jobs_register():
     """The already-running check compares against Flink's job name, so a typo here silently
-    makes submission non-idempotent again.
-"""
+    makes submission non-idempotent again."""
     import re as _re
 
     for service in FLINK_SUBMITTERS:
@@ -249,8 +239,7 @@ def test_submitted_job_names_match_what_the_jobs_register():
 
 def test_flink_jvm_sizes_are_pinned():
     """Left at the image defaults these are 1600m/1728m, ~800 MB more than this workload needs
-    - the difference between an 8 GB and a 16 GB VPS.
-"""
+    - the difference between an 8 GB and a 16 GB VPS."""
     compose = _compose_text(BASE_FILES)
 
     assert "jobmanager.memory.process.size:" in compose
@@ -258,8 +247,7 @@ def test_flink_jvm_sizes_are_pinned():
 
 def test_task_slots_leave_headroom_for_a_redeploy():
     """One slot per job at parallelism 1; a redeploy briefly needs one more while the old job
-    still holds its own.
-"""
+    still holds its own."""
     match = re.search(r"taskmanager\.numberOfTaskSlots:\s*(\d+)", _compose_text(BASE_FILES))
 
     assert match, "numberOfTaskSlots is not set"
@@ -271,8 +259,7 @@ def test_task_slots_leave_headroom_for_a_redeploy():
 
 def test_every_service_has_a_memory_limit():
     """Without one, a leaking container drags the host into the kernel OOM killer, which
-    chooses its victim by score - often something healthy.
-"""
+    chooses its victim by score - often something healthy."""
     unlimited = [name for name, svc in _services(BASE_FILES).items() if not svc.get("mem_limit")]
 
     assert not unlimited, f"no mem_limit on: {sorted(unlimited)}"
@@ -327,8 +314,7 @@ def test_every_django_service_states_its_role(service, role):
 
 def test_the_read_tier_uses_its_own_database_credentials():
     """The guarantee that read load cannot exhaust the registry's connections, and that a
-    compromised read tier holds no mesh keys, is the Postgres role - not anything in Python.
-"""
+    compromised read tier holds no mesh keys, is the Postgres role - not anything in Python."""
     command = " ".join(BASE_SERVICES["readings_api"].get("command") or [])
     compose = _compose_text(BASE_FILES)
 
@@ -341,8 +327,7 @@ def test_the_read_tier_uses_its_own_database_credentials():
 def test_base_compose_selects_the_prod_settings_module(service, package):
     """The base file is the production invocation now - it must never silently fall back to dev
     settings (ALLOWED_HOSTS='*', DEBUG on, email to a mailhog container that doesn't even
-    exist in this file).
-"""
+    exist in this file)."""
     env = BASE_SERVICES[service].get("environment") or {}
 
     assert env.get("DJANGO_SETTINGS_MODULE") == f"{package}.prod", (
@@ -382,8 +367,7 @@ def test_every_building_service_names_its_image_explicitly():
 
 def test_services_sharing_a_dockerfile_share_one_image():
     """The property that actually prevents drift: one image ID behind every service built from
-    the same Dockerfile.
-"""
+    the same Dockerfile."""
     compose = _compose_text(BASE_FILES)
     # service name -> the anchor it merges. Some services merge a role anchor
     # that itself merges the image one, so match any anchor, not just *-image.
@@ -412,16 +396,14 @@ KNOWN_PROFILES = {"full", "lite", "quality", "bridge-pool"}
 
 def test_profiles_are_known_values():
     """A typo'd profile name silently drops a service from every real invocation - Compose
-    doesn't validate profile names itself.
-"""
+    doesn't validate profile names itself."""
     for name, svc in BASE_SERVICES.items():
         for profile in svc.get("profiles") or []:
             assert profile in KNOWN_PROFILES, f"{name} has unknown profile {profile!r}"
 
 def test_decode_runtimes_are_mutually_exclusive_per_tier():
     """flink-job (full, exactly-once) and decode_consumer (lite, at-least-once) both consume
-    the raw topic - running both under the same profile would double-decode every packet.
-"""
+    the raw topic - running both under the same profile would double-decode every packet."""
     flink_profiles = set(BASE_SERVICES["flink-job"].get("profiles") or [])
     consumer_profiles = set(BASE_SERVICES["decode_consumer"].get("profiles") or [])
 
@@ -433,8 +415,7 @@ def test_decode_runtimes_are_mutually_exclusive_per_tier():
 def test_ci_publishes_every_image_compose_builds():
     """A Dockerfile that compose builds but CI never pushes means a registry deployment
     silently runs an older copy of that component - which is how quality_worker went
-    unpublished.
-"""
+    unpublished."""
     compose_dockerfiles = set(re.findall(r"dockerfile:\s*(\S+)", _compose_text(BASE_FILES)))
     compose_dockerfiles.add("Dockerfile")  # the root one, referenced as `build: ./meshtastic_things`
 
@@ -474,8 +455,7 @@ def test_bridge_client_ids_are_unique():
 
 def test_no_bridge_member_uses_replicas():
     """`deploy.replicas` gives each replica a fresh container and no stable identity, so every
-    restart stranded a session that kept taking a share of the messages.
-"""
+    restart stranded a session that kept taking a share of the messages."""
     scaled = [n for n, s in _bridge_services().items() if (s.get("deploy") or {}).get("replicas")]
 
     assert not scaled, (
@@ -524,8 +504,7 @@ def _job_text(job: str) -> str:
 
 def test_ci_starts_redis_wherever_it_runs_the_django_tests():
     """The bearer-auth rate limiter writes to the cache on every request, so a CI job with
-    postgres but no redis errors 276 of 312 tests.
-"""
+    postgres but no redis errors 276 of 312 tests."""
     for name, job in _pr_workflow()["jobs"].items():
         text = yaml.dump(job)
         if "manage.py test" not in text:
@@ -536,8 +515,7 @@ def test_ci_starts_redis_wherever_it_runs_the_django_tests():
 
 def test_ci_pins_compose_file_so_env_example_cannot_swap_in_the_dev_overlay():
     """env.example sets COMPOSE_FILE to include docker-compose.dev.yml, and CI copies it to
-    .env.
-"""
+    .env."""
     workflow = _pr_workflow()
     pinned = (workflow.get("env") or {}).get("COMPOSE_FILE")
 
@@ -560,8 +538,7 @@ def test_env_example_still_points_compose_file_at_the_dev_overlay():
 
 def test_ci_builds_every_dockerfile_on_the_pr():
     """A broken Dockerfile in any component other than the api used to reach main and fail in
-    the deploy workflow, after review had already passed.
-"""
+    the deploy workflow, after review had already passed."""
     compose_dockerfiles = set(re.findall(r"dockerfile:\s*(\S+)", _compose_text(BASE_FILES)))
     compose_dockerfiles.add("Dockerfile")
     built = set(_pr_workflow()["jobs"]["images"]["strategy"]["matrix"]["dockerfile"])
@@ -574,8 +551,7 @@ BASE_YML = ROOT / "compose" / "base.yml"
 
 def test_every_topic_created_at_startup_is_actually_used():
     """kafka-topics-init creates a topic per env var, and a deleted producer or consumer leaves
-    its topic behind: created on every deploy, compacted forever, read by nothing.
-"""
+    its topic behind: created on every deploy, compacted forever, read by nothing."""
     init = BASE_YML.read_text().split("kafka-topics-init:", 1)[1].split("\n  influxdb:", 1)[0]
     topic_vars = set(re.findall(r"\$\$\{?([A-Z0-9_]+)", init))
     sources = "\n".join(
