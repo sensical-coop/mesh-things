@@ -19,7 +19,9 @@ COLUMN_GRANTS = {
     "devices": ("id", "device_id", "mesh_id", "is_allowed"),
 }
 # Whole-table grants
-TABLE_GRANTS = ("owners", "measurement_types")
+# django_session backs SessionAuthentication so a browser holding registry's
+# session cookie is also recognized here; readings never writes to it.
+TABLE_GRANTS = ("owners", "measurement_types", "django_session")
 
 CONNECTION_LIMIT = int(os.environ.get("READINGS__DB_MAX_CONNECTIONS", "10"))
 

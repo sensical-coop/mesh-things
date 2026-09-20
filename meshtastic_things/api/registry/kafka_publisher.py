@@ -30,6 +30,10 @@ def device_intervals_kafka_key(device: Device) -> str:
     return f"{device.mesh_id}:{device.device_id}"
 
 
+def measurement_alarms_kafka_key(device: Device, channel: str) -> str:
+    return f"{device.mesh_id}:{device.device_id}:{channel}"
+
+
 class KeyEventPublisher:
     """Publishes to mesh.keys.v1, mesh.node_rejections.v1 and
     mesh.quality_config.v1."""
@@ -127,12 +131,34 @@ class KeyEventPublisher:
             "default_reading_interval_seconds": link.telemetry_variant.default_reading_interval_seconds,
             "valid_min": link.valid_min,
             "valid_max": link.valid_max,
+            "default_enabled_detectors": list(link.default_enabled_detectors or []),
             "op": "upsert",
             "updated_at": datetime.now(timezone.utc).isoformat(),
         }
         future = self._producer.send(self._quality_config_topic, key=key, value=event)
         future.get(timeout=10)
         log.info("Published variant measurement config", key=key)
+
+    def publish_measurement_alarms(self, device: Device, measurement) -> None:
+        """A null override hands the channel back to the
+        catalog default rather than silencing it."""
+        channel = channel_name(
+            measurement.measurement_type.payload_kind, measurement.measurement_type.field_name
+        )
+        key = measurement_alarms_kafka_key(device, channel)
+        event = {
+            "kind": "measurement_alarms",
+            "key": key,
+            "mesh_id": str(device.mesh_id),
+            "device_id": device.device_id,
+            "channel": channel,
+            "enabled_detectors": measurement.enabled_detectors,
+            "op": "delete" if measurement.enabled_detectors is None else "upsert",
+            "updated_at": datetime.now(timezone.utc).isoformat(),
+        }
+        future = self._producer.send(self._quality_config_topic, key=key, value=event)
+        future.get(timeout=10)
+        log.info("Published measurement alarms", key=key)
 
     def publish_device_intervals(self, device: Device) -> None:
         """Publish device's own reading/publish intervals."""
@@ -145,6 +171,7 @@ class KeyEventPublisher:
             "device_id": device.device_id,
             "reading_interval_seconds": device.reading_interval_seconds,
             "publish_interval_seconds": device.publish_interval_seconds,
+            "alarms_enabled": device.alarms_enabled,
             "op": "delete" if cleared else "upsert",
             "updated_at": datetime.now(timezone.utc).isoformat(),
         }

@@ -25,6 +25,10 @@ urlpatterns = [
     path("devices/<uuid:device_uuid>", views.DeviceDetailView.as_view()),
     path("devices/<uuid:device_uuid>/telemetry-variants", views.DeviceTelemetryVariantsView.as_view()),
     path("devices/<uuid:device_uuid>/measurements", views.DeviceMeasurementsView.as_view()),
+    path(
+        "devices/<uuid:device_uuid>/measurements/<uuid:measurement_id>",
+        views.DeviceMeasurementDetailView.as_view(),
+    ),
     path("measurements", views.MeasurementTypeListCreateView.as_view()),
     path("measurements/<uuid:measurement_id>", views.MeasurementTypeDetailView.as_view()),
     path("telemetry-variants", views.TelemetryVariantListCreateView.as_view()),
@@ -38,6 +42,7 @@ urlpatterns = [
         views.TelemetryVariantMeasurementDetailView.as_view(),
     ),
     path("algorithms", views.AlgorithmListView.as_view()),
+    path("detectors", views.DetectorListView.as_view()),
     path("postprocessing-blueprints", views.PostprocessingBlueprintListCreateView.as_view()),
     path("postprocessing-blueprints/<uuid:blueprint_id>", views.PostprocessingBlueprintDetailView.as_view()),
 ]

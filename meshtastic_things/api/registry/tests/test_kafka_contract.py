@@ -6,9 +6,18 @@ from registry.kafka_publisher import (
     KeyEventPublisher,
     device_intervals_kafka_key,
     gateway_kafka_key,
+    measurement_alarms_kafka_key,
     node_rejection_kafka_key,
 )
-from registry.models import Device, MeasurementType, Mesh, TelemetryVariant, TelemetryVariantMeasurement
+from registry.models import (
+    Device,
+    DeviceTelemetryVariant,
+    Measurement,
+    MeasurementType,
+    Mesh,
+    TelemetryVariant,
+    TelemetryVariantMeasurement,
+)
 
 from .helpers import RegistryTestCase
 
@@ -162,10 +171,43 @@ class QualityConfigEventTests(KafkaContractTestCase):
         self.assertEqual(event["reading_interval_seconds"], 300)
         self.assertEqual(event["publish_interval_seconds"], 900)
 
-    def test_the_two_key_shapes_never_collide(self):
+    def test_the_three_key_shapes_never_collide(self):
         """They share one compacted topic."""
-        self.assertNotIn(":", "environment_metrics.temperature")
-        self.assertNotIn(".", device_intervals_kafka_key(self.device))
+        channel_key = "environment_metrics.temperature"
+        device_key = device_intervals_kafka_key(self.device)
+        measurement_key = measurement_alarms_kafka_key(self.device, channel_key)
+
+        self.assertNotIn(":", channel_key)
+        self.assertNotIn(".", device_key)
+        self.assertEqual(measurement_key.count(":"), 2)
+        self.assertIn(".", measurement_key)
+        self.assertEqual(len({channel_key, device_key, measurement_key}), 3)
+
+    def test_the_catalog_alarm_default_rides_on_the_variant_config(self):
+        variant = TelemetryVariant.objects.create(payload_kind="telemetry:environment_metrics")
+        measurement_type = MeasurementType.objects.create(
+            payload_kind="telemetry:environment_metrics", field_name="barometric_pressure"
+        )
+        link = TelemetryVariantMeasurement.objects.create(
+            telemetry_variant=variant, measurement_type=measurement_type,
+            default_enabled_detectors=["plausibility"],
+        )
+
+        self.publisher.publish_variant_measurement_config(link)
+        _, _, event = self.published()
+
+        self.assertEqual(event["default_enabled_detectors"], ["plausibility"])
+
+    def test_the_absence_switch_rides_on_the_device_intervals(self):
+        """absence has no channel, so it cannot use the per-measurement key."""
+        self.device.alarms_enabled = True
+        self.device.publish_interval_seconds = 900
+        self.device.save()
+
+        self.publisher.publish_device_intervals(self.device)
+        _, _, event = self.published()
+
+        self.assertTrue(event["alarms_enabled"])
 
     def test_clearing_both_intervals_tombstones_the_entry(self):
         self.device.reading_interval_seconds = None
@@ -173,6 +215,52 @@ class QualityConfigEventTests(KafkaContractTestCase):
         self.device.save()
 
         self.publisher.publish_device_intervals(self.device)
+        _, _, event = self.published()
+
+        self.assertEqual(event["op"], "delete")
+
+
+class MeasurementAlarmEventTests(KafkaContractTestCase):
+    """The per-device override pattern_detection_job looks up alongside the channel config."""
+
+    def _measurement(self, enabled_detectors):
+        variant = TelemetryVariant.objects.create(payload_kind="telemetry:environment_metrics")
+        measurement_type = MeasurementType.objects.create(
+            payload_kind="telemetry:environment_metrics", field_name="wind_speed"
+        )
+        dtv = DeviceTelemetryVariant.objects.create(device=self.device, telemetry_variant=variant)
+        return Measurement.objects.create(
+            device_telemetry_variant=dtv, measurement_type=measurement_type,
+            enabled_detectors=enabled_detectors,
+        )
+
+    def test_the_key_is_mesh_device_and_channel(self):
+        measurement = self._measurement(["plausibility"])
+
+        self.publisher.publish_measurement_alarms(self.device, measurement)
+        topic, key, event = self.published()
+
+        self.assertEqual(topic, QUALITY_CONFIG_TOPIC)
+        self.assertEqual(key, f"{self.mesh.id}:{self.device.device_id}:environment_metrics.wind_speed")
+        self.assertEqual(key, measurement_alarms_kafka_key(self.device, "environment_metrics.wind_speed"))
+        self.assertEqual(event["kind"], "measurement_alarms")
+        self.assertEqual(event["enabled_detectors"], ["plausibility"])
+        self.assertEqual(event["op"], "upsert")
+
+    def test_an_empty_list_is_published_rather_than_tombstoned(self):
+        """[] silences the channel, which the job has to be told about"""
+        measurement = self._measurement([])
+
+        self.publisher.publish_measurement_alarms(self.device, measurement)
+        _, _, event = self.published()
+
+        self.assertEqual(event["op"], "upsert")
+        self.assertEqual(event["enabled_detectors"], [])
+
+    def test_clearing_the_override_tombstones_it_back_to_the_default(self):
+        measurement = self._measurement(None)
+
+        self.publisher.publish_measurement_alarms(self.device, measurement)
         _, _, event = self.published()
 
         self.assertEqual(event["op"], "delete")

@@ -140,7 +140,14 @@ class DetectPatterns(KeyedBroadcastProcessFunction):
         recent = recent[-window:]
         self._recent_values.update(recent)
 
-        if self._detectors.stuck_value_triggered(recent, window=window):
+        # No override entry is the common case, not a miss: it means "inherit".
+        override = self._lookup(ctx, f"{mesh_id}:{device_id}:{channel}")
+        enabled = self._detectors.enabled_detectors_for(
+            override.get("enabled_detectors") if override else None,
+            config.get("default_enabled_detectors") if config else None,
+        )
+
+        if self._detectors.FLAT_VALUE in enabled and self._detectors.stuck_value_triggered(recent, window=window):
             span = f"{window} consecutive readings"
             if interval:
                 span += f" (~{window * interval / 3600:.1f}h at a {interval}s reading interval)"
@@ -149,7 +156,7 @@ class DetectPatterns(KeyedBroadcastProcessFunction):
                 f"Value flat at {obs_value} for {span}",
             )
 
-        if config:
+        if config and self._detectors.PLAUSIBILITY in enabled:
             valid_min, valid_max = config.get("valid_min"), config.get("valid_max")
             if self._detectors.range_check_triggered(obs_value, valid_min, valid_max):
                 yield self._alarm(

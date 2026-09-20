@@ -5,6 +5,7 @@ import structlog
 from celery import shared_task
 
 from common.channels import DERIVED_KIND, ORIGIN_MEASURED, QUALITY_KIND
+from common.detectors import COMPLETENESS
 from common.units import QUALITY_CHANNELS
 from common.influx_query import duration_seconds, split_channel
 
@@ -180,6 +181,8 @@ def check_completeness(device_uuid: str, lookback: str | None = None) -> dict:
         interval = _reading_interval_for(device, measurement_type["payload_kind"], variant_intervals)
         if not interval:
             continue
+        # Resolved server-side, so this worker cannot drift from the stream job.
+        alarm_on_gaps = COMPLETENESS in (row.get("effective_detectors") or [])
         try:
             series = influx.read_channel(mesh_id, device_id, channel, lookback)
         except ValueError:
@@ -198,7 +201,10 @@ def check_completeness(device_uuid: str, lookback: str | None = None) -> dict:
         )
         results.append({"channel": channel, **stats})
 
+        # The metric is always written; only the alarm is opt-in.
         gap_limit = interval * GAP_INTERVALS_THRESHOLD
+        if not alarm_on_gaps:
+            continue
         if stats["ratio"] < COMPLETENESS_THRESHOLD:
             publisher.publish(
                 build_alarm(
