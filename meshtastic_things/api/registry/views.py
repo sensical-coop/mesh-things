@@ -596,24 +596,25 @@ class MeshDetailView(APIView):
     def put(self, request, mesh_id):
         """Update a mesh.
 
-        Changing the pre-shared key redistributes it to every allowed gateway
-        on the mesh, and the whole update is rolled back if that fails.
+        Changing the channel_id or the pre-shared key redistributes the pair
+        to every allowed gateway on the mesh, and the whole update is rolled
+        back if that fails.
         """
         mesh = _get_mesh_or_404(mesh_id)
         _require_mesh_ownership(mesh, request.user)
-        changing_psk = "psk_b64" in request.data
-        previous_psk = mesh.psk_b64
+        changing_shared_secret = "psk_b64" in request.data or "channel_id" in request.data
+        previous_channel_id, previous_psk = mesh.channel_id, mesh.psk_b64
         serializer = MeshUpdateSerializer(mesh, data=request.data, partial=True)
         serializer.is_valid(raise_exception=True)
         updated = serializer.save()
-        if changing_psk:
+        if changing_shared_secret:
             publisher = get_publisher()
             for gateway in updated.devices.filter(is_gateway=True, is_allowed=True):
                 try:
                     publisher.publish_gateway_upsert(gateway, updated)
                 except Exception as e:
-                    updated.psk_b64 = previous_psk
-                    updated.save(update_fields=["psk_b64"])
+                    updated.channel_id, updated.psk_b64 = previous_channel_id, previous_psk
+                    updated.save(update_fields=["channel_id", "psk_b64"])
                     raise BadGateway(f"Failed to publish key change, rolled back: {e}")
         return Response(MeshSerializer(updated, context={"viewer_id": request.user.id}).data)
 
