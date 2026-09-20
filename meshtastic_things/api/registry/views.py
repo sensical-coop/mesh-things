@@ -21,6 +21,7 @@ from .emailing import send_password_reset_email, send_verification_email
 from .exceptions import BadGateway, Conflict
 from .kafka_publisher import get_publisher
 from common.algorithms import REGISTRY, discover
+from common.detectors import DETECTOR_SPECS
 
 from .models import (
     Device,
@@ -58,7 +59,10 @@ from .serializers import (
     OwnerWithApiKeySerializer,
     PostprocessingBlueprintSerializer,
     DeviceMeasurementSerializer,
+    DeviceMeasurementUpdateSerializer,
+    DetectorSerializer,
     DeviceTelemetryVariantSerializer,
+    catalog_defaults_for,
     TelemetryVariantMeasurementReadSerializer,
     TelemetryVariantMeasurementUpdateSerializer,
     TelemetryVariantReadSerializer,
@@ -782,8 +786,11 @@ class DeviceDetailView(APIView):
         if override_fields:
             updated.save(update_fields=override_fields)
 
-        if any(k in request.data for k in ("reading_interval_seconds", "publish_interval_seconds")):
-            # Publish device interval (or at least try)
+        if any(
+            k in request.data
+            for k in ("reading_interval_seconds", "publish_interval_seconds", "alarms_enabled")
+        ):
+            # Carries the absence switch as well as the intervals.
             try:
                 get_publisher().publish_device_intervals(updated)
             except Exception as e:
@@ -850,7 +857,9 @@ class DeviceTelemetryVariantsView(APIView):
 class DeviceMeasurementsView(APIView):
     """List the measurement channels this device produces, measured and computed alike.
 
-    Entries appear on their own as telemetry arrives and cannot be edited here.
+    Entries appear on their own as telemetry arrives. `enabled_detectors` is set by
+    this device and may be null; `effective_detectors` is the result once
+    the shared catalog default is applied.
     """
 
     permission_classes = [IsVerifiedOwner]
@@ -859,12 +868,65 @@ class DeviceMeasurementsView(APIView):
     def get(self, request, device_uuid):
         device = _get_device_or_404(device_uuid)
         _require_mesh_ownership(device.mesh, request.user)
-        measurements = (
+        measurements = list(
             Measurement.objects.filter(device_telemetry_variant__device=device)
             .select_related("measurement_type", "device_telemetry_variant")
             .order_by("measurement_type__payload_kind", "measurement_type__field_name")
         )
-        return Response(DeviceMeasurementSerializer(measurements, many=True).data)
+        return Response(
+            DeviceMeasurementSerializer(
+                measurements, many=True, context={"catalog_defaults": catalog_defaults_for(measurements)}
+            ).data
+        )
+
+
+def _get_device_measurement_or_404(device, measurement_id) -> Measurement:
+    try:
+        return Measurement.objects.select_related("measurement_type", "device_telemetry_variant").get(
+            pk=measurement_id, device_telemetry_variant__device=device
+        )
+    except (Measurement.DoesNotExist, ValueError, TypeError):
+        raise NotFound("Measurement not found on this device")
+
+
+class DeviceMeasurementDetailView(APIView):
+    permission_classes = [IsVerifiedOwner]
+
+    @extend_schema(responses=DeviceMeasurementSerializer)
+    def get(self, request, device_uuid, measurement_id):
+        """Return one of this device's measurement channels."""
+        device = _get_device_or_404(device_uuid)
+        _require_mesh_ownership(device.mesh, request.user)
+        measurement = _get_device_measurement_or_404(device, measurement_id)
+        return Response(DeviceMeasurementSerializer(measurement).data)
+
+    @extend_schema(request=DeviceMeasurementUpdateSerializer, responses=DeviceMeasurementSerializer)
+    def put(self, request, device_uuid, measurement_id):
+        """Choose which detectors alarm on this channel, for this device.
+
+        Alarms are off until enabled. Sending `null` inherits whatever the
+        shared catalog sets for the channel; sending an empty list silences it
+        here regardless of that default.
+
+        Args:
+            enabled_detectors: Detectors to run, or `null` to inherit.
+        """
+        device = _get_device_or_404(device_uuid)
+        _require_mesh_ownership(device.mesh, request.user)
+        measurement = _get_device_measurement_or_404(device, measurement_id)
+        serializer = DeviceMeasurementUpdateSerializer(measurement, data=request.data, partial=True)
+        serializer.is_valid(raise_exception=True)
+        updated = serializer.save()
+        _publish_measurement_alarms(device, updated)
+        return Response(DeviceMeasurementSerializer(updated).data)
+
+
+def _publish_measurement_alarms(device, measurement) -> None:
+    """Best-effort: a failed publish must not fail the API write."""
+    try:
+        get_publisher().publish_measurement_alarms(device, measurement)
+    except Exception as e:
+        log.warning("measurement_alarms_publish_failed", measurement_id=str(measurement.id), error=str(e))
 
 
 def _require_superuser(request) -> None:
@@ -1065,6 +1127,23 @@ class TelemetryVariantMeasurementDetailView(APIView):
         updated = serializer.save()
         _publish_quality_config([updated])
         return Response(TelemetryVariantMeasurementReadSerializer(updated).data)
+
+
+class DetectorListView(APIView):
+    """List the alarm detectors and what each one needs to trigger.
+
+    - `scope`: where a detector is switched on: `measurement` ones go in a
+    channel's `enabled_detectors`, `device` ones in the device's own
+    `alarms_enabled`.
+    - `requires` is the config that must also be set before the
+    detector can trigger in the first place.
+    """
+
+    permission_classes = [IsVerifiedOwner]
+
+    @extend_schema(responses=DetectorSerializer(many=True))
+    def get(self, request):
+        return Response(DetectorSerializer(DETECTOR_SPECS, many=True).data)
 
 
 class AlgorithmListView(APIView):

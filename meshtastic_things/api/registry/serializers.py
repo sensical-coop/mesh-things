@@ -4,6 +4,7 @@ from rest_framework import serializers
 
 from common.algorithms import validate_step
 from common.channels import channel_name, origin_of
+from common.detectors import DETECTOR_CHOICES, MEASUREMENT_DETECTORS, enabled_detectors_for
 
 from .models import (
     Device,
@@ -120,6 +121,35 @@ class OwnerChangePasswordSerializer(serializers.Serializer):
     new_password = serializers.CharField(write_only=True)
 
 
+def _validate_detectors(value):
+    unknown = sorted(set(value or ()) - set(MEASUREMENT_DETECTORS))
+    if unknown:
+        raise serializers.ValidationError(
+            f"Unknown detector(s) {unknown}. Valid: {sorted(MEASUREMENT_DETECTORS)}"
+        )
+    return value
+
+
+_DETECTORS_HELP = "Detectors to run on this channel. See GET /detectors."
+
+
+def _detector_field(**kwargs):
+    return serializers.ListField(
+        child=serializers.ChoiceField(choices=DETECTOR_CHOICES),
+        validators=[_validate_detectors],
+        help_text=_DETECTORS_HELP,
+        **kwargs,
+    )
+
+
+class DetectorSerializer(serializers.Serializer):
+
+    name = serializers.CharField()
+    scope = serializers.CharField()
+    requires = serializers.ListField(child=serializers.CharField())
+    description = serializers.CharField()
+
+
 _PSK_HELP = "Base64-encoded channel PSK"
 
 
@@ -234,6 +264,7 @@ class DeviceReadSerializer(serializers.ModelSerializer):
             "postprocessing_blueprint_id",
             "reading_interval_seconds",
             "publish_interval_seconds",
+            "alarms_enabled",
             "last_seen",
             "created_at",
             "updated_at",
@@ -317,12 +348,14 @@ class DeviceUpdateSerializer(serializers.ModelSerializer):
             "postprocessing_blueprint_id",
             "reading_interval_seconds",
             "publish_interval_seconds",
+            "alarms_enabled",
         ]
         extra_kwargs = {
             "label": {"required": False},
             "is_allowed": {"required": False},
             "reading_interval_seconds": {"required": False},
             "publish_interval_seconds": {"required": False},
+            "alarms_enabled": {"required": False},
         }
 
     def validate(self, attrs):
@@ -399,7 +432,10 @@ class TelemetryVariantMeasurementReadSerializer(serializers.ModelSerializer):
 
     class Meta:
         model = TelemetryVariantMeasurement
-        fields = ["id", "measurement_type", "valid_min", "valid_max", "created_at", "updated_at"]
+        fields = [
+            "id", "measurement_type", "valid_min", "valid_max",
+            "default_enabled_detectors", "created_at", "updated_at",
+        ]
         read_only_fields = fields
 
 
@@ -407,9 +443,11 @@ class TelemetryVariantMeasurementUpdateSerializer(serializers.ModelSerializer):
     """PUT /telemetry-variants/{id}/measurements/{link_id}. Only the curated
     plausibility range is editable"""
 
+    default_enabled_detectors = _detector_field(required=False)
+
     class Meta:
         model = TelemetryVariantMeasurement
-        fields = ["valid_min", "valid_max"]
+        fields = ["valid_min", "valid_max", "default_enabled_detectors"]
         extra_kwargs = {field: {"required": False} for field in fields}
 
 
@@ -431,6 +469,9 @@ class DeviceMeasurementSerializer(serializers.ModelSerializer):
     # payload_kind/channel/origin live on the nested catalog entry, not here too.
     measurement_type = MeasurementTypeReadSerializer(read_only=True)
     telemetry_variant_id = serializers.UUIDField(source="device_telemetry_variant.telemetry_variant_id", read_only=True)
+    # enabled_detectors is what this device sets, and may be null; this is what
+    # results once the catalog default is applied.
+    effective_detectors = serializers.SerializerMethodField()
 
     class Meta:
         model = Measurement
@@ -438,10 +479,44 @@ class DeviceMeasurementSerializer(serializers.ModelSerializer):
             "id",
             "telemetry_variant_id",
             "measurement_type",
+            "enabled_detectors",
+            "effective_detectors",
             "first_seen",
             "last_seen",
         ]
         read_only_fields = fields
+
+    def get_effective_detectors(self, obj) -> list[str]:
+        return sorted(enabled_detectors_for(obj.enabled_detectors, catalog_default_for(obj, self.context)))
+
+
+def catalog_defaults_for(measurements) -> dict[tuple, list[str]]:
+    links = TelemetryVariantMeasurement.objects.filter(
+        telemetry_variant_id__in={m.device_telemetry_variant.telemetry_variant_id for m in measurements},
+        measurement_type_id__in={m.measurement_type_id for m in measurements},
+    ).values_list("telemetry_variant_id", "measurement_type_id", "default_enabled_detectors")
+    return {(variant, mt): default for variant, mt, default in links}
+
+
+def catalog_default_for(measurement, context=None) -> list[str] | None:
+    key = (measurement.device_telemetry_variant.telemetry_variant_id, measurement.measurement_type_id)
+    defaults = (context or {}).get("catalog_defaults")
+    if defaults is not None:
+        return defaults.get(key)
+    return catalog_defaults_for([measurement]).get(key)
+
+
+class DeviceMeasurementUpdateSerializer(serializers.ModelSerializer):
+    """PUT /devices/{uuid}/measurements/{id} - which detectors this channel runs.
+
+    Null inherits the catalog default; [] silences the channel on this device.
+    """
+
+    enabled_detectors = _detector_field(required=False, allow_null=True)
+
+    class Meta:
+        model = Measurement
+        fields = ["enabled_detectors"]
 
 
 class PostprocessingStepSerializer(serializers.ModelSerializer):

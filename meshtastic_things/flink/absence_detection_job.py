@@ -128,6 +128,9 @@ class DetectAbsence(KeyedBroadcastProcessFunction):
             raw = state.get(f"{mesh_id}:{device_id}")
             if raw:
                 config = json.loads(raw)
+                # Opt-in: an interval alone no longer turns absence on.
+                if not config.get("alarms_enabled"):
+                    return None
                 if config.get("publish_interval_seconds"):
                     return config["publish_interval_seconds"]
                 if config.get("reading_interval_seconds"):
