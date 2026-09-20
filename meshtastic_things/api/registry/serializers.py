@@ -173,14 +173,19 @@ class MeshSerializer(serializers.ModelSerializer):
 
 
 class MeshUpdateSerializer(serializers.ModelSerializer):
-    """PUT /meshes/{id}: only psk_b64 and label are editable."""
+    """PUT /meshes/{id}: channel_id, psk_b64 and label are editable.
+
+    channel_id/psk_b64 are a pair configured together on the physical
+    devices, so both can change here the same way - the pipeline decrypts by
+    gateway_id/psk_b64 alone, not by channel_id, so this is a metadata update.
+    """
 
     psk_b64 = serializers.CharField(write_only=True, required=False, allow_blank=True, help_text=_PSK_HELP)
 
     class Meta:
         model = Mesh
-        fields = ["psk_b64", "label"]
-        extra_kwargs = {"label": {"required": False}}
+        fields = ["channel_id", "psk_b64", "label"]
+        extra_kwargs = {"label": {"required": False}, "channel_id": {"required": False}}
 
 
 def _max_three_admin_keys(value):
