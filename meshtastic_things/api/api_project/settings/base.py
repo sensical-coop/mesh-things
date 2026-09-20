@@ -27,24 +27,28 @@ if not SECRET_KEY:
 DEBUG = env_bool(f"{ENV_PREFIX}__DEBUG", False)
 ALLOWED_HOSTS = env_list(f"{ENV_PREFIX}__ALLOWED_HOSTS")
 
-# The readings role needs registry's models to authenticate
+# The readings role needs registry's models to authenticate. It also shares
+# the sessions table (read-only so a browser
+# holding registry's session cookie can be recognized here too.
 INSTALLED_APPS = [
     "registry",
     "readings",
     "django.contrib.auth",
     "django.contrib.contenttypes",
+    "django.contrib.sessions",
     "rest_framework",
     "drf_spectacular",
 ]
 MIDDLEWARE = [
     "django.middleware.security.SecurityMiddleware",
+    "django.contrib.sessions.middleware.SessionMiddleware",
     "django.middleware.common.CommonMiddleware",
+    "django.contrib.auth.middleware.AuthenticationMiddleware",
 ]
 
 if not IS_READINGS:
     INSTALLED_APPS += [
         "django.contrib.admin",
-        "django.contrib.sessions",
         "django.contrib.messages",
         "django.contrib.staticfiles",
     ]
@@ -119,7 +123,10 @@ DEFAULT_AUTO_FIELD = "django.db.models.BigAutoField"
 APPEND_SLASH = False
 
 REST_FRAMEWORK = {
-    "DEFAULT_AUTHENTICATION_CLASSES": ["registry.authentication.OwnerBearerAuthentication"],
+    "DEFAULT_AUTHENTICATION_CLASSES": [
+        "registry.authentication.OwnerBearerAuthentication",
+        "rest_framework.authentication.SessionAuthentication",
+    ],
     "DEFAULT_PERMISSION_CLASSES": ["rest_framework.permissions.IsAuthenticated"]
     if IS_READINGS
     else ["registry.permissions.IsVerifiedOwner"],
@@ -143,11 +150,6 @@ REST_FRAMEWORK = {
     "DEFAULT_SCHEMA_CLASS": "drf_spectacular.openapi.AutoSchema",
 }
 
-if not IS_READINGS:
-    REST_FRAMEWORK["DEFAULT_AUTHENTICATION_CLASSES"].append(
-        "rest_framework.authentication.SessionAuthentication"
-    )
-
 SPECTACULAR_SETTINGS = {
     "TITLE": "Meshtastic Things API",
     "VERSION": "1.0.0",
@@ -164,8 +166,13 @@ CORS_ALLOWED_ORIGINS = env_list(f"{ENV_PREFIX}__CORS_ORIGINS")
 if CORS_ALLOWED_ORIGINS:
     INSTALLED_APPS.insert(0, "corsheaders")
     MIDDLEWARE.insert(0, "corsheaders.middleware.CorsMiddleware")
+    # A browser client requires Allow-Credentials whenever it sends requests
+    # with credentials: 'include', which now applies to readings too since it
+    # recognizes registry's session cookie (SessionAuthentication above).
+    CORS_ALLOW_CREDENTIALS = True
     if not IS_READINGS:
-        CORS_ALLOW_CREDENTIALS = True
+        # readings has no CsrfViewMiddleware (its endpoints are read-only, so
+        # CSRF enforcement never triggers). This only matters for registry.
         CSRF_TRUSTED_ORIGINS = CORS_ALLOWED_ORIGINS
 
 LOGGING = {
