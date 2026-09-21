@@ -1,6 +1,6 @@
 Hi {{ name }},
 
-Thanks for registering with Meshtastic Things. Please verify your email
+Thanks for registering with Mesh Things. Please verify your email
 address within {{ ttl_hours }} hours by visiting:
 
 {{ verify_link }}

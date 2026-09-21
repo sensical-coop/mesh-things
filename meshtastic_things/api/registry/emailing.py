@@ -19,7 +19,7 @@ def send_verification_email(owner, token: str) -> None:
     verify_link = f"{settings.PUBLIC_BASE_URL}/owners/verify-email?token={token}"
     send_templated_email(
         to_email=owner.email,
-        subject="Verify your email - Meshtastic Things",
+        subject="Verify your email - Mesh Things",
         template_name="verify_email",
         context={"name": owner.name, "verify_link": verify_link, "ttl_hours": settings.EMAIL_VERIFICATION_TTL_HOURS},
     )
@@ -30,7 +30,7 @@ def send_password_reset_email(owner, token: str) -> None:
     reset_link = f"{settings.PUBLIC_FRONTEND_URL}/reset-password?token={token}"
     send_templated_email(
         to_email=owner.email,
-        subject="Reset your password - Meshtastic Things",
+        subject="Reset your password - Mesh Things",
         template_name="password_reset",
         context={"name": owner.name, "reset_link": reset_link, "ttl_hours": settings.PASSWORD_RESET_TTL_HOURS},
     )

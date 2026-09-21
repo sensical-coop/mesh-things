@@ -85,7 +85,7 @@ class Command(BaseCommand):
 
         send_templated_email(
             to_email=owner.email,
-            subject=f"[Meshtastic] {DETECTOR_SUBJECTS.get(detector, 'Data quality alarm')}"
+            subject=f"[Mesh Things] {DETECTOR_SUBJECTS.get(detector, 'Data quality alarm')}"
             f" - {device.label or device.name or device.device_id}",
             template_name="quality_alarm",
             context={

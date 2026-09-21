@@ -3,7 +3,7 @@
 	handle / {
 		header Content-Type application/json
 		respond `{
-  "name": "Meshtastic Things",
+  "name": "Mesh Things",
   "description": "Owners, meshes, devices, measurements, and readings",
   "schema": "/schema",
   "docs": "/docs",
