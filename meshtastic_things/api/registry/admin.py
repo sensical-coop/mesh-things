@@ -104,9 +104,9 @@ class TelemetryVariantAdmin(admin.ModelAdmin):
 
 @admin.register(TelemetryVariantMeasurement)
 class TelemetryVariantMeasurementAdmin(admin.ModelAdmin):
-    """The curated plausible range per channel, read by the quality checks."""
+    """Which detectors default on per channel, read by the quality checks."""
 
-    list_display = ("measurement_type", "telemetry_variant", "valid_min", "valid_max")
+    list_display = ("measurement_type", "telemetry_variant", "default_enabled_detectors")
     list_select_related = ("measurement_type", "telemetry_variant")
     list_filter = ("telemetry_variant",)
     readonly_fields = ("id", "created_at", "updated_at")
@@ -126,7 +126,9 @@ class DeviceTelemetryVariantAdmin(admin.ModelAdmin):
 
 @admin.register(Measurement)
 class MeasurementAdmin(admin.ModelAdmin):
-    list_display = ("device_telemetry_variant", "measurement_type", "first_seen", "last_seen")
+    list_display = (
+        "device_telemetry_variant", "measurement_type", "valid_min", "valid_max", "first_seen", "last_seen",
+    )
     list_select_related = ("measurement_type", "device_telemetry_variant__device")
     readonly_fields = ("id", "device_telemetry_variant", "measurement_type", "first_seen", "last_seen")
     search_fields = ("device_telemetry_variant__device__device_id", "measurement_type__field_name")

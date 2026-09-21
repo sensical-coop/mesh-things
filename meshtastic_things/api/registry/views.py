@@ -789,7 +789,7 @@ class DeviceDetailView(APIView):
 
         if any(
             k in request.data
-            for k in ("reading_interval_seconds", "publish_interval_seconds", "alarms_enabled")
+            for k in ("reading_interval_seconds", "publish_interval_seconds", "absence_detection_enabled")
         ):
             # Carries the absence switch as well as the intervals.
             try:
@@ -903,14 +903,19 @@ class DeviceMeasurementDetailView(APIView):
 
     @extend_schema(request=DeviceMeasurementUpdateSerializer, responses=DeviceMeasurementSerializer)
     def put(self, request, device_uuid, measurement_id):
-        """Choose which detectors alarm on this channel, for this device.
+        """Choose which detectors alarm on this channel, and the range they
+        check against, for this device.
 
-        Alarms are off until enabled. Sending `null` inherits whatever the
-        shared catalog sets for the channel; sending an empty list silences it
-        here regardless of that default.
+        Alarms are off until enabled. Sending `null` for enabled_detectors
+        inherits whatever the shared catalog sets for the channel; sending an
+        empty list silences it here regardless of that default. valid_min/
+        valid_max have no catalog default: the range detector remains off
+        until both are set here.
 
         Args:
             enabled_detectors: Detectors to run, or `null` to inherit.
+            valid_min: Lower bound for the range detector. Must be provided together with valid_max.
+            valid_max: Upper bound for the range detector. Must be provided together with valid_min.
         """
         device = _get_device_or_404(device_uuid)
         _require_mesh_ownership(device.mesh, request.user)
@@ -1108,7 +1113,7 @@ class TelemetryVariantMeasurementDetailView(APIView):
 
     @extend_schema(responses=TelemetryVariantMeasurementReadSerializer)
     def get(self, request, telemetry_variant_id, link_id):
-        """Return one measurement channel, including its plausible value range."""
+        """Return one measurement channel."""
         link = _get_telemetry_variant_measurement_or_404(telemetry_variant_id, link_id)
         return Response(TelemetryVariantMeasurementReadSerializer(link).data)
 
@@ -1117,9 +1122,7 @@ class TelemetryVariantMeasurementDetailView(APIView):
         responses=TelemetryVariantMeasurementReadSerializer,
     )
     def put(self, request, telemetry_variant_id, link_id):
-        """Set the plausible value range for a channel. Superusers only.
-
-        Readings outside the range are flagged by the quality checks.
+        """Set which detectors run by default for a channel. Superusers only.
         """
         _require_superuser(request)
         link = _get_telemetry_variant_measurement_or_404(telemetry_variant_id, link_id)
@@ -1135,7 +1138,7 @@ class DetectorListView(APIView):
 
     - `scope`: where a detector is switched on: `measurement` ones go in a
     channel's `enabled_detectors`, `device` ones in the device's own
-    `alarms_enabled`.
+    `absence_detection_enabled`.
     - `requires` is the config that must also be set before the
     detector can trigger in the first place.
     """

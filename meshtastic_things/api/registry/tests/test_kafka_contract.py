@@ -126,7 +126,7 @@ class QualityConfigEventTests(KafkaContractTestCase):
             payload_kind="telemetry:environment_metrics", field_name="temperature"
         )
         link = TelemetryVariantMeasurement.objects.create(
-            telemetry_variant=variant, measurement_type=measurement_type, valid_min=-40, valid_max=85
+            telemetry_variant=variant, measurement_type=measurement_type
         )
 
         self.publisher.publish_variant_measurement_config(link)
@@ -135,10 +135,8 @@ class QualityConfigEventTests(KafkaContractTestCase):
         self.assertEqual(topic, QUALITY_CONFIG_TOPIC)
         self.assertEqual(key, "environment_metrics.temperature")
         self.assertEqual(event["kind"], "variant_config")
-        # The three values pattern_detection_job reads off this entry.
+        # The value pattern_detection_job reads off this entry
         self.assertEqual(event["default_reading_interval_seconds"], 900)
-        self.assertEqual(event["valid_min"], -40)
-        self.assertEqual(event["valid_max"], 85)
 
     def test_a_computed_channels_config_keys_the_same_way(self):
         """The namespace is dropped, so every kind yields the same key shape."""
@@ -190,24 +188,24 @@ class QualityConfigEventTests(KafkaContractTestCase):
         )
         link = TelemetryVariantMeasurement.objects.create(
             telemetry_variant=variant, measurement_type=measurement_type,
-            default_enabled_detectors=["plausibility"],
+            default_enabled_detectors=["range"],
         )
 
         self.publisher.publish_variant_measurement_config(link)
         _, _, event = self.published()
 
-        self.assertEqual(event["default_enabled_detectors"], ["plausibility"])
+        self.assertEqual(event["default_enabled_detectors"], ["range"])
 
     def test_the_absence_switch_rides_on_the_device_intervals(self):
         """absence has no channel, so it cannot use the per-measurement key."""
-        self.device.alarms_enabled = True
+        self.device.absence_detection_enabled = True
         self.device.publish_interval_seconds = 900
         self.device.save()
 
         self.publisher.publish_device_intervals(self.device)
         _, _, event = self.published()
 
-        self.assertTrue(event["alarms_enabled"])
+        self.assertTrue(event["absence_detection_enabled"])
 
     def test_clearing_both_intervals_tombstones_the_entry(self):
         self.device.reading_interval_seconds = None
@@ -223,7 +221,7 @@ class QualityConfigEventTests(KafkaContractTestCase):
 class MeasurementAlarmEventTests(KafkaContractTestCase):
     """The per-device override pattern_detection_job looks up alongside the channel config."""
 
-    def _measurement(self, enabled_detectors):
+    def _measurement(self, enabled_detectors, valid_min=None, valid_max=None):
         variant = TelemetryVariant.objects.create(payload_kind="telemetry:environment_metrics")
         measurement_type = MeasurementType.objects.create(
             payload_kind="telemetry:environment_metrics", field_name="wind_speed"
@@ -231,11 +229,11 @@ class MeasurementAlarmEventTests(KafkaContractTestCase):
         dtv = DeviceTelemetryVariant.objects.create(device=self.device, telemetry_variant=variant)
         return Measurement.objects.create(
             device_telemetry_variant=dtv, measurement_type=measurement_type,
-            enabled_detectors=enabled_detectors,
+            enabled_detectors=enabled_detectors, valid_min=valid_min, valid_max=valid_max,
         )
 
     def test_the_key_is_mesh_device_and_channel(self):
-        measurement = self._measurement(["plausibility"])
+        measurement = self._measurement(["range"])
 
         self.publisher.publish_measurement_alarms(self.device, measurement)
         topic, key, event = self.published()
@@ -244,7 +242,7 @@ class MeasurementAlarmEventTests(KafkaContractTestCase):
         self.assertEqual(key, f"{self.mesh.id}:{self.device.device_id}:environment_metrics.wind_speed")
         self.assertEqual(key, measurement_alarms_kafka_key(self.device, "environment_metrics.wind_speed"))
         self.assertEqual(event["kind"], "measurement_alarms")
-        self.assertEqual(event["enabled_detectors"], ["plausibility"])
+        self.assertEqual(event["enabled_detectors"], ["range"])
         self.assertEqual(event["op"], "upsert")
 
     def test_an_empty_list_is_published_rather_than_tombstoned(self):
@@ -256,6 +254,36 @@ class MeasurementAlarmEventTests(KafkaContractTestCase):
 
         self.assertEqual(event["op"], "upsert")
         self.assertEqual(event["enabled_detectors"], [])
+
+    def test_valid_min_and_valid_max_are_published(self):
+        """Range has no catalog default - this event is the only place they come from."""
+        measurement = self._measurement(["range"], valid_min=-40, valid_max=85)
+
+        self.publisher.publish_measurement_alarms(self.device, measurement)
+        _, _, event = self.published()
+
+        self.assertEqual(event["valid_min"], -40)
+        self.assertEqual(event["valid_max"], 85)
+        self.assertEqual(event["op"], "upsert")
+
+    def test_a_range_set_without_enabled_detectors_still_upserts(self):
+        """Regression: a device inheriting the catalog default
+        while also having its own range configured must not lose it."""
+        measurement = self._measurement(None, valid_min=-40, valid_max=85)
+
+        self.publisher.publish_measurement_alarms(self.device, measurement)
+        _, _, event = self.published()
+
+        self.assertEqual(event["op"], "upsert")
+        self.assertEqual(event["valid_min"], -40)
+
+    def test_clearing_everything_tombstones_the_entry(self):
+        measurement = self._measurement(None, valid_min=None, valid_max=None)
+
+        self.publisher.publish_measurement_alarms(self.device, measurement)
+        _, _, event = self.published()
+
+        self.assertEqual(event["op"], "delete")
 
     def test_clearing_the_override_tombstones_it_back_to_the_default(self):
         measurement = self._measurement(None)

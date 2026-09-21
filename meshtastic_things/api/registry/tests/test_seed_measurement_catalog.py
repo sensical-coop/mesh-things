@@ -138,14 +138,14 @@ class SeedMeasurementCatalogTests(TestCase):
             TelemetryVariant.objects.get(payload_kind="telemetry:environment_metrics").name, "BME280 (curated)"
         )
 
-    def test_is_idempotent_and_does_not_clobber_curated_bounds(self):
+    def test_is_idempotent_and_does_not_clobber_curated_detectors(self):
         call_command("seed_measurement_catalog", stdout=StringIO())
         link = TelemetryVariantMeasurement.objects.get(
             telemetry_variant__payload_kind="telemetry:environment_metrics",
             measurement_type__field_name="temperature",
         )
-        link.valid_min, link.valid_max = -40, 85
-        link.save(update_fields=["valid_min", "valid_max"])
+        link.default_enabled_detectors = ["range"]
+        link.save(update_fields=["default_enabled_detectors"])
         telemetry_variant_count = TelemetryVariant.objects.count()
         measurement_type_count = MeasurementType.objects.count()
         link_count = TelemetryVariantMeasurement.objects.count()
@@ -156,7 +156,7 @@ class SeedMeasurementCatalogTests(TestCase):
         self.assertEqual(MeasurementType.objects.count(), measurement_type_count)
         self.assertEqual(TelemetryVariantMeasurement.objects.count(), link_count)
         link.refresh_from_db()
-        self.assertEqual((link.valid_min, link.valid_max), (-40, 85))
+        self.assertEqual(link.default_enabled_detectors, ["range"])
 
 
 class CuratedSeedTableTests(SimpleTestCase):

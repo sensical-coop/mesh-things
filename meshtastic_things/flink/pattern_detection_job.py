@@ -1,12 +1,13 @@
 """Data-quality checks: per-point/small-batch detectors.
 
 Two checks run here, both per (mesh_id, device_id, channel):
-  - flat_value    - the channel hasn't moved for a configured span of time
-  - plausibility  - the value is outside the curated valid range
+  - flat_value  - the channel hasn't moved for a configured span of time
+  - range       - the value is outside the range configured for this device
 
-Thresholds come from "registry" catalog over mesh.quality_config.v1, so editing
-a TelemetryVariantMeasurement's limits or a device's intervals is what changes
-these checks.
+Config comes from "registry" over mesh.quality_config.v1: flat_value's default
+enabled/disabled state and reading interval come from the catalog
+(TelemetryVariantMeasurement/TelemetryVariant); range has no catalog default -
+its bounds only ever come from a device's own Measurement row.
 """
 import argparse
 import datetime
@@ -39,11 +40,11 @@ def _udf_log_exception(message: str) -> None:
     print(f"{message}\n{traceback.format_exc()}")
 
 
-# Catalog config from registry. Two kinds share this map, distinguished by the
-# key shape (same pattern decode_job.py uses for its two merged broadcast
-# streams):
-#   "<measurement>.<field>"   -> {"kind": "variant_config", default_reading_interval_seconds, valid_min, valid_max}
-#   "<mesh_id>:<device_id>"   -> {"kind": "device_intervals", reading_interval_seconds, publish_interval_seconds}
+# Config from registry. Three kinds share this map, distinguished by the key
+# shape (same pattern decode_job.py uses for its two merged broadcast streams):
+#   "<measurement>.<field>"             -> {"kind": "variant_config", default_reading_interval_seconds, default_enabled_detectors}
+#   "<mesh_id>:<device_id>"             -> {"kind": "device_intervals", reading_interval_seconds, publish_interval_seconds}
+#   "<mesh_id>:<device_id>:<channel>"   -> {"kind": "measurement_alarms", enabled_detectors, valid_min, valid_max}
 QUALITY_CONFIG_STATE = MapStateDescriptor("quality-config", Types.STRING(), Types.STRING())
 
 # How long a channel must stay unchanged to count as flat. The *number of
@@ -103,7 +104,8 @@ class ObservationKeySelector(KeySelector):
 
 
 class DetectPatterns(KeyedBroadcastProcessFunction):
-    """flat_value + plausibility, both driven by the registry catalog."""
+    """flat_value, driven by the registry catalog, and range, driven entirely
+    by the device's own Measurement override."""
 
     def open(self, runtime_context):
         from common import detectors
@@ -156,12 +158,12 @@ class DetectPatterns(KeyedBroadcastProcessFunction):
                 f"Value flat at {obs_value} for {span}",
             )
 
-        if config and self._detectors.PLAUSIBILITY in enabled:
-            valid_min, valid_max = config.get("valid_min"), config.get("valid_max")
+        if self._detectors.RANGE in enabled:
+            valid_min, valid_max = override.get("valid_min"), override.get("valid_max")
             if self._detectors.range_check_triggered(obs_value, valid_min, valid_max):
                 yield self._alarm(
-                    mesh_id, device_id, channel, obs_value, "plausibility",
-                    f"Value {obs_value} outside the catalog's plausible range [{valid_min}, {valid_max}]",
+                    mesh_id, device_id, channel, obs_value, "range",
+                    f"Value {obs_value} outside the configured range [{valid_min}, {valid_max}]",
                 )
 
     @staticmethod

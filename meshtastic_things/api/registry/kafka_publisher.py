@@ -120,8 +120,7 @@ class KeyEventPublisher:
         log.info("Published node unreject", key=key)
 
     def publish_variant_measurement_config(self, link) -> None:
-        """Publish plausibility limits and expected reading
-        interval for a variant"""
+        """Publish default detectors and expected reading interval for a variant"""
         key = channel_name(link.measurement_type.payload_kind, link.measurement_type.field_name)
         event = {
             "kind": "variant_config",
@@ -129,8 +128,6 @@ class KeyEventPublisher:
             "payload_kind": link.measurement_type.payload_kind,
             "field_name": link.measurement_type.field_name,
             "default_reading_interval_seconds": link.telemetry_variant.default_reading_interval_seconds,
-            "valid_min": link.valid_min,
-            "valid_max": link.valid_max,
             "default_enabled_detectors": list(link.default_enabled_detectors or []),
             "op": "upsert",
             "updated_at": datetime.now(timezone.utc).isoformat(),
@@ -140,12 +137,18 @@ class KeyEventPublisher:
         log.info("Published variant measurement config", key=key)
 
     def publish_measurement_alarms(self, device: Device, measurement) -> None:
-        """A null override hands the channel back to the
-        catalog default rather than silencing it."""
+        """A null enabled_detectors override hands the channel back to the
+        catalog default rather than silencing it. valid_min/valid_max have no
+        catalog default - they only ever come from here."""
         channel = channel_name(
             measurement.measurement_type.payload_kind, measurement.measurement_type.field_name
         )
         key = measurement_alarms_kafka_key(device, channel)
+        cleared = (
+            measurement.enabled_detectors is None
+            and measurement.valid_min is None
+            and measurement.valid_max is None
+        )
         event = {
             "kind": "measurement_alarms",
             "key": key,
@@ -153,7 +156,9 @@ class KeyEventPublisher:
             "device_id": device.device_id,
             "channel": channel,
             "enabled_detectors": measurement.enabled_detectors,
-            "op": "delete" if measurement.enabled_detectors is None else "upsert",
+            "valid_min": measurement.valid_min,
+            "valid_max": measurement.valid_max,
+            "op": "delete" if cleared else "upsert",
             "updated_at": datetime.now(timezone.utc).isoformat(),
         }
         future = self._producer.send(self._quality_config_topic, key=key, value=event)
@@ -171,7 +176,7 @@ class KeyEventPublisher:
             "device_id": device.device_id,
             "reading_interval_seconds": device.reading_interval_seconds,
             "publish_interval_seconds": device.publish_interval_seconds,
-            "alarms_enabled": device.alarms_enabled,
+            "absence_detection_enabled": device.absence_detection_enabled,
             "op": "delete" if cleared else "upsert",
             "updated_at": datetime.now(timezone.utc).isoformat(),
         }

@@ -126,12 +126,12 @@ from(bucket: "{self.bucket}")
         alarms_by_detector = self._records_to_alarm_counts(self._query_api.query(alarms_flux))
 
         points_ingested = sum(c["observed"] or 0 for c in channels)
-        plausibility_alarms = alarms_by_detector.get("plausibility", 0)
-        plausibility_ratio = (1 - plausibility_alarms / points_ingested) if points_ingested else None
+        range_alarms = alarms_by_detector.get("range", 0)
+        range_ratio = (1 - range_alarms / points_ingested) if points_ingested else None
 
         return {
             "points_ingested": points_ingested,
-            "plausibility_ratio": plausibility_ratio,
+            "range_ratio": range_ratio,
             "alarms_by_detector": alarms_by_detector,
             "channels": channels,
         }

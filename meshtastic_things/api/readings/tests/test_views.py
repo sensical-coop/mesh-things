@@ -49,8 +49,8 @@ class ReadingsTestCase(APITestCase):
         ]
         self.fake_client.device_metrics.return_value = {
             "points_ingested": 190.0,
-            "plausibility_ratio": 0.98,
-            "alarms_by_detector": {"plausibility": 2},
+            "range_ratio": 0.98,
+            "alarms_by_detector": {"range": 2},
             "channels": [
                 {
                     "channel": "device_metrics.battery_level",
@@ -217,7 +217,7 @@ class QualityViewTests(ReadingsTestCase):
         self.assertEqual(resp.status_code, 200)
         body = resp.json()
         self.assertEqual(body["points_ingested"], 190.0)
-        self.assertEqual(body["alarms_by_detector"], {"plausibility": 2})
+        self.assertEqual(body["alarms_by_detector"], {"range": 2})
         self.assertEqual(body["channels"][0]["channel"], "device_metrics.battery_level")
 
     def test_default_window_is_the_last_hour(self):

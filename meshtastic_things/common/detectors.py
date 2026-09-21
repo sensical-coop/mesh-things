@@ -3,7 +3,7 @@
 
 # The registry validates writes against these
 FLAT_VALUE = "flat_value"
-PLAUSIBILITY = "plausibility"
+RANGE = "range"
 COMPLETENESS = "completeness"
 ABSENCE = "absence"
 
@@ -20,10 +20,10 @@ DETECTOR_SPECS = (
         "description": "Fires when a channel reports the same value for a whole window.",
     },
     {
-        "name": PLAUSIBILITY,
+        "name": RANGE,
         "scope": MEASUREMENT_SCOPE,
         "requires": ("valid_min", "valid_max"),
-        "description": "Fires when a reading falls outside the catalog's plausible range.",
+        "description": "Fires when a reading falls outside the range configured for this device.",
     },
     {
         "name": COMPLETENESS,
@@ -40,7 +40,7 @@ DETECTOR_SPECS = (
 )
 
 MEASUREMENT_DETECTORS = tuple(d["name"] for d in DETECTOR_SPECS if d["scope"] == MEASUREMENT_SCOPE)
-# Device-wide: it has no channel, so it hangs off Device.alarms_enabled.
+# Device-wide: it has no channel, so it hangs off Device.absence_detection_enabled.
 DEVICE_DETECTORS = tuple(d["name"] for d in DETECTOR_SPECS if d["scope"] == DEVICE_SCOPE)
 
 # DRF choice pairs, shared by both serializers so the schema names one enum.

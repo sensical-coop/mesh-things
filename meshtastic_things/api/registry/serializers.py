@@ -208,6 +208,15 @@ def _validate_location_pair(serializer, attrs):
     return attrs
 
 
+def _validate_range_pair(serializer, attrs):
+    """valid_min/valid_max are always set/cleared together"""
+    has_min = "valid_min" in serializer.initial_data
+    has_max = "valid_max" in serializer.initial_data
+    if has_min != has_max:
+        raise serializers.ValidationError("valid_min and valid_max must be provided together")
+    return attrs
+
+
 class DeviceCreateSerializer(serializers.Serializer):
     """POST /devices input"""
 
@@ -269,7 +278,7 @@ class DeviceReadSerializer(serializers.ModelSerializer):
             "postprocessing_blueprint_id",
             "reading_interval_seconds",
             "publish_interval_seconds",
-            "alarms_enabled",
+            "absence_detection_enabled",
             "last_seen",
             "created_at",
             "updated_at",
@@ -353,14 +362,14 @@ class DeviceUpdateSerializer(serializers.ModelSerializer):
             "postprocessing_blueprint_id",
             "reading_interval_seconds",
             "publish_interval_seconds",
-            "alarms_enabled",
+            "absence_detection_enabled",
         ]
         extra_kwargs = {
             "label": {"required": False},
             "is_allowed": {"required": False},
             "reading_interval_seconds": {"required": False},
             "publish_interval_seconds": {"required": False},
-            "alarms_enabled": {"required": False},
+            "absence_detection_enabled": {"required": False},
         }
 
     def validate(self, attrs):
@@ -437,22 +446,19 @@ class TelemetryVariantMeasurementReadSerializer(serializers.ModelSerializer):
 
     class Meta:
         model = TelemetryVariantMeasurement
-        fields = [
-            "id", "measurement_type", "valid_min", "valid_max",
-            "default_enabled_detectors", "created_at", "updated_at",
-        ]
+        fields = ["id", "measurement_type", "default_enabled_detectors", "created_at", "updated_at"]
         read_only_fields = fields
 
 
 class TelemetryVariantMeasurementUpdateSerializer(serializers.ModelSerializer):
-    """PUT /telemetry-variants/{id}/measurements/{link_id}. Only the curated
-    plausibility range is editable"""
+    """PUT /telemetry-variants/{id}/measurements/{link_id}. Only
+    default_enabled_detectors is editable."""
 
     default_enabled_detectors = _detector_field(required=False)
 
     class Meta:
         model = TelemetryVariantMeasurement
-        fields = ["valid_min", "valid_max", "default_enabled_detectors"]
+        fields = ["default_enabled_detectors"]
         extra_kwargs = {field: {"required": False} for field in fields}
 
 
@@ -486,6 +492,8 @@ class DeviceMeasurementSerializer(serializers.ModelSerializer):
             "measurement_type",
             "enabled_detectors",
             "effective_detectors",
+            "valid_min",
+            "valid_max",
             "first_seen",
             "last_seen",
         ]
@@ -512,16 +520,25 @@ def catalog_default_for(measurement, context=None) -> list[str] | None:
 
 
 class DeviceMeasurementUpdateSerializer(serializers.ModelSerializer):
-    """PUT /devices/{uuid}/measurements/{id} - which detectors this channel runs.
+    """PUT /devices/{uuid}/measurements/{id}
 
-    Null inherits the catalog default; [] silences the channel on this device.
+    Sets which detectors this channel runs, and the range they check against.
+
+    enabled_detectors: null inherits the catalog default; [] silences the
+    channel on this device. valid_min/valid_max have no catalog default,
+    and must be set or cleared together.
     """
 
     enabled_detectors = _detector_field(required=False, allow_null=True)
+    valid_min = serializers.FloatField(required=False, allow_null=True)
+    valid_max = serializers.FloatField(required=False, allow_null=True)
 
     class Meta:
         model = Measurement
-        fields = ["enabled_detectors"]
+        fields = ["enabled_detectors", "valid_min", "valid_max"]
+
+    def validate(self, attrs):
+        return _validate_range_pair(self, attrs)
 
 
 class PostprocessingStepSerializer(serializers.ModelSerializer):

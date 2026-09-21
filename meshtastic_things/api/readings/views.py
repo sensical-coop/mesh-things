@@ -245,7 +245,7 @@ class QualityView(ReadingsAPIView):
     """Return data-quality figures for a device over a time range.
 
     Covers the number of readings recorded, alarms raised per detector, the
-    share of readings within their plausible range, and how complete each
+    share of readings within their configured range, and how complete each
     channel was. Figures stay empty until the quality checks have run for the
     device.
 
