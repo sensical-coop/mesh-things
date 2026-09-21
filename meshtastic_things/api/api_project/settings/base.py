@@ -175,6 +175,14 @@ if CORS_ALLOWED_ORIGINS:
         # CSRF enforcement never triggers). This only matters for registry.
         CSRF_TRUSTED_ORIGINS = CORS_ALLOWED_ORIGINS
 
+# Only registry sets cookies (login, CSRF)
+# Needed whenever the frontend and API live on different subdomains of the
+# same site
+COOKIE_DOMAIN = env_str(f"{ENV_PREFIX}__COOKIE_DOMAIN") or None
+if COOKIE_DOMAIN:
+    SESSION_COOKIE_DOMAIN = COOKIE_DOMAIN
+    CSRF_COOKIE_DOMAIN = COOKIE_DOMAIN
+
 LOGGING = {
     "version": 1,
     "disable_existing_loggers": False,
