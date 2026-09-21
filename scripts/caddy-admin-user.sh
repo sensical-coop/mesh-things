@@ -45,10 +45,25 @@ if [ -e "$OUT" ]; then
 fi
 
 echo "Creating an admin credential for '$USERNAME'."
-echo "Type the password at the prompt - it will not be echoed."
 
-HASH="$(docker compose run --rm -it --no-deps --entrypoint caddy caddy \
+read -rs -p "Password: " PASSWORD
+echo
+read -rs -p "Confirm password: " PASSWORD_CONFIRM
+echo
+
+if [ "$PASSWORD" != "$PASSWORD_CONFIRM" ]; then
+	echo "error: passwords did not match" >&2
+	exit 65
+fi
+[ -n "$PASSWORD" ] || { echo "error: password must not be empty" >&2; exit 65; }
+
+# -i only, no -t: caddy reads plaintext off stdin fine without a tty, and
+# mixing -t with piping this output through tr/tail hangs on a real terminal
+# - the pty docker allocates for -t is relayed through the same pipe, which
+# the tty/pipe combination doesn't handle reliably.
+HASH="$(printf '%s\n' "$PASSWORD" | docker compose run --rm -i --no-deps --entrypoint caddy caddy \
 	hash-password --algorithm bcrypt 2>/dev/null | tr -d '\r' | tail -1)"
+unset PASSWORD PASSWORD_CONFIRM
 
 case "$HASH" in
 	'$2a$'* | '$2b$'* | '$2y$'*) ;;
