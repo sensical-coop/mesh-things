@@ -129,7 +129,10 @@ def test_each_admin_ui_is_proxied_and_behind_auth(service, address_var):
 
     assert block, f"no Caddy site block for {address_var}"
     body = block.group(1)
-    assert "import admin_ui" in body, f"{service} is proxied without basic auth"
+    # influxdb can't `import admin_ui`
+    uses_admin_ui_snippet = "import admin_ui" in body
+    uses_inline_basic_auth = "basic_auth" in body and "import /etc/caddy/credentials/" in body
+    assert uses_admin_ui_snippet or uses_inline_basic_auth, f"{service} is proxied without basic auth"
     assert service in body, f"{address_var} block does not proxy {service}"
 
 def test_the_admin_auth_snippet_reads_credentials_from_files_not_env():
