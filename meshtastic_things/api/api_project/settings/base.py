@@ -151,7 +151,7 @@ REST_FRAMEWORK = {
 }
 
 SPECTACULAR_SETTINGS = {
-    "TITLE": "Meshtastic Things API",
+    "TITLE": "Mesh Things API",
     "VERSION": "1.0.0",
     "SERVERS": [{"url": public_base_url()}],
     # The catalog default and the per-device override share one choice set, so
