@@ -5,10 +5,15 @@ from django.core.exceptions import ImproperlyConfigured
 from common.env import env_bool, env_int, env_list, env_str
 
 from .base import *  # noqa: F401,F403
-from .base import ENV_PREFIX, IS_READINGS
+from .base import ENV_PREFIX, IS_READINGS, REST_FRAMEWORK
 
 # DEBUG in production leaks settings and stack traces.
 DEBUG = False
+
+REST_FRAMEWORK = {
+    **REST_FRAMEWORK,
+    "DEFAULT_RENDERER_CLASSES": ["rest_framework.renderers.JSONRenderer"],
+}
 
 ALLOWED_HOSTS = env_list(f"{ENV_PREFIX}__ALLOWED_HOSTS")
 if not ALLOWED_HOSTS:
