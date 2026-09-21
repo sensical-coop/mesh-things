@@ -129,7 +129,7 @@ class DetectAbsence(KeyedBroadcastProcessFunction):
             if raw:
                 config = json.loads(raw)
                 # Opt-in: an interval alone no longer turns absence on.
-                if not config.get("alarms_enabled"):
+                if not config.get("absence_detection_enabled"):
                     return None
                 if config.get("publish_interval_seconds"):
                     return config["publish_interval_seconds"]

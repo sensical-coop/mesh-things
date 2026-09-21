@@ -77,7 +77,7 @@ class QualityAlarmRoutingTests(RegistryTestCase):
         _, mesh = self._device()
 
         AlarmCommand._handle(_alarm(mesh["id"], 1, detector="absence"))
-        AlarmCommand._handle(_alarm(mesh["id"], 1, detector="plausibility", channel="env.temperature"))
+        AlarmCommand._handle(_alarm(mesh["id"], 1, detector="range", channel="env.temperature"))
 
         self.assertEqual(len(mail.outbox), 2)
 

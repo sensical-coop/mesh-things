@@ -132,24 +132,24 @@ class DeviceMetricsTests(SimpleTestCase):
         self.assertEqual(result["points_ingested"], 270.0)
         self.assertEqual({c["channel"] for c in result["channels"]}, {"device_metrics.battery_level", "environment_metrics.temperature"})
 
-    def test_plausibility_ratio_derived_from_plausibility_alarms(self):
+    def test_range_ratio_derived_from_range_alarms(self):
         self.client._query_api.query.side_effect = [
             self._quality_tables(observed=200.0),
-            self._alarm_tables(plausibility=2, completeness=1),
+            self._alarm_tables(range=2, completeness=1),
         ]
 
         result = self.client.device_metrics(MESH_ID, 123, "-1h", "now()")
 
-        self.assertEqual(result["alarms_by_detector"], {"plausibility": 2, "completeness": 1})
-        self.assertAlmostEqual(result["plausibility_ratio"], 1 - 2 / 200.0)
+        self.assertEqual(result["alarms_by_detector"], {"range": 2, "completeness": 1})
+        self.assertAlmostEqual(result["range_ratio"], 1 - 2 / 200.0)
 
-    def test_plausibility_ratio_is_none_when_nothing_was_ingested(self):
+    def test_range_ratio_is_none_when_nothing_was_ingested(self):
         self.client._query_api.query.side_effect = [[], []]
 
         result = self.client.device_metrics(MESH_ID, 123, "-1h", "now()")
 
         self.assertEqual(result["points_ingested"], 0)
-        self.assertIsNone(result["plausibility_ratio"])
+        self.assertIsNone(result["range_ratio"])
         self.assertEqual(result["channels"], [])
         self.assertEqual(result["alarms_by_detector"], {})
 

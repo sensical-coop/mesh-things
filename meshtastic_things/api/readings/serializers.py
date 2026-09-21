@@ -51,7 +51,7 @@ class DeviceQualityResponseSerializer(serializers.Serializer):
     start = serializers.CharField()
     stop = serializers.CharField()
     points_ingested = serializers.FloatField()
-    plausibility_ratio = serializers.FloatField(allow_null=True)
+    range_ratio = serializers.FloatField(allow_null=True)
     alarms_by_detector = serializers.DictField(child=serializers.IntegerField())
     channels = ChannelQualitySerializer(many=True)
 

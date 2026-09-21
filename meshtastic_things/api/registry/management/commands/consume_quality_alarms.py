@@ -3,7 +3,7 @@
   python manage.py consume_quality_alarms
 
 Consumes mesh.telemetry.alarms.v1:
-- Flink stream jobs (flat_value/plausibility/absence)
+- Flink stream jobs (flat_value/range/absence)
 - quality_worker's batch checks (completeness).
 
 Alarms are repeated by design (an absent device will trigger again), but
@@ -31,7 +31,7 @@ DETECTOR_SUBJECTS = {
     "absence": "Device has stopped publishing",
     "completeness": "Device readings have gaps",
     "flat_value": "Sensor value is flat",
-    "plausibility": "Sensor value is out of range",
+    "range": "Sensor value is out of range",
 }
 
 

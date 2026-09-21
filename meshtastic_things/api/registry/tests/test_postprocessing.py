@@ -3,7 +3,14 @@ from io import StringIO
 
 from django.core.management import call_command
 
-from registry.models import Device, PostprocessingStep, TelemetryVariant, TelemetryVariantMeasurement
+from registry.models import (
+    Device,
+    DeviceTelemetryVariant,
+    Measurement,
+    PostprocessingStep,
+    TelemetryVariant,
+    TelemetryVariantMeasurement,
+)
 
 from .helpers import RegistryTestCase
 
@@ -423,13 +430,13 @@ class QualityConfigPublishTests(RegistryTestCase):
             telemetry_variant=self.variant, measurement_type__field_name="temperature"
         )
 
-    def test_setting_bounds_publishes_the_channel_config(self):
+    def test_setting_the_catalog_default_publishes_the_channel_config(self):
         owner = self.create_owner()
         self.promote_to_superuser(owner)
 
         self.client.put(
             f"/telemetry-variants/{self.link.telemetry_variant_id}/measurements/{self.link.id}",
-            {"valid_min": -40, "valid_max": 85},
+            {"default_enabled_detectors": ["range"]},
             format="json",
             **self.auth_headers(owner),
         )
@@ -437,6 +444,31 @@ class QualityConfigPublishTests(RegistryTestCase):
         self.fake_publisher.publish_variant_measurement_config.assert_called_once()
         published = self.fake_publisher.publish_variant_measurement_config.call_args[0][0]
         self.assertEqual(published.id, self.link.id)
+        self.assertEqual(published.default_enabled_detectors, ["range"])
+
+    def _device_measurement(self, owner):
+        mesh = self.create_mesh(owner)
+        node = self.create_node(owner, mesh, device_id=1)
+        dtv = DeviceTelemetryVariant.objects.create(device_id=node["uuid"], telemetry_variant=self.variant)
+        measurement = Measurement.objects.create(
+            device_telemetry_variant=dtv, measurement_type=self.link.measurement_type
+        )
+        return node, measurement
+
+    def test_setting_a_devices_range_publishes_the_measurement_alarms_event(self):
+        """Range has no catalog equivalent - only the per-device event carries it."""
+        owner = self.create_owner()
+        node, measurement = self._device_measurement(owner)
+
+        self.client.put(
+            f"/devices/{node['uuid']}/measurements/{measurement.id}",
+            {"valid_min": -40, "valid_max": 85},
+            format="json",
+            **self.auth_headers(owner),
+        )
+
+        self.fake_publisher.publish_measurement_alarms.assert_called_once()
+        _, published = self.fake_publisher.publish_measurement_alarms.call_args[0]
         self.assertEqual((published.valid_min, published.valid_max), (-40, 85))
 
     def test_setting_the_variant_interval_republishes_every_field_under_it(self):
@@ -484,20 +516,20 @@ class QualityConfigPublishTests(RegistryTestCase):
 
         self.fake_publisher.publish_device_intervals.assert_not_called()
 
-    def test_publish_failure_does_not_fail_the_api_write(self):
+    def test_range_publish_failure_does_not_fail_the_api_write(self):
         # Deliberately unlike the gateway/node publishes, which roll back -
         # a stale threshold delays a detection, it doesn't leak anything.
         owner = self.create_owner()
-        self.promote_to_superuser(owner)
-        self.fake_publisher.publish_variant_measurement_config.side_effect = RuntimeError("kafka down")
+        node, measurement = self._device_measurement(owner)
+        self.fake_publisher.publish_measurement_alarms.side_effect = RuntimeError("kafka down")
 
         resp = self.client.put(
-            f"/telemetry-variants/{self.link.telemetry_variant_id}/measurements/{self.link.id}",
+            f"/devices/{node['uuid']}/measurements/{measurement.id}",
             {"valid_min": -40, "valid_max": 85},
             format="json",
             **self.auth_headers(owner),
         )
 
         self.assertEqual(resp.status_code, 200)
-        self.link.refresh_from_db()
-        self.assertEqual((self.link.valid_min, self.link.valid_max), (-40, 85))
+        measurement.refresh_from_db()
+        self.assertEqual((measurement.valid_min, measurement.valid_max), (-40, 85))

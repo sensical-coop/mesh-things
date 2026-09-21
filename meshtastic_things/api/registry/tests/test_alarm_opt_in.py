@@ -48,27 +48,27 @@ class DefaultsTests(AlarmOptInTestCase):
             f"/devices/{self.device['uuid']}", **self.auth_headers(self.owner)
         ).json()
 
-        self.assertFalse(device["alarms_enabled"])
+        self.assertFalse(device["absence_detection_enabled"])
 
 
 class ResolutionTests(AlarmOptInTestCase):
     def test_the_catalog_default_applies_when_the_device_says_nothing(self):
-        self.link.default_enabled_detectors = ["plausibility"]
+        self.link.default_enabled_detectors = ["range"]
         self.link.save()
 
-        self.assertEqual(self.measurements()[0]["effective_detectors"], ["plausibility"])
+        self.assertEqual(self.measurements()[0]["effective_detectors"], ["range"])
 
     def test_the_device_override_replaces_the_default(self):
         self.link.default_enabled_detectors = ["flat_value"]
         self.link.save()
 
-        self.client.put(self.url, {"enabled_detectors": ["plausibility"]}, format="json",
+        self.client.put(self.url, {"enabled_detectors": ["range"]}, format="json",
                         **self.auth_headers(self.owner))
 
-        self.assertEqual(self.measurements()[0]["effective_detectors"], ["plausibility"])
+        self.assertEqual(self.measurements()[0]["effective_detectors"], ["range"])
 
     def test_an_empty_list_silences_a_channel_the_catalog_enables(self):
-        self.link.default_enabled_detectors = ["flat_value", "plausibility"]
+        self.link.default_enabled_detectors = ["flat_value", "range"]
         self.link.save()
 
         self.client.put(self.url, {"enabled_detectors": []}, format="json",
@@ -77,7 +77,7 @@ class ResolutionTests(AlarmOptInTestCase):
         self.assertEqual(self.measurements()[0]["effective_detectors"], [])
 
     def test_null_hands_the_channel_back_to_the_catalog(self):
-        self.link.default_enabled_detectors = ["plausibility"]
+        self.link.default_enabled_detectors = ["range"]
         self.link.save()
         self.client.put(self.url, {"enabled_detectors": []}, format="json",
                         **self.auth_headers(self.owner))
@@ -85,7 +85,7 @@ class ResolutionTests(AlarmOptInTestCase):
         self.client.put(self.url, {"enabled_detectors": None}, format="json",
                         **self.auth_headers(self.owner))
 
-        self.assertEqual(self.measurements()[0]["effective_detectors"], ["plausibility"])
+        self.assertEqual(self.measurements()[0]["effective_detectors"], ["range"])
 
 
 class ValidationTests(AlarmOptInTestCase):
@@ -124,15 +124,15 @@ class PermissionTests(AlarmOptInTestCase):
     def test_the_catalog_default_is_superuser_only(self):
         url = f"/telemetry-variants/{self.variant.id}/measurements/{self.link.id}"
 
-        denied = self.client.put(url, {"default_enabled_detectors": ["plausibility"]},
+        denied = self.client.put(url, {"default_enabled_detectors": ["range"]},
                                  format="json", **self.auth_headers(self.owner))
         self.promote_to_superuser(self.owner)
-        allowed = self.client.put(url, {"default_enabled_detectors": ["plausibility"]},
+        allowed = self.client.put(url, {"default_enabled_detectors": ["range"]},
                                   format="json", **self.auth_headers(self.owner))
 
         self.assertEqual(denied.status_code, 403)
         self.assertEqual(allowed.status_code, 200)
-        self.assertEqual(allowed.json()["default_enabled_detectors"], ["plausibility"])
+        self.assertEqual(allowed.json()["default_enabled_detectors"], ["range"])
 
 
 class DetectorRegistryTests(AlarmOptInTestCase):
@@ -146,7 +146,7 @@ class DetectorRegistryTests(AlarmOptInTestCase):
 
         self.assertEqual(
             {n for n, d in by_name.items() if d["scope"] == "measurement"},
-            {"flat_value", "plausibility", "completeness"},
+            {"flat_value", "range", "completeness"},
         )
         self.assertEqual(by_name["absence"]["scope"], "device")
 
@@ -163,7 +163,7 @@ class DetectorRegistryTests(AlarmOptInTestCase):
     def test_each_entry_says_what_else_it_needs(self):
         by_name = {d["name"]: d for d in self.detectors()}
 
-        self.assertEqual(by_name["plausibility"]["requires"], ["valid_min", "valid_max"])
+        self.assertEqual(by_name["range"]["requires"], ["valid_min", "valid_max"])
         self.assertEqual(by_name["completeness"]["requires"], ["reading_interval_seconds"])
         self.assertEqual(by_name["flat_value"]["requires"], [])
 
@@ -175,13 +175,13 @@ class PublishTests(AlarmOptInTestCase):
     """The stream job only learns about a change through the compacted topic."""
 
     def test_setting_the_override_publishes_it(self):
-        self.client.put(self.url, {"enabled_detectors": ["plausibility"]}, format="json",
+        self.client.put(self.url, {"enabled_detectors": ["range"]}, format="json",
                         **self.auth_headers(self.owner))
 
         self.fake_publisher.publish_measurement_alarms.assert_called_once()
 
     def test_the_absence_switch_republishes_the_device_entry(self):
-        self.client.put(f"/devices/{self.device['uuid']}", {"alarms_enabled": True},
+        self.client.put(f"/devices/{self.device['uuid']}", {"absence_detection_enabled": True},
                         format="json", **self.auth_headers(self.owner))
 
         self.fake_publisher.publish_device_intervals.assert_called_once()

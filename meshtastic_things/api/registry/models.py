@@ -169,8 +169,9 @@ class Device(models.Model):
     )
     reading_interval_seconds = models.PositiveIntegerField(null=True, blank=True)
     publish_interval_seconds = models.PositiveIntegerField(null=True, blank=True)
-    # Gates the absence detector, which is device-wide rather than per channel.
-    alarms_enabled = models.BooleanField(default=False)
+    # The absence detector is device-wide rather than per channel, so it is
+    # switched on here rather than in a Measurement's enabled_detectors.
+    absence_detection_enabled = models.BooleanField(default=False)
     latitude = models.FloatField(null=True, blank=True)
     longitude = models.FloatField(null=True, blank=True)
     location_overridden = models.BooleanField(default=False)
@@ -255,17 +256,13 @@ class TelemetryVariant(models.Model):
 
 
 class TelemetryVariantMeasurement(models.Model):
-    """Declares that a TelemetryVariant has a given MeasurementType, and
-    its the plausible value range for it - e.g.
-    environment_metrics -> temperature: [-40, 85]."""
+    """Declares that a TelemetryVariant has a given MeasurementType."""
 
     id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
     telemetry_variant = models.ForeignKey(TelemetryVariant, on_delete=models.CASCADE, related_name="measurement_links")
     measurement_type = models.ForeignKey(
         MeasurementType, on_delete=models.CASCADE, related_name="telemetry_variant_links"
     )
-    valid_min = models.FloatField(null=True, blank=True)
-    valid_max = models.FloatField(null=True, blank=True)
     # Detectors every device reporting this channel runs unless it overrides them.
     default_enabled_detectors = models.JSONField(default=list, blank=True)
     created_at = models.DateTimeField(auto_now_add=True)
@@ -313,6 +310,10 @@ class Measurement(models.Model):
     measurement_type = models.ForeignKey(MeasurementType, on_delete=models.CASCADE, related_name="measurements")
     # null inherits the catalog default; [] silences this channel on this device.
     enabled_detectors = models.JSONField(null=True, blank=True, default=None)
+    # Range is checked per-device. Both null means
+    # the range detector is a not checked for this channel; set/cleared together.
+    valid_min = models.FloatField(null=True, blank=True)
+    valid_max = models.FloatField(null=True, blank=True)
     first_seen = models.DateTimeField(auto_now_add=True)
     last_seen = models.DateTimeField(null=True, blank=True)
 

@@ -1,7 +1,4 @@
 import uuid
-from io import StringIO
-
-from django.core.management import call_command
 
 from registry.management.commands.consume_sensor_discovery import Command as DiscoveryCommand
 from registry.models import DeviceTelemetryVariant, Measurement, MeasurementType, TelemetryVariant, TelemetryVariantMeasurement
@@ -493,41 +490,46 @@ class TelemetryVariantMeasurementApiTests(SeededCatalogTestCase):
         resp = self.client.get(f"/telemetry-variants/{self.telemetry_variant.id}/measurements")
         self.assertEqual(resp.status_code, 401)
 
-    def test_non_superuser_cannot_set_bounds(self):
-        owner = self.create_owner()
+class DeviceMeasurementRangeTests(SeededCatalogTestCase):
+    """valid_min/valid_max have no catalog equivalent - they're set per
+    device, on the same endpoint that already controls enabled_detectors."""
 
+    def setUp(self):
+        super().setUp()
+        self.owner = self.create_owner()
+        self.mesh = self.create_mesh(self.owner)
+        self.node = self.create_node(self.owner, self.mesh, device_id=1)
+        _seed_discovery(self.mesh, 1, "telemetry:environment_metrics", ["temperature"])
+        measurement = self.client.get(
+            f"/devices/{self.node['uuid']}/measurements", **self.auth_headers(self.owner)
+        ).json()[0]
+        self.url = f"/devices/{self.node['uuid']}/measurements/{measurement['id']}"
+
+    def test_any_verified_owner_can_set_their_own_devices_range(self):
+        """Unlike the catalog default, this is not superuser-gated - it only
+        ever affects the mesh owner's own device."""
         resp = self.client.put(
-            f"/telemetry-variants/{self.link.telemetry_variant_id}/measurements/{self.link.id}",
-            {"valid_min": -40, "valid_max": 85},
-            format="json",
-            **self.auth_headers(owner),
-        )
-
-        self.assertEqual(resp.status_code, 403)
-
-    def test_superuser_can_set_bounds(self):
-        owner = self.create_owner()
-        self.promote_to_superuser(owner)
-
-        resp = self.client.put(
-            f"/telemetry-variants/{self.link.telemetry_variant_id}/measurements/{self.link.id}",
-            {"valid_min": -40, "valid_max": 85},
-            format="json",
-            **self.auth_headers(owner),
+            self.url, {"valid_min": -40, "valid_max": 85}, format="json", **self.auth_headers(self.owner)
         )
 
         self.assertEqual(resp.status_code, 200)
-        self.link.refresh_from_db()
-        self.assertEqual((self.link.valid_min, self.link.valid_max), (-40, 85))
+        self.assertEqual((resp.json()["valid_min"], resp.json()["valid_max"]), (-40, 85))
 
-    def test_bounds_survive_re_running_the_seed_command(self):
-        self.link.valid_min, self.link.valid_max = -40, 85
-        self.link.save(update_fields=["valid_min", "valid_max"])
+    def test_min_and_max_must_be_provided_together(self):
+        resp = self.client.put(
+            self.url, {"valid_min": -40}, format="json", **self.auth_headers(self.owner)
+        )
 
-        call_command("seed_measurement_catalog", stdout=StringIO())
+        self.assertEqual(resp.status_code, 400)
 
-        self.link.refresh_from_db()
-        self.assertEqual((self.link.valid_min, self.link.valid_max), (-40, 85))
+    def test_another_owner_cannot_set_it(self):
+        intruder = self.create_owner(name="Mallory", email="mallory-range@example.com")
+
+        resp = self.client.put(
+            self.url, {"valid_min": -40, "valid_max": 85}, format="json", **self.auth_headers(intruder)
+        )
+
+        self.assertIn(resp.status_code, (403, 404))
 
 
 class MeasurementTypeFilterTests(SeededCatalogTestCase):
