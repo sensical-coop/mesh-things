@@ -143,7 +143,7 @@ REST_FRAMEWORK = {
     "DEFAULT_THROTTLE_RATES": {
         "owner": "120/min",
         "anon": "60/min",
-        "owner-signup": "5/hour",
+        "owner-signup": "20/hour",
         "resend-verification": "3/hour",
         "request-password-reset": "5/hour",
     },

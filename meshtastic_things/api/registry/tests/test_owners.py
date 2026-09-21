@@ -406,3 +406,65 @@ class OwnerDeletionCascadeTests(RegistryTestCase):
 
         self.assertEqual(resp.status_code, 204)
         self.assertEqual(self.client.get("/owners/me", **self.auth_headers(owner)).status_code, 401)
+
+
+class OwnerAdminDeletionTests(RegistryTestCase):
+    def test_superuser_deletes_another_owner(self):
+        admin = self.create_owner(name="Admin", email="admin-delete@example.com")
+        self.promote_to_superuser(admin)
+        target = self.create_owner(name="Alice", email="alice-admin-delete@example.com")
+        mesh = self.create_mesh(target)
+        self.create_gateway(target, mesh, device_id=1)
+
+        resp = self.client.delete(f"/owners/{target['id']}", **self.auth_headers(admin))
+
+        self.assertEqual(resp.status_code, 204)
+        self.assertEqual(self.fake_publisher.publish_gateway_delete.call_count, 1)
+        self.assertEqual(self.client.get(f"/owners/{target['id']}").status_code, 404)
+
+    def test_non_superuser_cannot_delete_another_owner(self):
+        caller = self.create_owner(name="Bob", email="bob-admin-delete@example.com")
+        target = self.create_owner(name="Alice", email="alice-admin-delete-2@example.com")
+
+        resp = self.client.delete(f"/owners/{target['id']}", **self.auth_headers(caller))
+
+        self.assertEqual(resp.status_code, 403)
+        self.assertEqual(self.client.get(f"/owners/{target['id']}").status_code, 200)
+
+    def test_admin_delete_requires_auth(self):
+        target = self.create_owner(name="Alice", email="alice-admin-delete-3@example.com")
+
+        resp = self.client.delete(f"/owners/{target['id']}")
+
+        self.assertEqual(resp.status_code, 401)
+
+    def test_admin_delete_unknown_owner_404s(self):
+        admin = self.create_owner(name="Admin", email="admin-delete-2@example.com")
+        self.promote_to_superuser(admin)
+
+        resp = self.client.delete("/owners/00000000-0000-0000-0000-000000000000", **self.auth_headers(admin))
+
+        self.assertEqual(resp.status_code, 404)
+
+    def test_admin_delete_aborts_on_publish_failure(self):
+        admin = self.create_owner(name="Admin", email="admin-delete-3@example.com")
+        self.promote_to_superuser(admin)
+        target = self.create_owner(name="Alice", email="alice-admin-delete-4@example.com")
+        mesh = self.create_mesh(target)
+        self.create_gateway(target, mesh, device_id=1)
+        self.fake_publisher.publish_gateway_delete.side_effect = RuntimeError("kafka down")
+
+        resp = self.client.delete(f"/owners/{target['id']}", **self.auth_headers(admin))
+
+        self.assertEqual(resp.status_code, 502)
+        self.assertEqual(self.client.get(f"/owners/{target['id']}").status_code, 200)
+        self.fake_publisher.publish_gateway_delete.side_effect = None
+
+    def test_superuser_deletes_self_via_admin_route(self):
+        admin = self.create_owner(name="Admin", email="admin-delete-4@example.com")
+        self.promote_to_superuser(admin)
+
+        resp = self.client.delete(f"/owners/{admin['id']}", **self.auth_headers(admin))
+
+        self.assertEqual(resp.status_code, 204)
+        self.assertEqual(self.client.get(f"/owners/{admin['id']}").status_code, 404)

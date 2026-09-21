@@ -387,6 +387,36 @@ class OwnerResetPasswordView(APIView):
         return Response({"detail": "Password reset"})
 
 
+def _get_owner_or_404(owner_id) -> Owner:
+    try:
+        return Owner.objects.get(pk=owner_id)
+    except (Owner.DoesNotExist, ValueError, TypeError):
+        raise NotFound("Owner not found")
+
+
+def _delete_owner_cascading(owner: Owner) -> None:
+    """Delete an owner along with their meshes and devices.
+
+    Their gateways are deregistered from the decoder first, and nothing is
+    removed if that fails.
+    """
+    devices = Device.objects.filter(mesh__owner=owner)
+    gateways = list(devices.filter(is_gateway=True, is_allowed=True))
+    rejected_nodes = list(devices.filter(is_gateway=False, is_allowed=False))
+    publisher = get_publisher()
+    for gateway in gateways:
+        try:
+            publisher.publish_gateway_delete(gateway)
+        except Exception as e:
+            raise BadGateway(f"Failed to publish delete for device {gateway.id}, owner NOT removed: {e}")
+    for node in rejected_nodes:
+        try:
+            publisher.publish_node_unreject(node)
+        except Exception as e:
+            raise BadGateway(f"Failed to publish unreject for device {node.id}, owner NOT removed: {e}")
+    owner.delete()
+
+
 class OwnerDetailView(APIView):
     """Return one owner.
 
@@ -406,11 +436,20 @@ class OwnerDetailView(APIView):
         )
     )
     def get(self, request, owner_id):
-        try:
-            owner = Owner.objects.get(pk=owner_id)
-        except (Owner.DoesNotExist, ValueError, TypeError):
-            raise NotFound("Owner not found")
+        owner = _get_owner_or_404(owner_id)
         return Response(_owner_serializer_for(request, owner)(owner).data)
+
+    @extend_schema(responses={204: NO_CONTENT})
+    def delete(self, request, owner_id):
+        """Remove an owner, along with their meshes and devices. Superusers only.
+
+        Their gateways are deregistered from the decoder first, and nothing is
+        removed if that fails.
+        """
+        _require_superuser(request)
+        owner = _get_owner_or_404(owner_id)
+        _delete_owner_cascading(owner)
+        return Response(status=status.HTTP_204_NO_CONTENT)
 
 
 class OwnerMeView(APIView):
@@ -465,21 +504,7 @@ class OwnerMeView(APIView):
         Their gateways are deregistered from the decoder first, and nothing is
         removed if that fails.
         """
-        devices = Device.objects.filter(mesh__owner=request.user)
-        gateways = list(devices.filter(is_gateway=True, is_allowed=True))
-        rejected_nodes = list(devices.filter(is_gateway=False, is_allowed=False))
-        publisher = get_publisher()
-        for gateway in gateways:
-            try:
-                publisher.publish_gateway_delete(gateway)
-            except Exception as e:
-                raise BadGateway(f"Failed to publish delete for device {gateway.id}, owner NOT removed: {e}")
-        for node in rejected_nodes:
-            try:
-                publisher.publish_node_unreject(node)
-            except Exception as e:
-                raise BadGateway(f"Failed to publish unreject for device {node.id}, owner NOT removed: {e}")
-        request.user.delete()
+        _delete_owner_cascading(request.user)
         return Response(status=status.HTTP_204_NO_CONTENT)
 
 
@@ -936,6 +961,8 @@ def _publish_measurement_alarms(device, measurement) -> None:
 
 
 def _require_superuser(request) -> None:
+    if not request.user.is_authenticated:
+        raise AuthenticationFailed()
     if not IsSuperuser().has_permission(request, None):
         raise PermissionDenied("Only a superuser may modify this")
 
