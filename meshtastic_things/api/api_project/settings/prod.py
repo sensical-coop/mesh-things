@@ -46,7 +46,7 @@ if not IS_READINGS:
     EMAIL_VERIFICATION_TTL_HOURS = env_int("REGISTRY__EMAIL_VERIFICATION_TTL_HOURS", 24)
     PASSWORD_RESET_TTL_HOURS = env_int("REGISTRY__PASSWORD_RESET_TTL_HOURS", 1)
 
-    # Verification link (clicked directly against the API, no frontend involved)
+    # Used to build API-facing URLs, e.g. the schema server entry.
     PUBLIC_BASE_URL = env_str("REGISTRY__PUBLIC_BASE_URL", "")
     if not PUBLIC_BASE_URL:
         raise ImproperlyConfigured(
@@ -54,8 +54,8 @@ if not IS_READINGS:
             "(e.g. https://api.yourdomain.com)"
         )
 
-    # Password reset link (opened in the frontend app, which then calls this
-    # API with the token as a bearer credential)
+    # Verification and password reset links are opened in the frontend app,
+    # which then calls this API with the token as a bearer credential.
     PUBLIC_FRONTEND_URL = env_str("REGISTRY__PUBLIC_FRONTEND_URL", "")
     if not PUBLIC_FRONTEND_URL:
         raise ImproperlyConfigured(

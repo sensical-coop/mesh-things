@@ -16,7 +16,7 @@ def send_templated_email(to_email: str, subject: str, template_name: str, contex
 
 def send_verification_email(owner, token: str) -> None:
 
-    verify_link = f"{settings.PUBLIC_BASE_URL}/owners/verify-email?token={token}"
+    verify_link = f"{settings.PUBLIC_FRONTEND_URL}/verify-email?token={token}"
     send_templated_email(
         to_email=owner.email,
         subject="Verify your email - Mesh Things",
