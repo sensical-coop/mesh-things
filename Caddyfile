@@ -44,7 +44,15 @@
 }
 
 {$CADDY_INFLUX_ADDRESS::8183} {
-	import admin_ui
+	# InfluxDB's own UI logs in via `Authorization: Basic` on /api/v2/signin -
+	# the same header basic_auth above checks. Gating /api/* here too makes
+	# Caddy re-validate InfluxDB's admin credentials against ITS OWN user
+	# store and reject them, since they're not a Caddy admin_ui credential.
+	# Exempting /api/* leaves it to InfluxDB's own (real) authentication.
+	@ui not path /api/*
+	basic_auth @ui bcrypt {
+		import /etc/caddy/credentials/*.txt
+	}
 	reverse_proxy influxdb:8086
 }
 
