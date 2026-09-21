@@ -17,6 +17,7 @@ from rest_framework.response import Response
 from rest_framework.views import APIView
 
 from .auth import generate_api_key, hash_api_key
+from .authentication import OwnerResetPasswordAuthentication
 from .emailing import send_password_reset_email, send_verification_email
 from .exceptions import BadGateway, Conflict
 from .kafka_publisher import get_publisher
@@ -355,27 +356,17 @@ class OwnerRequestPasswordResetView(APIView):
 
 
 class OwnerResetPasswordView(APIView):
-    """Set a new password using the token from a reset link."""
+    """Set a new password, authenticated by the reset token from the link's
+    email as an `Authorization: Bearer` credential."""
 
-    authentication_classes = []
-    permission_classes = [AllowAny]
+    authentication_classes = [OwnerResetPasswordAuthentication]
+    permission_classes = [IsAuthenticated]
 
     @extend_schema(request=OwnerResetPasswordSerializer, responses=DetailSerializer)
     def post(self, request):
         serializer = OwnerResetPasswordSerializer(data=request.data)
         serializer.is_valid(raise_exception=True)
-        owner = Owner.objects.filter(
-            password_reset_token_hash=hash_api_key(serializer.validated_data["token"])
-        ).first()
-        ttl = timedelta(hours=settings.PASSWORD_RESET_TTL_HOURS)
-        expired = owner is None or owner.password_reset_sent_at is None or (
-            timezone.now() > owner.password_reset_sent_at + ttl
-        )
-        if expired:
-            raise ParseError(
-                "Invalid or expired reset link - request a new one via "
-                "POST /owners/request-password-reset"
-            )
+        owner = request.user
         try:
             validate_password(serializer.validated_data["new_password"], user=owner)
         except DjangoValidationError as e:

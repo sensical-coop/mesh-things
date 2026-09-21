@@ -167,7 +167,10 @@ class PasswordResetTests(RegistryTestCase):
         token = _extract_token(mail.outbox[0])
 
         resp = self.client.post(
-            "/owners/reset-password", {"token": token, "new_password": "N3w-Str0ng-Password!"}, format="json"
+            "/owners/reset-password",
+            {"new_password": "N3w-Str0ng-Password!"},
+            format="json",
+            **self.auth_headers(token),
         )
         self.assertEqual(resp.status_code, 200, resp.content)
 
@@ -182,24 +185,37 @@ class PasswordResetTests(RegistryTestCase):
         self.client.post("/owners/request-password-reset", {"email": "reset-c@example.com"}, format="json")
         token = _extract_token(mail.outbox[0])
         self.client.post(
-            "/owners/reset-password", {"token": token, "new_password": "N3w-Str0ng-Password!"}, format="json"
+            "/owners/reset-password",
+            {"new_password": "N3w-Str0ng-Password!"},
+            format="json",
+            **self.auth_headers(token),
         )
 
         reused = self.client.post(
-            "/owners/reset-password", {"token": token, "new_password": "Another-Str0ng-1"}, format="json"
+            "/owners/reset-password",
+            {"new_password": "Another-Str0ng-1"},
+            format="json",
+            **self.auth_headers(token),
         )
 
-        self.assertEqual(reused.status_code, 400)
+        self.assertEqual(reused.status_code, 401)
 
-    def test_reset_with_invalid_token_is_400(self):
+    def test_reset_with_invalid_token_is_401(self):
         resp = self.client.post(
             "/owners/reset-password",
-            {"token": "not-a-real-token", "new_password": "N3w-Str0ng-Password!"},
+            {"new_password": "N3w-Str0ng-Password!"},
             format="json",
+            **self.auth_headers("not-a-real-token"),
         )
-        self.assertEqual(resp.status_code, 400)
+        self.assertEqual(resp.status_code, 401)
 
-    def test_reset_with_expired_token_is_400(self):
+    def test_reset_without_a_token_is_401(self):
+        resp = self.client.post(
+            "/owners/reset-password", {"new_password": "N3w-Str0ng-Password!"}, format="json"
+        )
+        self.assertEqual(resp.status_code, 401)
+
+    def test_reset_with_expired_token_is_401(self):
         self.create_owner(name="Alice", email="reset-d@example.com")
         mail.outbox.clear()
         self.client.post("/owners/request-password-reset", {"email": "reset-d@example.com"}, format="json")
@@ -209,10 +225,13 @@ class PasswordResetTests(RegistryTestCase):
         owner.save(update_fields=["password_reset_sent_at"])
 
         resp = self.client.post(
-            "/owners/reset-password", {"token": token, "new_password": "N3w-Str0ng-Password!"}, format="json"
+            "/owners/reset-password",
+            {"new_password": "N3w-Str0ng-Password!"},
+            format="json",
+            **self.auth_headers(token),
         )
 
-        self.assertEqual(resp.status_code, 400)
+        self.assertEqual(resp.status_code, 401)
 
     def test_reset_lets_an_owner_without_a_usable_password_set_one(self):
         owner_obj = Owner.objects.create_user(email="reset-legacy@example.com", name="Legacy", is_active=True)
@@ -221,7 +240,10 @@ class PasswordResetTests(RegistryTestCase):
         self.client.post("/owners/request-password-reset", {"email": "reset-legacy@example.com"}, format="json")
         token = _extract_token(mail.outbox[0])
         resp = self.client.post(
-            "/owners/reset-password", {"token": token, "new_password": "N3w-Str0ng-Password!"}, format="json"
+            "/owners/reset-password",
+            {"new_password": "N3w-Str0ng-Password!"},
+            format="json",
+            **self.auth_headers(token),
         )
 
         self.assertEqual(resp.status_code, 200)

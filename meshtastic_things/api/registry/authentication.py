@@ -1,4 +1,8 @@
+from datetime import timedelta
+
+from django.conf import settings
 from django.core.cache import cache
+from django.utils import timezone
 from drf_spectacular.extensions import OpenApiAuthenticationExtension
 from rest_framework import authentication, exceptions
 
@@ -59,3 +63,50 @@ class OwnerBearerAuthenticationScheme(OpenApiAuthenticationExtension):
 
     def get_security_definition(self, auto_schema):
         return {"type": "http", "scheme": "bearer", "bearerFormat": "API key"}
+
+
+class OwnerResetPasswordAuthentication(authentication.BaseAuthentication):
+    """
+    Authenticates the caller as the Owner whose password-reset token was
+    presented, via `Authorization: Bearer <token>`. The token is single-use
+    and expires after `REGISTRY__PASSWORD_RESET_TTL_HOURS`.
+    """
+
+    keyword = b"bearer"
+
+    def authenticate(self, request):
+        token = self._token_from_header(request)
+        if not token:
+            return None
+
+        owner = Owner.objects.filter(password_reset_token_hash=hash_api_key(token)).first()
+        ttl = timedelta(hours=settings.PASSWORD_RESET_TTL_HOURS)
+        expired = owner is None or owner.password_reset_sent_at is None or (
+            timezone.now() > owner.password_reset_sent_at + ttl
+        )
+        if expired:
+            raise exceptions.AuthenticationFailed(
+                "Invalid or expired reset link - request a new one via "
+                "POST /owners/request-password-reset"
+            )
+        return (owner, None)
+
+    def _token_from_header(self, request) -> str | None:
+        parts = authentication.get_authorization_header(request).split()
+        if len(parts) == 2 and parts[0].lower() == self.keyword:
+            return parts[1].decode()
+        return None
+
+    def authenticate_header(self, request):
+        return "Bearer"
+
+
+class OwnerResetPasswordAuthenticationScheme(OpenApiAuthenticationExtension):
+    """Registers OwnerResetPasswordAuthentication with drf-spectacular so /docs shows
+    an Authorize button distinct from the regular API-key bearer scheme"""
+
+    target_class = OwnerResetPasswordAuthentication
+    name = "resetTokenBearerAuth"
+
+    def get_security_definition(self, auto_schema):
+        return {"type": "http", "scheme": "bearer", "bearerFormat": "Password reset token"}

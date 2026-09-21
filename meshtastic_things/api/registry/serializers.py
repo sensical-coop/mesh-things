@@ -110,7 +110,6 @@ class OwnerRequestPasswordResetSerializer(serializers.Serializer):
 class OwnerResetPasswordSerializer(serializers.Serializer):
     """POST /owners/reset-password input"""
 
-    token = serializers.CharField()
     new_password = serializers.CharField(write_only=True)
 
 

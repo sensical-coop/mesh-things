@@ -41,12 +41,21 @@ if not IS_READINGS:
     EMAIL_VERIFICATION_TTL_HOURS = env_int("REGISTRY__EMAIL_VERIFICATION_TTL_HOURS", 24)
     PASSWORD_RESET_TTL_HOURS = env_int("REGISTRY__PASSWORD_RESET_TTL_HOURS", 1)
 
-    # Verification and reset links
+    # Verification link (clicked directly against the API, no frontend involved)
     PUBLIC_BASE_URL = env_str("REGISTRY__PUBLIC_BASE_URL", "")
     if not PUBLIC_BASE_URL:
         raise ImproperlyConfigured(
             "REGISTRY__PUBLIC_BASE_URL must be the externally reachable base URL "
             "(e.g. https://api.yourdomain.com)"
+        )
+
+    # Password reset link (opened in the frontend app, which then calls this
+    # API with the token as a bearer credential)
+    PUBLIC_FRONTEND_URL = env_str("REGISTRY__PUBLIC_FRONTEND_URL", "")
+    if not PUBLIC_FRONTEND_URL:
+        raise ImproperlyConfigured(
+            "REGISTRY__PUBLIC_FRONTEND_URL must be the frontend app's base URL "
+            "(e.g. https://app.yourdomain.com)"
         )
 
 # Behind Caddy by default

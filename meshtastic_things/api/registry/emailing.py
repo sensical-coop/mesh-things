@@ -27,7 +27,7 @@ def send_verification_email(owner, token: str) -> None:
 
 def send_password_reset_email(owner, token: str) -> None:
 
-    reset_link = f"{settings.PUBLIC_BASE_URL}/owners/reset-password?token={token}"
+    reset_link = f"{settings.PUBLIC_FRONTEND_URL}/reset-password?token={token}"
     send_templated_email(
         to_email=owner.email,
         subject="Reset your password - Meshtastic Things",
