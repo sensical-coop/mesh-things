@@ -11,9 +11,24 @@ from tools.healthcheck import HealthState, KakfaProducerHealth, MQTTHealth
 from tools.env import get_bool_env
 
 
+def _instance_suffix() -> str:
+    """Separates a dev stack from prod on a shared broker; only the dev overlay sets it."""
+    return os.environ.get('MQTT_BRIDGE__INSTANCE_SUFFIX', '').strip()
+
+
+def _suffixed(name: str) -> str:
+    suffix = _instance_suffix()
+    return f'{name}-{suffix}' if suffix else name
+
+
 def _client_id() -> str:
     """The MQTT client id: stable across restarts, unique per pool member."""
-    return os.environ.get('MQTT_BRIDGE__CLIENT_ID', '').strip() or 'mesh-bridge'
+    return _suffixed(os.environ.get('MQTT_BRIDGE__CLIENT_ID', '').strip() or 'mesh-bridge')
+
+
+def shared_group() -> str:
+    """The `$share` group this member joins; members of one group split the topic between them."""
+    return _suffixed(os.environ.get('MQTT_BRIDGE__SHARED_GROUP', '').strip() or 'kafka-bridge')
 
 
 def session_expiry_seconds() -> int:
@@ -83,8 +98,7 @@ class MQTTHandler(object):
     async def bridge_mqtt_kafka(self, topic, shared_sub=False):
 
         if shared_sub:
-            shared_group = os.environ.get('MQTT_BRIDGE__SHARED_GROUP', 'kafka-bridge')
-            topic = f'$share/{shared_group}/{topic}'
+            topic = f'$share/{shared_group()}/{topic}'
 
         qos = int(os.environ.get('MQTT_BRIDGE__QOS', 1))
         tls_params = None

@@ -2,19 +2,20 @@
 #
 #   docker compose -f docker-compose.yml -f docker-compose.dev.yml --profile full up -d
 
+# Suffixes both the client id and the $share group, so dev never collides with prod
+x-bridge-dev: &bridge-dev
+  environment:
+    MQTT_BRIDGE__INSTANCE_SUFFIX: dev
+
 services:
-  # Suffix the ids here so dev never collides with prod.
   mqtt_kafka_bridge:
-    environment:
-      MQTT_BRIDGE__CLIENT_ID: mesh-bridge-1-dev
+    <<: *bridge-dev
 
   mqtt_kafka_bridge_2:
-    environment:
-      MQTT_BRIDGE__CLIENT_ID: mesh-bridge-2-dev
+    <<: *bridge-dev
 
   mqtt_kafka_bridge_3:
-    environment:
-      MQTT_BRIDGE__CLIENT_ID: mesh-bridge-3-dev
+    <<: *bridge-dev
 
   caddy:
     ports: !override
