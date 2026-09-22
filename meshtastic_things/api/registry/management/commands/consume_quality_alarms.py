@@ -7,7 +7,9 @@ Consumes mesh.telemetry.alarms.v1:
 - quality_worker's batch checks (completeness).
 
 Alarms are repeated by design (an absent device will trigger again), but
-identical alarms are cooled down (in Redis)
+identical alarms are cooled down (in Redis) for
+REGISTRY__ALARM_EMAIL_COOLDOWN_SECONDS, unless the owner has set their own
+`alarm_email_cooldown_seconds`.
 """
 import json
 import os
@@ -19,13 +21,13 @@ from django.core.management.base import BaseCommand
 from kafka import KafkaConsumer
 
 from registry.consumer_loop import consume_forever
-from registry.emailing import send_templated_email
+from registry.emailing import default_alarm_email_cooldown_seconds, send_templated_email
 from registry.models import Device
 
 log = structlog.get_logger()
 
-# Don't re-email the same (device, channel, detector) more often than this.
-ALARM_EMAIL_COOLDOWN_SECONDS = int(os.environ.get("REGISTRY__ALARM_EMAIL_COOLDOWN_SECONDS", 3600))
+# Server-wide default; an owner's own `alarm_email_cooldown_seconds` overrides this.
+ALARM_EMAIL_COOLDOWN_SECONDS = default_alarm_email_cooldown_seconds()
 
 DETECTOR_SUBJECTS = {
     "absence": "Device has stopped publishing",
@@ -77,11 +79,16 @@ class Command(BaseCommand):
             log.info("Owner has no verified email, skipping", owner_id=str(owner.id))
             return
 
+        cooldown_seconds = owner.alarm_email_cooldown_seconds
+        if cooldown_seconds is None:
+            cooldown_seconds = ALARM_EMAIL_COOLDOWN_SECONDS
+
         channel = event.get("channel")
-        cooldown_key = f"registry:alarm-email:{mesh_id}:{device_id}:{channel}:{detector}"
-        if not cache.add(cooldown_key, "1", ALARM_EMAIL_COOLDOWN_SECONDS):
-            log.debug("Alarm email suppressed by cooldown", key=cooldown_key)
-            return
+        if cooldown_seconds > 0:
+            cooldown_key = f"registry:alarm-email:{mesh_id}:{device_id}:{channel}:{detector}"
+            if not cache.add(cooldown_key, "1", cooldown_seconds):
+                log.debug("Alarm email suppressed by cooldown", key=cooldown_key)
+                return
 
         send_templated_email(
             to_email=owner.email,
@@ -100,7 +107,7 @@ class Command(BaseCommand):
                 "value": event.get("value"),
                 "source": event.get("source"),
                 "triggered_at": event.get("triggered_at"),
-                "cooldown_hours": round(ALARM_EMAIL_COOLDOWN_SECONDS / 3600, 1),
+                "cooldown_hours": round(cooldown_seconds / 3600, 1) if cooldown_seconds else 0,
             },
         )
         log.info("Sent quality alarm email", detector=detector, device_id=device.device_id)

@@ -2,6 +2,7 @@ import uuid
 from unittest.mock import patch
 
 from django.core import mail
+from django.core.cache import cache
 
 from registry.management.commands.consume_quality_alarms import Command as AlarmCommand
 from registry.models import Mesh, Owner
@@ -72,6 +73,42 @@ class QualityAlarmRoutingTests(RegistryTestCase):
         AlarmCommand._handle(_alarm(mesh["id"], 1))
 
         self.assertEqual(len(mail.outbox), 1)
+
+    def test_owner_can_disable_the_cooldown(self):
+        # alarm_email_cooldown_seconds=0 means "email on every alarm".
+        owner, mesh = self._device()
+        Owner.objects.filter(pk=owner["id"]).update(alarm_email_cooldown_seconds=0)
+
+        AlarmCommand._handle(_alarm(mesh["id"], 1))
+        AlarmCommand._handle(_alarm(mesh["id"], 1))
+
+        self.assertEqual(len(mail.outbox), 2)
+
+    def test_owner_cooldown_overrides_the_server_default(self):
+        owner, mesh = self._device()
+        Owner.objects.filter(pk=owner["id"]).update(alarm_email_cooldown_seconds=30)
+
+        with patch(
+            "registry.management.commands.consume_quality_alarms.cache.add", wraps=cache.add
+        ) as add:
+            AlarmCommand._handle(_alarm(mesh["id"], 1))
+
+        add.assert_called_once()
+        self.assertEqual(add.call_args.args[2], 30)
+
+    def test_owner_without_a_cooldown_set_uses_the_server_default(self):
+        owner, mesh = self._device()
+        self.assertIsNone(Owner.objects.get(pk=owner["id"]).alarm_email_cooldown_seconds)
+
+        with patch(
+            "registry.management.commands.consume_quality_alarms.cache.add", wraps=cache.add
+        ) as add:
+            AlarmCommand._handle(_alarm(mesh["id"], 1))
+
+        from registry.management.commands.consume_quality_alarms import ALARM_EMAIL_COOLDOWN_SECONDS
+
+        add.assert_called_once()
+        self.assertEqual(add.call_args.args[2], ALARM_EMAIL_COOLDOWN_SECONDS)
 
     def test_a_different_detector_is_not_suppressed(self):
         _, mesh = self._device()

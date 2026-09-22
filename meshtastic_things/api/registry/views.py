@@ -455,10 +455,16 @@ class OwnerMeView(APIView):
 
     @extend_schema(request=OwnerUpdateSerializer, responses=OwnerReadSerializer)
     def put(self, request):
-        """Update the authenticated owner's name or email address.
+        """Update the authenticated owner's name, email address, or alarm email frequency.
 
-        Changing the address deactivates the account until the new one is
-        verified, and sends a fresh verification email.
+        Changing the email address deactivates the account until the new one
+        is verified, and sends a fresh verification email.
+
+        Args:
+            alarm_email_cooldown_seconds: Minimum time between quality-alarm
+                emails, in seconds. Accepts 0 (email on every alarm) up to
+                2592000 (30 days). Leave unset or null to use the server
+                default.
         """
         email_changing = "email" in request.data and request.data["email"] != request.user.email
         serializer = OwnerUpdateSerializer(request.user, data=request.data, partial=True)
