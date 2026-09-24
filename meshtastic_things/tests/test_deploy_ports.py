@@ -466,6 +466,21 @@ def test_no_bridge_member_uses_replicas():
         f"with its own MQTT_BRIDGE__CLIENT_ID instead"
     )
 
+def test_the_dev_overlay_separates_every_bridge_member_from_prod():
+    """Members of one `$share` group get a share of the
+    topic each, so a dev bridge on prod's group takes traffic away from prod."""
+    without = [
+        name
+        for name in _bridge_services()
+        if not ((DEV_SERVICES.get(name) or {}).get("environment") or {}).get("MQTT_BRIDGE__INSTANCE_SUFFIX")
+    ]
+
+    assert not without, (
+        f"these bridge members have no MQTT_BRIDGE__INSTANCE_SUFFIX in "
+        f"docker-compose.dev.yml: {sorted(without)}. Without it they join prod's "
+        f"$share group and consume prod's messages"
+    )
+
 def _env_example() -> dict[str, str]:
     values = {}
     for line in (ROOT / "env.example").read_text().splitlines():
