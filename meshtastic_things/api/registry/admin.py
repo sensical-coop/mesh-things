@@ -9,6 +9,7 @@ from .models import (
     Measurement,
     MeasurementType,
     Mesh,
+    MeshViewer,
     Owner,
     PostprocessingBlueprint,
     PostprocessingStep,
@@ -35,11 +36,20 @@ class OwnerAdmin(UserAdmin):
 @admin.register(Mesh)
 class MeshAdmin(admin.ModelAdmin):
     # psk_b64 is a password field
-    list_display = ("channel_id", "label", "owner", "created_at")
+    list_display = ("channel_id", "label", "owner", "is_public", "created_at")
     list_select_related = ("owner",)
+    list_filter = ("is_public",)
     exclude = ("psk_b64",)
     readonly_fields = ("id", "created_at", "updated_at")
     search_fields = ("channel_id", "label")
+
+
+@admin.register(MeshViewer)
+class MeshViewerAdmin(admin.ModelAdmin):
+    list_display = ("mesh", "viewer", "created_at")
+    list_select_related = ("mesh", "viewer")
+    readonly_fields = ("id", "created_at")
+    search_fields = ("mesh__channel_id", "viewer__email")
 
 
 @admin.register(Device)

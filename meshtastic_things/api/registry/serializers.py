@@ -13,6 +13,7 @@ from .models import (
     Measurement,
     MeasurementType,
     Mesh,
+    MeshViewer,
     Owner,
     PostprocessingBlueprint,
     PostprocessingStep,
@@ -170,8 +171,9 @@ class MeshSerializer(serializers.ModelSerializer):
 
     class Meta:
         model = Mesh
-        fields = ["id", "channel_id", "psk_b64", "label", "owner_id", "created_at", "updated_at"]
+        fields = ["id", "channel_id", "psk_b64", "label", "owner_id", "is_public", "created_at", "updated_at"]
         read_only_fields = ["id", "created_at", "updated_at"]
+        extra_kwargs = {"is_public": {"required": False}}
 
     def to_representation(self, instance):
         data = super().to_representation(instance)
@@ -182,7 +184,7 @@ class MeshSerializer(serializers.ModelSerializer):
 
 
 class MeshUpdateSerializer(serializers.ModelSerializer):
-    """PUT /meshes/{id}: channel_id, psk_b64 and label are editable.
+    """PUT /meshes/{id}: channel_id, psk_b64, label and is_public are editable.
 
     channel_id/psk_b64 are a pair configured together on the physical
     devices, so both can change here the same way - the pipeline decrypts by
@@ -193,8 +195,29 @@ class MeshUpdateSerializer(serializers.ModelSerializer):
 
     class Meta:
         model = Mesh
-        fields = ["channel_id", "psk_b64", "label"]
-        extra_kwargs = {"label": {"required": False}, "channel_id": {"required": False}}
+        fields = ["channel_id", "psk_b64", "label", "is_public"]
+        extra_kwargs = {
+            "label": {"required": False},
+            "channel_id": {"required": False},
+            "is_public": {"required": False},
+        }
+
+
+class MeshViewerSerializer(serializers.ModelSerializer):
+    """A grant, reported to the mesh owner. The viewer's email is never included."""
+
+    viewer = OwnerPublicSerializer(read_only=True)
+
+    class Meta:
+        model = MeshViewer
+        fields = ["id", "viewer", "created_at"]
+        read_only_fields = fields
+
+
+class MeshViewerCreateSerializer(serializers.Serializer):
+    """POST /meshes/{id}/viewers input."""
+
+    owner_id = serializers.UUIDField()
 
 
 def _max_three_admin_keys(value):

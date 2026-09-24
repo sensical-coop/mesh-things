@@ -7,6 +7,7 @@ from django.contrib.auth.password_validation import validate_password
 from django.core.cache import cache
 from django.core.exceptions import ValidationError as DjangoValidationError
 from django.db import IntegrityError
+from django.db.models import Q
 from django.middleware.csrf import get_token as get_csrf_token
 from django.utils import timezone
 from drf_spectacular.utils import OpenApiParameter, OpenApiResponse, OpenApiTypes, extend_schema
@@ -18,7 +19,12 @@ from rest_framework.views import APIView
 
 from .auth import generate_api_key, hash_api_key
 from .authentication import OwnerResetPasswordAuthentication
-from .emailing import send_password_reset_email, send_verification_email
+from .emailing import (
+    send_mesh_access_granted_email,
+    send_mesh_access_revoked_email,
+    send_password_reset_email,
+    send_verification_email,
+)
 from .exceptions import BadGateway, Conflict
 from .kafka_publisher import get_publisher
 from common.algorithms import REGISTRY, discover
@@ -29,6 +35,7 @@ from .models import (
     Measurement,
     MeasurementType,
     Mesh,
+    MeshViewer,
     Owner,
     PostprocessingBlueprint,
     TelemetryVariant,
@@ -48,6 +55,8 @@ from .serializers import (
     MeasurementTypeUpdateSerializer,
     MeshSerializer,
     MeshUpdateSerializer,
+    MeshViewerCreateSerializer,
+    MeshViewerSerializer,
     MetricsResponseSerializer,
     OwnerChangePasswordSerializer,
     OwnerCreateSerializer,
@@ -81,6 +90,10 @@ def _query(name, description, type_=OpenApiTypes.STR, **kwargs):
 def _flag(name, description):
     return _query(name, description, OpenApiTypes.BOOL)
 
+
+MESH_FILTER_PARAMS = [
+    _flag("owned", "Restrict to meshes the caller owns, excluding public and granted ones."),
+]
 
 DEVICE_FILTER_PARAMS = [
     _query("mesh_id", "Restrict to devices on one mesh.", OpenApiTypes.UUID),
@@ -570,8 +583,21 @@ def _get_mesh_or_404(mesh_id) -> Mesh:
 
 
 def _require_mesh_ownership(mesh: Mesh, owner: Owner) -> None:
-    if not owner.is_superuser and mesh.owner_id != owner.id:
+    if not owner.can_edit_mesh(mesh):
         raise PermissionDenied("You do not own this mesh")
+
+
+def _require_mesh_visible(mesh: Mesh, owner: Owner) -> None:
+    """404 rather than 403, so a private mesh doesn't confirm its own existence."""
+    if not owner.can_view_mesh(mesh):
+        raise NotFound("Mesh not found")
+
+
+def _hide_rejected_from_viewers(qs, owner: Owner):
+    """A rejected registration is the mesh owner's business, not a viewer's."""
+    if owner.is_superuser:
+        return qs
+    return qs.filter(Q(mesh__owner_id=owner.id) | Q(is_allowed=True))
 
 
 def _get_device_or_404(device_uuid) -> Device:
@@ -584,13 +610,20 @@ def _get_device_or_404(device_uuid) -> Device:
 class MeshListCreateView(APIView):
     permission_classes = [IsVerifiedOwner]
 
-    @extend_schema(responses=MeshSerializer(many=True))
+    @extend_schema(parameters=MESH_FILTER_PARAMS, responses=MeshSerializer(many=True))
     def get(self, request):
-        """List the caller's meshes, or every mesh for a superuser.
+        """List the meshes the caller may read, or every mesh for a superuser.
 
-        The pre-shared key is included only for meshes the caller owns.
+        Alongside their own, this includes public meshes and any they have been
+        granted access to. The pre-shared key is included only for meshes the
+        caller owns.
+
+        Args:
+            owned: Restrict to meshes the caller owns. Defaults to false.
         """
-        qs = Mesh.objects.all() if request.user.is_superuser else Mesh.objects.filter(owner=request.user)
+        qs = request.user.visible_meshes
+        if request.query_params.get("owned", "").lower() in ("true", "1"):
+            qs = qs.filter(owner=request.user)
         return Response(MeshSerializer(qs, many=True, context={"viewer_id": request.user.id}).data)
 
     @extend_schema(request=MeshSerializer, responses={201: MeshSerializer})
@@ -611,7 +644,7 @@ class MeshDetailView(APIView):
     def get(self, request, mesh_id):
         """Return one mesh."""
         mesh = _get_mesh_or_404(mesh_id)
-        _require_mesh_ownership(mesh, request.user)
+        _require_mesh_visible(mesh, request.user)
         return Response(MeshSerializer(mesh, context={"viewer_id": request.user.id}).data)
 
     @extend_schema(request=MeshUpdateSerializer, responses=MeshSerializer)
@@ -666,6 +699,99 @@ class MeshDetailView(APIView):
         return Response(status=status.HTTP_204_NO_CONTENT)
 
 
+def _email_quietly(send, *args, action: str, **context) -> None:
+    """Notify without letting a dead mail server fail the write that already happened."""
+    try:
+        send(*args)
+    except Exception as e:
+        log.warning(f"{action}_email_send_failed", error=str(e), **context)
+
+
+class MeshViewerListCreateView(APIView):
+    """Read access granted to owners other than the mesh's own."""
+
+    permission_classes = [IsVerifiedOwner]
+
+    @extend_schema(responses=MeshViewerSerializer(many=True))
+    def get(self, request, mesh_id):
+        """List the owners granted read access to this mesh.
+
+        Only the mesh's owner may read this. Email addresses are not included.
+        """
+        mesh = _get_mesh_or_404(mesh_id)
+        _require_mesh_ownership(mesh, request.user)
+        grants = mesh.viewer_grants.select_related("viewer").order_by("created_at")
+        return Response(MeshViewerSerializer(grants, many=True).data)
+
+    @extend_schema(request=MeshViewerCreateSerializer, responses={201: MeshViewerSerializer})
+    def post(self, request, mesh_id):
+        """Grant one owner read access to this mesh.
+
+        Only the mesh's owner may grant access, and the grant is read-only: it
+        never allows the recipient to change the mesh or its devices. The
+        recipient is emailed unless their address is still unverified. Granting
+        access that already exists returns the existing grant rather than
+        failing.
+
+        Args:
+            owner_id: The owner to grant access to. Required.
+        """
+        mesh = _get_mesh_or_404(mesh_id)
+        _require_mesh_ownership(mesh, request.user)
+        serializer = MeshViewerCreateSerializer(data=request.data)
+        serializer.is_valid(raise_exception=True)
+        owner_id = serializer.validated_data["owner_id"]
+        if owner_id == mesh.owner_id:
+            raise ValidationError({"owner_id": "The mesh's owner already has access"})
+        viewer = Owner.objects.filter(pk=owner_id).first()
+        if viewer is None:
+            raise ValidationError({"owner_id": f"No owner with id {owner_id}"})
+
+        grant, created = MeshViewer.objects.get_or_create(mesh=mesh, viewer=viewer)
+        if created and viewer.email and viewer.is_active:
+            _email_quietly(
+                send_mesh_access_granted_email,
+                viewer,
+                mesh,
+                action="mesh_access_granted",
+                mesh_id=str(mesh.id),
+                viewer_id=str(viewer.id),
+            )
+        return Response(
+            MeshViewerSerializer(grant).data,
+            status=status.HTTP_201_CREATED if created else status.HTTP_200_OK,
+        )
+
+
+class MeshViewerDetailView(APIView):
+    permission_classes = [IsVerifiedOwner]
+
+    @extend_schema(responses={204: NO_CONTENT})
+    def delete(self, request, mesh_id, owner_id):
+        """Revoke one owner's read access to this mesh.
+
+        Only the mesh's owner may revoke access. The recipient is emailed
+        unless their address is still unverified.
+        """
+        mesh = _get_mesh_or_404(mesh_id)
+        _require_mesh_ownership(mesh, request.user)
+        grant = mesh.viewer_grants.select_related("viewer").filter(viewer_id=owner_id).first()
+        if grant is None:
+            raise NotFound("This owner has no access to this mesh")
+        viewer = grant.viewer
+        grant.delete()
+        if viewer.email and viewer.is_active:
+            _email_quietly(
+                send_mesh_access_revoked_email,
+                viewer,
+                mesh,
+                action="mesh_access_revoked",
+                mesh_id=str(mesh.id),
+                viewer_id=str(viewer.id),
+            )
+        return Response(status=status.HTTP_204_NO_CONTENT)
+
+
 class MeshDevicesView(APIView):
     """List every device registered on this mesh, gateways and nodes alike."""
 
@@ -674,11 +800,12 @@ class MeshDevicesView(APIView):
     @extend_schema(responses=DeviceReadSerializer(many=True))
     def get(self, request, mesh_id):
         mesh = _get_mesh_or_404(mesh_id)
-        _require_mesh_ownership(mesh, request.user)
+        _require_mesh_visible(mesh, request.user)
+        devices = mesh.devices.select_related("mesh").all()
+        if not request.user.can_edit_mesh(mesh):
+            devices = devices.filter(is_allowed=True)
         return Response(
-            DeviceReadSerializer(
-                mesh.devices.select_related("mesh").all(), many=True, context={"viewer_id": request.user.id}
-            ).data
+            DeviceReadSerializer(devices, many=True, context={"viewer_id": request.user.id}).data
         )
 
 
@@ -687,7 +814,11 @@ class DeviceListCreateView(APIView):
 
     @extend_schema(parameters=DEVICE_FILTER_PARAMS, responses=DeviceReadSerializer(many=True))
     def get(self, request):
-        """List the caller's registered devices, or every device for a superuser.
+        """List the devices the caller may read, or every device for a superuser.
+
+        Alongside devices on their own meshes, this includes those on public
+        meshes and on meshes they have been granted access to. Rejected
+        registrations are shown only to the mesh's owner.
 
         Args:
             mesh_id: Restrict to devices on one mesh.
@@ -698,7 +829,8 @@ class DeviceListCreateView(APIView):
                 or to those without one when false.
         """
         qs = Device.objects.select_related("mesh")
-        qs = qs.all() if request.user.is_superuser else qs.filter(mesh__owner=request.user)
+        qs = qs.all() if request.user.is_superuser else qs.filter(mesh__in=request.user.visible_meshes)
+        qs = _hide_rejected_from_viewers(qs, request.user)
         mesh_id = request.query_params.get("mesh_id")
         if mesh_id:
             qs = qs.filter(mesh_id=mesh_id)
@@ -761,9 +893,14 @@ class DeviceDetailView(APIView):
 
     @extend_schema(responses=DeviceReadSerializer)
     def get(self, request, device_uuid):
-        """Return one registered device."""
+        """Return one registered device.
+
+        Rejected registrations are visible only to the mesh's owner.
+        """
         device = _get_device_or_404(device_uuid)
-        _require_mesh_ownership(device.mesh, request.user)
+        _require_mesh_visible(device.mesh, request.user)
+        if not device.is_allowed and not request.user.can_edit_mesh(device.mesh):
+            raise NotFound("Device not found")
         return Response(DeviceReadSerializer(device, context={"viewer_id": request.user.id}).data)
 
     @extend_schema(request=DeviceUpdateSerializer, responses=DeviceReadSerializer)
@@ -872,7 +1009,7 @@ class DeviceTelemetryVariantsView(APIView):
     @extend_schema(responses=DeviceTelemetryVariantSerializer(many=True))
     def get(self, request, device_uuid):
         device = _get_device_or_404(device_uuid)
-        _require_mesh_ownership(device.mesh, request.user)
+        _require_mesh_visible(device.mesh, request.user)
         variants = device.telemetry_variants.select_related("telemetry_variant")
         return Response(DeviceTelemetryVariantSerializer(variants, many=True).data)
 
@@ -890,7 +1027,7 @@ class DeviceMeasurementsView(APIView):
     @extend_schema(responses=DeviceMeasurementSerializer(many=True))
     def get(self, request, device_uuid):
         device = _get_device_or_404(device_uuid)
-        _require_mesh_ownership(device.mesh, request.user)
+        _require_mesh_visible(device.mesh, request.user)
         measurements = list(
             Measurement.objects.filter(device_telemetry_variant__device=device)
             .select_related("measurement_type", "device_telemetry_variant")
@@ -919,7 +1056,7 @@ class DeviceMeasurementDetailView(APIView):
     def get(self, request, device_uuid, measurement_id):
         """Return one of this device's measurement channels."""
         device = _get_device_or_404(device_uuid)
-        _require_mesh_ownership(device.mesh, request.user)
+        _require_mesh_visible(device.mesh, request.user)
         measurement = _get_device_measurement_or_404(device, measurement_id)
         return Response(DeviceMeasurementSerializer(measurement).data)
 

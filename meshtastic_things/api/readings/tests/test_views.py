@@ -8,7 +8,7 @@ from rest_framework.test import APITestCase
 
 from readings import influx_client
 from registry.auth import hash_api_key
-from registry.models import Device, MeasurementType, Mesh, Owner
+from registry.models import Device, MeasurementType, Mesh, MeshViewer, Owner
 
 
 @override_settings(ROOT_URLCONF="api_project.urls_readings")
@@ -185,6 +185,53 @@ class DeviceScopingTests(ReadingsTestCase):
         Device.objects.create(mesh=other_mesh, device_id=555, is_gateway=False)
 
         resp = self.client.get(self.node_url("latest", mesh_id=str(other_mesh.id), node_id=555), **self.auth_headers())
+
+        self.assertEqual(resp.status_code, 200)
+
+    def _someone_elses_device(self, email, node_id):
+        other = Owner.objects.create_user(email=email, name="Other")
+        other_mesh = Mesh.objects.create(owner=other, channel_id=self.OTHER_CHANNEL, psk_b64="AQ==")
+        device = Device.objects.create(mesh=other_mesh, device_id=node_id, is_gateway=False)
+        return other_mesh, device
+
+    def test_a_public_mesh_is_readable_by_anyone(self):
+        other_mesh, _ = self._someone_elses_device("public-owner@example.com", 888)
+        other_mesh.is_public = True
+        other_mesh.save(update_fields=["is_public"])
+
+        resp = self.client.get(
+            self.node_url("latest", mesh_id=str(other_mesh.id), node_id=888), **self.auth_headers()
+        )
+
+        self.assertEqual(resp.status_code, 200)
+
+    def test_a_granted_mesh_is_readable(self):
+        other_mesh, _ = self._someone_elses_device("granting-owner@example.com", 999)
+        MeshViewer.objects.create(mesh=other_mesh, viewer=self.owner)
+
+        resp = self.client.get(
+            self.node_url("latest", mesh_id=str(other_mesh.id), node_id=999), **self.auth_headers()
+        )
+
+        self.assertEqual(resp.status_code, 200)
+
+    def test_revoking_the_grant_closes_the_readings_route_again(self):
+        other_mesh, _ = self._someone_elses_device("revoking-owner@example.com", 1111)
+        grant = MeshViewer.objects.create(mesh=other_mesh, viewer=self.owner)
+        grant.delete()
+
+        resp = self.client.get(
+            self.node_url("latest", mesh_id=str(other_mesh.id), node_id=1111), **self.auth_headers()
+        )
+
+        self.assertEqual(resp.status_code, 404)
+
+    def test_a_granted_device_is_reachable_by_its_uuid_too(self):
+        """devices_by_uuid is cached per request, so it has to widen with the grant."""
+        other_mesh, device = self._someone_elses_device("uuid-grant@example.com", 2222)
+        MeshViewer.objects.create(mesh=other_mesh, viewer=self.owner)
+
+        resp = self.client.get(f"/readings/devices/{device.id}/latest", **self.auth_headers())
 
         self.assertEqual(resp.status_code, 200)
 

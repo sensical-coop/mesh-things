@@ -44,3 +44,32 @@ def send_password_reset_email(owner, token: str) -> None:
         template_name="password_reset",
         context={"name": owner.name, "reset_link": reset_link, "ttl_hours": settings.PASSWORD_RESET_TTL_HOURS},
     )
+
+
+def _mesh_access_context(viewer, mesh) -> dict:
+    return {
+        "name": viewer.name,
+        "mesh_label": mesh.label or mesh.channel_id,
+        "owner_name": mesh.owner.name,
+        "mesh_link": f"{settings.PUBLIC_FRONTEND_URL}/meshes/{mesh.id}",
+    }
+
+
+def send_mesh_access_granted_email(viewer, mesh) -> None:
+
+    send_templated_email(
+        to_email=viewer.email,
+        subject="You have been given access to a mesh - Mesh Things",
+        template_name="mesh_access_granted",
+        context=_mesh_access_context(viewer, mesh),
+    )
+
+
+def send_mesh_access_revoked_email(viewer, mesh) -> None:
+
+    send_templated_email(
+        to_email=viewer.email,
+        subject="Your access to a mesh has been removed - Mesh Things",
+        template_name="mesh_access_revoked",
+        context=_mesh_access_context(viewer, mesh),
+    )
