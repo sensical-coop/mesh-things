@@ -23,6 +23,8 @@ urlpatterns = [
     path("meshes/<uuid:mesh_id>/devices", views.MeshDevicesView.as_view()),
     path("meshes/<uuid:mesh_id>/viewers", views.MeshViewerListCreateView.as_view()),
     path("meshes/<uuid:mesh_id>/viewers/<uuid:owner_id>", views.MeshViewerDetailView.as_view()),
+    path("sources", views.SourceListCreateView.as_view()),
+    path("sources/<uuid:source_id>", views.SourceDetailView.as_view()),
     path("devices", views.DeviceListCreateView.as_view()),
     path("devices/<uuid:device_uuid>", views.DeviceDetailView.as_view()),
     path("devices/<uuid:device_uuid>/telemetry-variants", views.DeviceTelemetryVariantsView.as_view()),

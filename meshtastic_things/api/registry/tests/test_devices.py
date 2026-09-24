@@ -473,6 +473,56 @@ class DeviceNodeCrudTests(RegistryTestCase):
         self.assertEqual(resp_a.json()[0]["node_id"], 1)
 
 
+class DeviceUniquenessTests(RegistryTestCase):
+    """Node numbers are unique per mesh; gateway numbers stay unique across meshes."""
+
+    def test_the_same_node_number_can_be_allowed_on_two_meshes(self):
+        owner_a = self.create_owner(name="A", email="uniq-node-a@example.com")
+        owner_b = self.create_owner(name="B", email="uniq-node-b@example.com")
+        self.create_node(owner_a, self.create_mesh(owner_a, channel_id="A"), device_id=431637602)
+
+        resp = self.client.post(
+            "/devices",
+            {"node_id": 431637602, "mesh_id": self.create_mesh(owner_b, channel_id="B")["id"], "is_gateway": False},
+            format="json",
+            **self.auth_headers(owner_b),
+        )
+
+        self.assertEqual(resp.status_code, 201)
+
+    def test_the_same_gateway_number_cannot_be_allowed_on_two_meshes(self):
+        owner_a = self.create_owner(name="A", email="uniq-gw-a@example.com")
+        owner_b = self.create_owner(name="B", email="uniq-gw-b@example.com")
+        self.create_gateway(owner_a, self.create_mesh(owner_a, channel_id="A"), device_id=7)
+        self.fake_publisher.publish_gateway_upsert.reset_mock()
+
+        resp = self.client.post(
+            "/devices",
+            {"node_id": 7, "mesh_id": self.create_mesh(owner_b, channel_id="B")["id"], "is_gateway": True},
+            format="json",
+            **self.auth_headers(owner_b),
+        )
+
+        self.assertEqual(resp.status_code, 409)
+        self.fake_publisher.publish_gateway_upsert.assert_not_called()
+
+    def test_a_node_may_share_its_number_with_a_gateway_elsewhere(self):
+        owner = self.create_owner()
+        self.create_gateway(owner, self.create_mesh(owner, channel_id="A"), device_id=9)
+
+        self.create_node(owner, self.create_mesh(owner, channel_id="B"), device_id=9)
+
+    def test_a_sighting_creates_a_node_already_allowed_on_another_mesh(self):
+        owner = self.create_owner()
+        mesh_a = self.create_mesh(owner, channel_id="A")
+        mesh_b = self.create_mesh(owner, channel_id="B")
+        self.create_node(owner, mesh_a, device_id=55)
+
+        _seed_device_sighting(mesh_b, 55)
+
+        self.assertTrue(Device.objects.filter(mesh_id=mesh_b["id"], device_id=55, is_allowed=True).exists())
+
+
 class DeviceNodeRejectionTests(RegistryTestCase):
     """The mesh owner's reject/unreject lever for a node - distinct Kafka
     topic/publisher calls from a gateway's is_allowed transition."""
@@ -900,8 +950,8 @@ class OwnerDeviceIdsTests(RegistryTestCase):
         )
 
     def test_mesh_id_disambiguates_a_device_id_reused_across_meshes(self):
-        # device_id is only unique among currently-*allowed* rows
-        # (uq_devices_device_id_allowed) - once owner A's device is rejected,
+        # A gateway's device_id is only unique among currently-*allowed* gateways
+        # (uq_devices_gateway_device_id_allowed) - once owner A's gateway is rejected,
         # owner B's independent device can reuse the same device_id. Without
         # mesh_id there'd be no way to tell the two apart - see
         # docs/architecture.md#readings-authentication.

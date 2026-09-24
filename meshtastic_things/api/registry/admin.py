@@ -13,6 +13,7 @@ from .models import (
     Owner,
     PostprocessingBlueprint,
     PostprocessingStep,
+    Source,
     TelemetryVariant,
     TelemetryVariantMeasurement,
 )
@@ -23,11 +24,12 @@ class OwnerAdmin(UserAdmin):
     fieldsets = (
         (None, {"fields": ("email", "password")}),
         ("Profile", {"fields": ("name",)}),
-        ("Permissions", {"fields": ("is_active", "is_staff", "is_superuser", "groups", "user_permissions")}),
+        ("Permissions", {"fields": ("is_active", "role", "is_staff", "is_superuser", "groups", "user_permissions")}),
         ("Dates", {"fields": ("last_login",)}),
     )
     add_fieldsets = ((None, {"classes": ("wide",), "fields": ("email", "name", "password1", "password2")}),)
-    list_display = ("email", "name", "is_superuser", "is_staff", "created_at")
+    list_display = ("email", "name", "role", "is_superuser", "is_staff", "created_at")
+    list_filter = ("role", "is_superuser", "is_staff", "is_active")
     search_fields = ("email", "name")
     ordering = ("email",)
     readonly_fields = ("last_login",)
@@ -36,12 +38,31 @@ class OwnerAdmin(UserAdmin):
 @admin.register(Mesh)
 class MeshAdmin(admin.ModelAdmin):
     # psk_b64 is a password field
-    list_display = ("channel_id", "label", "owner", "is_public", "created_at")
-    list_select_related = ("owner",)
+    list_display = ("channel_id", "label", "owner", "source", "is_public", "created_at")
+    list_select_related = ("owner", "source")
     list_filter = ("is_public",)
     exclude = ("psk_b64",)
     readonly_fields = ("id", "created_at", "updated_at")
     search_fields = ("channel_id", "label")
+
+
+@admin.register(Source)
+class SourceAdmin(admin.ModelAdmin):
+    """Read-only: a source is only consistent with its EMQX bridge when written through the API."""
+
+    list_display = ("label", "server", "topic", "qos", "ssl", "created_by", "created_at")
+    list_select_related = ("created_by",)
+    exclude = ("password",)
+    search_fields = ("label", "server", "topic")
+
+    def has_add_permission(self, request):
+        return False
+
+    def has_change_permission(self, request, obj=None):
+        return False
+
+    def has_delete_permission(self, request, obj=None):
+        return False
 
 
 @admin.register(MeshViewer)

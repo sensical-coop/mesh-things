@@ -125,6 +125,7 @@ class OwnerFullRecordFieldTests(RegistryTestCase):
         "is_superuser",
         "last_login",
         "name",
+        "role",
     ]
 
     def test_profile_carries_exactly_the_documented_fields(self):

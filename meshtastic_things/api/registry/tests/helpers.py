@@ -7,8 +7,8 @@ from django.core.management import call_command
 from django.utils import timezone
 from rest_framework.test import APITestCase
 
-from registry import kafka_publisher
-from registry.models import Owner
+from registry import emqx_client, kafka_publisher
+from registry.models import Owner, OwnerRole
 
 
 class RegistryTestCase(APITestCase):
@@ -20,9 +20,14 @@ class RegistryTestCase(APITestCase):
         self.fake_publisher = MagicMock()
         self._original_publisher = kafka_publisher._publisher
         kafka_publisher._publisher = self.fake_publisher
+        self.fake_emqx = MagicMock()
+        self.fake_emqx.source_status.return_value = "connected"
+        self._original_emqx = emqx_client._client
+        emqx_client._client = self.fake_emqx
 
     def tearDown(self):
         kafka_publisher._publisher = self._original_publisher
+        emqx_client._client = self._original_emqx
         cache.clear()
         super().tearDown()
 
@@ -85,6 +90,22 @@ class RegistryTestCase(APITestCase):
         )
         assert resp.status_code == 201, resp.content
         return resp.json()
+
+    def create_source(self, operator, server="remote.example.org:8883", topic="msh/EU_868/#", **fields) -> dict:
+        resp = self.client.post(
+            "/sources",
+            {"server": server, "topic": topic, **fields},
+            format="json",
+            **self.auth_headers(operator),
+        )
+        assert resp.status_code == 201, resp.content
+        return resp.json()
+
+    @staticmethod
+    def promote_to_operator(owner) -> None:
+        o = Owner.objects.get(pk=uuid.UUID(owner["id"]))
+        o.role = OwnerRole.OPERATOR
+        o.save(update_fields=["role"])
 
     @staticmethod
     def promote_to_superuser(owner) -> None:

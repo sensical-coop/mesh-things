@@ -1,3 +1,5 @@
+from urllib.parse import urlsplit
+
 from django.contrib.auth.password_validation import validate_password
 from django.core.exceptions import ValidationError as DjangoValidationError
 from rest_framework import serializers
@@ -5,6 +7,7 @@ from rest_framework import serializers
 from common.algorithms import validate_step
 from common.channels import channel_name, origin_of
 from common.detectors import DETECTOR_CHOICES, MEASUREMENT_DETECTORS, enabled_detectors_for
+from common.env import env_str
 
 from .emailing import ALARM_EMAIL_COOLDOWN_MAX_SECONDS
 from .models import (
@@ -15,8 +18,10 @@ from .models import (
     Mesh,
     MeshViewer,
     Owner,
+    OwnerRole,
     PostprocessingBlueprint,
     PostprocessingStep,
+    Source,
     TelemetryVariant,
     TelemetryVariantMeasurement,
 )
@@ -53,6 +58,7 @@ class OwnerReadSerializer(serializers.ModelSerializer):
             "email",
             "is_superuser",
             "is_staff",
+            "role",
             "is_active",
             "email_verified_at",
             "email_verification_sent_at",
@@ -94,6 +100,10 @@ class OwnerUpdateSerializer(serializers.ModelSerializer):
                 "or null to use the server default."
             )
         return value
+
+
+class OwnerRoleSerializer(serializers.Serializer):
+    role = serializers.ChoiceField(choices=OwnerRole.choices)
 
 
 class OwnerWithApiKeySerializer(OwnerReadSerializer):
@@ -161,6 +171,7 @@ class DetectorSerializer(serializers.Serializer):
 
 
 _PSK_HELP = "Base64-encoded channel PSK"
+_SOURCE_HELP = "Source the mesh's traffic is bridged from. Null for this instance's own broker."
 
 
 class MeshSerializer(serializers.ModelSerializer):
@@ -168,10 +179,23 @@ class MeshSerializer(serializers.ModelSerializer):
     owner_id = serializers.UUIDField(read_only=True)
     # blank psk_b64 is mesh without encryption"
     psk_b64 = serializers.CharField(allow_blank=True, help_text=_PSK_HELP)
+    source_id = serializers.PrimaryKeyRelatedField(
+        source="source", queryset=Source.objects.all(), allow_null=True, required=False, help_text=_SOURCE_HELP
+    )
 
     class Meta:
         model = Mesh
-        fields = ["id", "channel_id", "psk_b64", "label", "owner_id", "is_public", "created_at", "updated_at"]
+        fields = [
+            "id",
+            "channel_id",
+            "psk_b64",
+            "label",
+            "owner_id",
+            "is_public",
+            "source_id",
+            "created_at",
+            "updated_at",
+        ]
         read_only_fields = ["id", "created_at", "updated_at"]
         extra_kwargs = {"is_public": {"required": False}}
 
@@ -184,7 +208,7 @@ class MeshSerializer(serializers.ModelSerializer):
 
 
 class MeshUpdateSerializer(serializers.ModelSerializer):
-    """PUT /meshes/{id}: channel_id, psk_b64, label and is_public are editable.
+    """PUT /meshes/{id}: channel_id, psk_b64, label, is_public and source_id are editable.
 
     channel_id/psk_b64 are a pair configured together on the physical
     devices, so both can change here the same way - the pipeline decrypts by
@@ -192,15 +216,80 @@ class MeshUpdateSerializer(serializers.ModelSerializer):
     """
 
     psk_b64 = serializers.CharField(write_only=True, required=False, allow_blank=True, help_text=_PSK_HELP)
+    source_id = serializers.PrimaryKeyRelatedField(
+        source="source", queryset=Source.objects.all(), allow_null=True, required=False, help_text=_SOURCE_HELP
+    )
 
     class Meta:
         model = Mesh
-        fields = ["channel_id", "psk_b64", "label", "is_public"]
+        fields = ["channel_id", "psk_b64", "label", "is_public", "source_id"]
         extra_kwargs = {
             "label": {"required": False},
             "channel_id": {"required": False},
             "is_public": {"required": False},
         }
+
+
+def _own_emqx_host() -> str:
+    return urlsplit(env_str("REGISTRY__EMQX_API_URL")).hostname or ""
+
+
+class SourceSerializer(serializers.ModelSerializer):
+    """A source. The remote password is accepted but never returned."""
+
+    password = serializers.CharField(write_only=True, required=False, allow_blank=True, allow_null=True)
+    created_by_id = serializers.UUIDField(read_only=True)
+
+    class Meta:
+        model = Source
+        fields = [
+            "id",
+            "label",
+            "server",
+            "ssl",
+            "username",
+            "password",
+            "topic",
+            "qos",
+            "created_by_id",
+            "created_at",
+            "updated_at",
+        ]
+        read_only_fields = ["id", "created_by_id", "created_at", "updated_at"]
+        extra_kwargs = {
+            "server": {"help_text": "Remote broker as host:port."},
+            "topic": {"help_text": "Remote topic filter, for example msh/EU_868/2/e/MyChannel/#."},
+            "qos": {"help_text": "0 or 1."},
+        }
+
+    def validate_server(self, value):
+        host, sep, port = value.strip().rpartition(":")
+        if not sep or not host or not port.isdigit() or not 0 < int(port) < 65536:
+            raise serializers.ValidationError("Must be host:port.")
+        # Bridging our own broker into itself would loop through the republished topics.
+        if host.lower() == _own_emqx_host().lower():
+            raise serializers.ValidationError("A source cannot point at this instance's own broker.")
+        return value.strip()
+
+    def validate_topic(self, value):
+        value = value.strip()
+        if not value or value.startswith("$"):
+            raise serializers.ValidationError("Must be a plain topic filter; $share and $SYS topics are not accepted.")
+        return value
+
+    def validate_qos(self, value):
+        if value not in (0, 1):
+            raise serializers.ValidationError("Must be 0 or 1.")
+        return value
+
+
+class SourceReadSerializer(SourceSerializer):
+    status = serializers.CharField(
+        read_only=True, help_text="The bridge's connection status, or unknown when it cannot be checked."
+    )
+
+    class Meta(SourceSerializer.Meta):
+        fields = SourceSerializer.Meta.fields + ["status"]
 
 
 class MeshViewerSerializer(serializers.ModelSerializer):

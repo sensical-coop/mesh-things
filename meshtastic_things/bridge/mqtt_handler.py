@@ -1,12 +1,17 @@
 import asyncio
+import json
 import os
 
 import aiomqtt
 from aiohttp import web
 import structlog
 from kafka import KafkaProducer
+from paho.mqtt.client import topic_matches_sub
 from paho.mqtt.packettypes import PacketTypes
 from paho.mqtt.properties import Properties
+
+from common import sources
+from pipeline.config_state import replay_consumer, replay_to_end
 from tools.healthcheck import HealthState, KakfaProducerHealth, MQTTHealth
 from tools.env import get_bool_env
 
@@ -72,6 +77,20 @@ async def retire_session(broker: str, client_id: str) -> None:
         log.info(f'Retired MQTT session for client_id={client_id}')
 
 
+def subscription_filters(own_topic: str) -> list[str]:
+    """The instance's own topic filter, plus the one every source is republished under.
+
+    Refuses an own filter that also matches the source topics, which would ingest
+    bridged traffic twice and without its source.
+    """
+    probe = f"{sources.namespace()}/00000000-0000-0000-0000-000000000000/msh/2/e/LongFast/!00000000"
+    if topic_matches_sub(own_topic, probe):
+        raise ValueError(
+            f"MQTT_BRIDGE__TOPIC={own_topic!r} overlaps the source topics under {sources.namespace()}/"
+        )
+    return [own_topic, sources.local_topic_filter()]
+
+
 def _partition_key(topic):
     # The last topic segment is the relaying gateway's node id (e.g.
     # msh/.../2/e/LongFast/!aabbccdd) for the encrypted feed this bridge
@@ -94,11 +113,54 @@ class MQTTHandler(object):
         )
         self.mqtt_health = MQTTHealth()
         self.client_id = _client_id()
+        self.keys_topic = os.environ.get('REGISTRY__KAFKA_TOPIC', 'mesh.keys.v1')
+        # gateway_id -> the source its mesh is bridged from, None for the own topic.
+        self.gateway_sources: dict[str, str | None] = {}
+        self.source_mismatch_drops = 0
+        self.config_consumer = None
 
-    async def bridge_mqtt_kafka(self, topic, shared_sub=False):
+    def _apply_gateway_record(self, record) -> None:
+        event = json.loads(record.value)
+        key = event.get("key")
+        if not key:
+            return
+        if event.get("op") == "delete":
+            self.gateway_sources.pop(key, None)
+        else:
+            self.gateway_sources[key] = event.get("source_id")
+
+    def load_gateway_sources(self) -> None:
+        """Read mesh.keys.v1 to its current end. Runs before subscribing, so the
+        source gate is never open while the state is still empty."""
+        self.config_consumer = replay_consumer(self.kafka_bootstrap_server, self.keys_topic)
+        read = replay_to_end(self.config_consumer, self._apply_gateway_record)
+        log.info('Loaded gateway sources', records=read, gateways=len(self.gateway_sources))
+
+    async def follow_gateway_sources(self):
+        while True:
+            messages = await asyncio.to_thread(self.config_consumer.poll, timeout_ms=1000)
+            for records in messages.values():
+                for record in records:
+                    try:
+                        self._apply_gateway_record(record)
+                    except Exception as e:
+                        log.exception("Bad config message skipped", exc_info=e)
+
+    def accepts(self, topic: str) -> bool:
+        """False when a registered gateway arrives through a source its mesh is not on.
+
+        Stops the same gateway being ingested twice, for example directly and again
+        through a bridged public broker. Unregistered gateways pass; decode drops them.
+        """
+        gateway_id = topic.split('/')[-1]
+        if gateway_id not in self.gateway_sources:
+            return True
+        return self.gateway_sources[gateway_id] == sources.source_id_from_topic(topic)
+
+    async def bridge_mqtt_kafka(self, topics: list[str], shared_sub=False):
 
         if shared_sub:
-            topic = f'$share/{shared_group()}/{topic}'
+            topics = [f'$share/{shared_group()}/{topic}' for topic in topics]
 
         qos = int(os.environ.get('MQTT_BRIDGE__QOS', 1))
         tls_params = None
@@ -122,11 +184,16 @@ class MQTTHandler(object):
             try:
                 async with client:
                     self.mqtt_health.mark_connected()
-                    log.info(f'Subscription: {self.mqtt_broker}, topic: {topic}, client_id: {self.client_id}, qos: {qos}')
-                    await client.subscribe(topic, qos=qos)
+                    for topic in topics:
+                        log.info(f'Subscription: {self.mqtt_broker}, topic: {topic}, client_id: {self.client_id}, qos: {qos}')
+                        await client.subscribe(topic, qos=qos)
                     async for message in client.messages:
                         self.mqtt_health.mark_connected()
                         log.debug(f'Got message: {message.topic}: {message.payload}')
+                        if not self.accepts(message.topic.value):
+                            self.source_mismatch_drops += 1
+                            log.debug('Dropping packet from a gateway outside its source', topic=message.topic.value)
+                            continue
                         self.kafka_producer.send(os.environ['MQTT_BRIDGE__KAFKA_TOPIC'], key=_partition_key(message.topic), value=message.payload)
             except aiomqtt.MqttError:
                 self.mqtt_health.mark_disconnected()
@@ -156,9 +223,10 @@ class MQTTHandler(object):
         log.info(f'Health check. Kafka connected: {self.health_state.kafka_connected}')
         log.info(f'Health check. MQTT connected: {self.health_state.mqtt_connected}')
 
+        body = {"source_mismatch_drops": self.source_mismatch_drops}
         if self.health_state.is_healthy():
-            return web.json_response({"status": "ok"})
-        return web.json_response({"status": "unhealthy"}, status=503)
+            return web.json_response({"status": "ok", **body})
+        return web.json_response({"status": "unhealthy", **body}, status=503)
 
     async def start_health_server(self):
         app = web.Application()

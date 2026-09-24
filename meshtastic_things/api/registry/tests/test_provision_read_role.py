@@ -42,6 +42,11 @@ class GrantsTests(SimpleTestCase):
         assert set(COLUMN_GRANTS["meshes"]) >= {"id", "owner_id", "is_public"}
         assert set(COLUMN_GRANTS["devices"]) >= {"id", "mesh_id", "device_id"}
 
+    def test_sources_are_not_readable(self):
+        """`sources` holds remote broker passwords, and readings never needs it."""
+        assert "sources" not in TABLE_GRANTS
+        assert "sources" not in COLUMN_GRANTS
+
     def test_the_viewer_grants_are_readable(self):
         """Owner.visible_meshes joins mesh_viewers. Without this grant readings raises a
         Postgres permission error at request time, which the test runner cannot reproduce

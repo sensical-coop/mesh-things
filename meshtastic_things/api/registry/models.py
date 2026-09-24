@@ -29,6 +29,12 @@ class OwnerManager(BaseUserManager):
         return self.create_user(email, name, password, **extra_fields)
 
 
+class OwnerRole(models.TextChoices):
+    MEMBER = "member", "Member"
+    # Manages shared ingest infrastructure such as sources, without being a superuser.
+    OPERATOR = "operator", "Operator"
+
+
 class Owner(AbstractBaseUser, PermissionsMixin):
     """A registered account"""
 
@@ -48,6 +54,7 @@ class Owner(AbstractBaseUser, PermissionsMixin):
     password_reset_sent_at = models.DateTimeField(null=True, blank=True)
     # Minimum seconds between quality-alarm emails. Null uses the server default.
     alarm_email_cooldown_seconds = models.PositiveIntegerField(null=True, blank=True)
+    role = models.CharField(max_length=16, choices=OwnerRole.choices, default=OwnerRole.MEMBER)
 
     objects = OwnerManager()
 
@@ -59,6 +66,10 @@ class Owner(AbstractBaseUser, PermissionsMixin):
 
     def __str__(self) -> str:
         return self.email
+
+    @property
+    def is_operator(self) -> bool:
+        return self.is_superuser or self.role == OwnerRole.OPERATOR
 
     @property
     def visible_meshes(self):
@@ -105,6 +116,32 @@ class Owner(AbstractBaseUser, PermissionsMixin):
         }
 
 
+class Source(models.Model):
+    """A remote MQTT broker and topic filter, bridged into this instance by EMQX."""
+
+    id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
+    label = models.CharField(max_length=255, null=True, blank=True)
+    # host:port
+    server = models.CharField(max_length=255)
+    ssl = models.BooleanField(default=True)
+    username = models.CharField(max_length=255, null=True, blank=True)
+    # Write-only over the API, never returned to anyone.
+    password = models.TextField(null=True, blank=True)
+    topic = models.CharField(max_length=1024)
+    qos = models.PositiveSmallIntegerField(default=1)
+    created_by = models.ForeignKey(
+        Owner, on_delete=models.SET_NULL, null=True, blank=True, related_name="created_sources"
+    )
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        db_table = "sources"
+
+    def __str__(self) -> str:
+        return self.label or f"{self.server} {self.topic}"
+
+
 class Mesh(models.Model):
     """Physical Meshtastic network"""
 
@@ -116,6 +153,8 @@ class Mesh(models.Model):
     owner = models.ForeignKey(Owner, on_delete=models.CASCADE, related_name="meshes")
     # Readable by any verified owner. Never widens writes.
     is_public = models.BooleanField(default=False)
+    # Null means the traffic arrives on this instance's own broker topic.
+    source = models.ForeignKey(Source, on_delete=models.PROTECT, null=True, blank=True, related_name="meshes")
     created_at = models.DateTimeField(auto_now_add=True)
     updated_at = models.DateTimeField(auto_now=True)
 
@@ -235,8 +274,17 @@ class Device(models.Model):
     class Meta:
         db_table = "devices"
         constraints = [
+            # Node numbers may repeat across meshes, e.g. two sources hearing the same node.
             models.UniqueConstraint(
-                fields=["device_id"], condition=models.Q(is_allowed=True), name="uq_devices_device_id_allowed"
+                fields=["mesh", "device_id"],
+                condition=models.Q(is_allowed=True),
+                name="uq_devices_mesh_device_id_allowed",
+            ),
+            # Gateways may not: mesh.keys.v1 is keyed by the gateway node number alone.
+            models.UniqueConstraint(
+                fields=["device_id"],
+                condition=models.Q(is_allowed=True, is_gateway=True),
+                name="uq_devices_gateway_device_id_allowed",
             ),
         ]
 

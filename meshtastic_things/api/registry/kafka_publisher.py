@@ -55,7 +55,7 @@ class KeyEventPublisher:
         )
 
     def publish_gateway_upsert(self, device: Device, mesh: Mesh) -> None:
-        """psk_b64/channel_id come from the mesh"""
+        """psk_b64/channel_id/source_id come from the mesh"""
         key = gateway_kafka_key(device)
         event = {
             "kind": "gateway_key",
@@ -66,6 +66,8 @@ class KeyEventPublisher:
             "channel_id": mesh.channel_id,
             "psk_b64": mesh.psk_b64,
             "owner_id": str(mesh.owner_id),
+            # Null for the instance's own broker. The MQTT bridge only accepts the gateway through this source.
+            "source_id": str(mesh.source_id) if mesh.source_id else None,
             "op": "upsert",
             "updated_at": datetime.now(timezone.utc).isoformat(),
         }

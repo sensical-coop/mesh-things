@@ -25,6 +25,7 @@ from .emailing import (
     send_password_reset_email,
     send_verification_email,
 )
+from .emqx_client import get_emqx_client
 from .exceptions import BadGateway, Conflict
 from .kafka_publisher import get_publisher
 from common.algorithms import REGISTRY, discover
@@ -38,10 +39,11 @@ from .models import (
     MeshViewer,
     Owner,
     PostprocessingBlueprint,
+    Source,
     TelemetryVariant,
     TelemetryVariantMeasurement,
 )
-from .permissions import IsSuperuser, IsVerifiedOwner
+from .permissions import IsOperator, IsSuperuser, IsVerifiedOwner
 from .serializers import (
     AlgorithmSerializer,
     DetailSerializer,
@@ -65,9 +67,12 @@ from .serializers import (
     OwnerReadSerializer,
     OwnerRequestPasswordResetSerializer,
     OwnerResetPasswordSerializer,
+    OwnerRoleSerializer,
     OwnerUpdateSerializer,
     OwnerWithApiKeySerializer,
     PostprocessingBlueprintSerializer,
+    SourceReadSerializer,
+    SourceSerializer,
     DeviceMeasurementSerializer,
     DeviceMeasurementUpdateSerializer,
     DetectorSerializer,
@@ -93,6 +98,7 @@ def _flag(name, description):
 
 MESH_FILTER_PARAMS = [
     _flag("owned", "Restrict to meshes the caller owns, excluding public and granted ones."),
+    _query("source_id", "Restrict to meshes bridged from one source.", OpenApiTypes.UUID),
 ]
 
 DEVICE_FILTER_PARAMS = [
@@ -443,6 +449,22 @@ class OwnerDetailView(APIView):
         owner = _get_owner_or_404(owner_id)
         return Response(_owner_serializer_for(request, owner)(owner).data)
 
+    @extend_schema(request=OwnerRoleSerializer, responses=OwnerReadSerializer)
+    def put(self, request, owner_id):
+        """Change an owner's role. Superusers only.
+
+        Args:
+            role: `member`, the default, or `operator`, which may also manage
+                sources.
+        """
+        _require_superuser(request)
+        owner = _get_owner_or_404(owner_id)
+        serializer = OwnerRoleSerializer(data=request.data)
+        serializer.is_valid(raise_exception=True)
+        owner.role = serializer.validated_data["role"]
+        owner.save(update_fields=["role"])
+        return Response(OwnerReadSerializer(owner).data)
+
     @extend_schema(responses={204: NO_CONTENT})
     def delete(self, request, owner_id):
         """Remove an owner, along with their meshes and devices. Superusers only.
@@ -620,21 +642,57 @@ class MeshListCreateView(APIView):
 
         Args:
             owned: Restrict to meshes the caller owns. Defaults to false.
+            source_id: Restrict to meshes bridged from one source.
         """
         qs = request.user.visible_meshes
         if request.query_params.get("owned", "").lower() in ("true", "1"):
             qs = qs.filter(owner=request.user)
+        source_id = request.query_params.get("source_id")
+        if source_id:
+            try:
+                qs = qs.filter(source_id=source_id)
+            except (ValueError, DjangoValidationError):
+                raise ValidationError({"source_id": "Must be a UUID."})
         return Response(MeshSerializer(qs, many=True, context={"viewer_id": request.user.id}).data)
 
     @extend_schema(request=MeshSerializer, responses={201: MeshSerializer})
     def post(self, request):
-        """Create a mesh owned by the caller."""
+        """Create a mesh owned by the caller.
+
+        Args:
+            source_id: Source the mesh's traffic is bridged from. Leave unset
+                for traffic on this instance's own broker.
+        """
         serializer = MeshSerializer(data=request.data)
         serializer.is_valid(raise_exception=True)
         mesh = serializer.save(owner=request.user)
         return Response(
             MeshSerializer(mesh, context={"viewer_id": request.user.id}).data, status=status.HTTP_201_CREATED
         )
+
+
+def _publish_mesh_gateways(mesh: Mesh, previous: dict) -> None:
+    """Republish every allowed gateway on the mesh, restoring `previous` on failure.
+
+    Gateways already republished are sent the restored values again, so the
+    decoder does not keep the new ones for part of the mesh.
+    """
+    publisher = get_publisher()
+    published = []
+    for gateway in mesh.devices.filter(is_gateway=True, is_allowed=True):
+        try:
+            publisher.publish_gateway_upsert(gateway, mesh)
+        except Exception as e:
+            for field, value in previous.items():
+                setattr(mesh, field, value)
+            mesh.save(update_fields=list(previous))
+            for done in published:
+                try:
+                    publisher.publish_gateway_upsert(done, mesh)
+                except Exception as restore_error:
+                    log.error("gateway_restore_failed", device_id=str(done.id), error=str(restore_error))
+            raise BadGateway(f"Failed to publish mesh change, rolled back: {e}")
+        published.append(gateway)
 
 
 class MeshDetailView(APIView):
@@ -651,26 +709,21 @@ class MeshDetailView(APIView):
     def put(self, request, mesh_id):
         """Update a mesh.
 
-        Changing the channel_id or the pre-shared key redistributes the pair
-        to every allowed gateway on the mesh, and the whole update is rolled
-        back if that fails.
+        Changing the channel_id, the pre-shared key or the source redistributes
+        them to every allowed gateway on the mesh, and the whole update is
+        rolled back if that fails. Once the source changes, the mesh's gateways
+        are only accepted through the new one.
         """
         mesh = _get_mesh_or_404(mesh_id)
         _require_mesh_ownership(mesh, request.user)
-        changing_shared_secret = "psk_b64" in request.data or "channel_id" in request.data
-        previous_channel_id, previous_psk = mesh.channel_id, mesh.psk_b64
+        redistributed = ("channel_id", "psk_b64", "source_id")
+        changing_gateway_state = any(field in request.data for field in redistributed)
+        previous = {"channel_id": mesh.channel_id, "psk_b64": mesh.psk_b64, "source_id": mesh.source_id}
         serializer = MeshUpdateSerializer(mesh, data=request.data, partial=True)
         serializer.is_valid(raise_exception=True)
         updated = serializer.save()
-        if changing_shared_secret:
-            publisher = get_publisher()
-            for gateway in updated.devices.filter(is_gateway=True, is_allowed=True):
-                try:
-                    publisher.publish_gateway_upsert(gateway, updated)
-                except Exception as e:
-                    updated.channel_id, updated.psk_b64 = previous_channel_id, previous_psk
-                    updated.save(update_fields=["channel_id", "psk_b64"])
-                    raise BadGateway(f"Failed to publish key change, rolled back: {e}")
+        if changing_gateway_state:
+            _publish_mesh_gateways(updated, previous)
         return Response(MeshSerializer(updated, context={"viewer_id": request.user.id}).data)
 
     @extend_schema(responses={204: NO_CONTENT})
@@ -1094,6 +1147,13 @@ def _publish_measurement_alarms(device, measurement) -> None:
         log.warning("measurement_alarms_publish_failed", measurement_id=str(measurement.id), error=str(e))
 
 
+def _require_operator(request) -> None:
+    if not request.user.is_authenticated:
+        raise AuthenticationFailed()
+    if not IsOperator().has_permission(request, None):
+        raise PermissionDenied("Only an operator may modify this")
+
+
 def _require_superuser(request) -> None:
     if not request.user.is_authenticated:
         raise AuthenticationFailed()
@@ -1401,4 +1461,120 @@ class PostprocessingBlueprintDetailView(APIView):
         blueprint = _get_blueprint_or_404(blueprint_id)
         _require_blueprint_ownership(blueprint, request.user)
         blueprint.delete()
+        return Response(status=status.HTTP_204_NO_CONTENT)
+
+
+def _get_source_or_404(source_id) -> Source:
+    try:
+        return Source.objects.get(pk=source_id)
+    except (Source.DoesNotExist, ValueError, TypeError):
+        raise NotFound("Source not found")
+
+
+def _source_status(source: Source) -> str:
+    try:
+        return get_emqx_client().source_status(str(source.id))
+    except Exception as e:
+        log.warning("source_status_unavailable", source_id=str(source.id), error=str(e))
+        return "unknown"
+
+
+def _source_read_data(source: Source) -> dict:
+    source.status = _source_status(source)
+    return SourceReadSerializer(source).data
+
+
+_SOURCE_FIELDS = ("label", "server", "ssl", "username", "password", "topic", "qos")
+
+
+class SourceListCreateView(APIView):
+    permission_classes = [IsVerifiedOwner]
+
+    @extend_schema(responses=SourceSerializer(many=True))
+    def get(self, request):
+        """List every source a mesh can be attached to.
+
+        Remote passwords are never included.
+        """
+        return Response(SourceSerializer(Source.objects.order_by("created_at"), many=True).data)
+
+    @extend_schema(request=SourceSerializer, responses={201: SourceReadSerializer})
+    def post(self, request):
+        """Create a source and start bridging its remote topic into this instance. Operators only.
+
+        Nothing is kept if the bridge cannot be set up.
+
+        Args:
+            server: Remote broker as `host:port`. Cannot be this instance's own broker.
+            ssl: Connect to the remote broker over TLS. Defaults to true.
+            username: Remote broker username, if it requires one.
+            password: Remote broker password. Accepted but never returned.
+            topic: Remote topic filter, for example `msh/EU_868/2/e/MyChannel/#`.
+            qos: 0 or 1. Defaults to 1.
+        """
+        _require_operator(request)
+        serializer = SourceSerializer(data=request.data)
+        serializer.is_valid(raise_exception=True)
+        source = serializer.save(created_by=request.user)
+        try:
+            get_emqx_client().apply_source(source)
+        except Exception as e:
+            source.delete()
+            raise BadGateway(f"Failed to create the bridge, source NOT created: {e}")
+        return Response(_source_read_data(source), status=status.HTTP_201_CREATED)
+
+
+class SourceDetailView(APIView):
+    permission_classes = [IsVerifiedOwner]
+
+    @extend_schema(responses=SourceReadSerializer)
+    def get(self, request, source_id):
+        """Return one source and the live status of its bridge.
+
+        The status is `unknown` when the broker cannot be reached to check it.
+        """
+        return Response(_source_read_data(_get_source_or_404(source_id)))
+
+    @extend_schema(request=SourceSerializer, responses=SourceReadSerializer)
+    def put(self, request, source_id):
+        """Update a source and reconfigure its bridge. Operators only.
+
+        The update is rolled back if the bridge cannot be reconfigured.
+        """
+        _require_operator(request)
+        source = _get_source_or_404(source_id)
+        previous = {field: getattr(source, field) for field in _SOURCE_FIELDS}
+        serializer = SourceSerializer(source, data=request.data, partial=True)
+        serializer.is_valid(raise_exception=True)
+        updated = serializer.save()
+        client = get_emqx_client()
+        try:
+            client.apply_source(updated)
+        except Exception as e:
+            for field, value in previous.items():
+                setattr(updated, field, value)
+            updated.save(update_fields=list(previous))
+            try:
+                client.apply_source(updated)
+            except Exception as restore_error:
+                log.error("source_restore_failed", source_id=str(updated.id), error=str(restore_error))
+            raise BadGateway(f"Failed to reconfigure the bridge, rolled back: {e}")
+        return Response(_source_read_data(updated))
+
+    @extend_schema(responses={204: NO_CONTENT})
+    def delete(self, request, source_id):
+        """Delete a source and stop bridging it. Operators only.
+
+        A source with meshes attached cannot be deleted. Nothing is removed if
+        the bridge cannot be torn down.
+        """
+        _require_operator(request)
+        source = _get_source_or_404(source_id)
+        if source.meshes.exists():
+            raise Conflict("Source has meshes attached; move or delete them first")
+        try:
+            get_emqx_client().delete_source(str(source.id))
+        except Exception as e:
+            raise BadGateway(f"Failed to remove the bridge, source NOT deleted: {e}")
+        source.delete()
         return Response(status=status.HTTP_204_NO_CONTENT)

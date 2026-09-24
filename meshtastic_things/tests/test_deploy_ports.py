@@ -481,6 +481,20 @@ def test_the_dev_overlay_separates_every_bridge_member_from_prod():
         f"$share group and consume prod's messages"
     )
 
+def test_the_dev_overlay_keeps_dev_sources_apart_from_prod():
+    """registry_api names the EMQX bridges and the bridges read what they republish. On a
+    shared EMQX, a dev stack in prod's namespace would reconcile away prod's bridges and
+    read prod's source traffic."""
+    services = [*_bridge_services(), "registry_api"]
+    namespaces = {
+        name: ((DEV_SERVICES.get(name) or {}).get("environment") or {}).get("MQTT_SOURCES__NAMESPACE")
+        for name in services
+    }
+
+    assert all(ns and ns != "mt-sources" for ns in namespaces.values()), namespaces
+    assert len(set(namespaces.values())) == 1, f"registry and bridges disagree: {namespaces}"
+
+
 def _env_example() -> dict[str, str]:
     values = {}
     for line in (ROOT / "env.example").read_text().splitlines():
