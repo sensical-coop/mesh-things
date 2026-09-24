@@ -6,6 +6,7 @@ from common.algorithms import validate_step
 from common.channels import channel_name, origin_of
 from common.detectors import DETECTOR_CHOICES, MEASUREMENT_DETECTORS, enabled_detectors_for
 
+from .emailing import ALARM_EMAIL_COOLDOWN_MAX_SECONDS
 from .models import (
     Device,
     DeviceTelemetryVariant,
@@ -56,6 +57,7 @@ class OwnerReadSerializer(serializers.ModelSerializer):
             "email_verification_sent_at",
             "last_login",
             "created_at",
+            "alarm_email_cooldown_seconds",
         ]
         read_only_fields = fields
 
@@ -81,8 +83,16 @@ class OwnerUpdateSerializer(serializers.ModelSerializer):
 
     class Meta:
         model = Owner
-        fields = ["name", "email"]
+        fields = ["name", "email", "alarm_email_cooldown_seconds"]
         extra_kwargs = {"name": {"required": False}}
+
+    def validate_alarm_email_cooldown_seconds(self, value):
+        if value is not None and value > ALARM_EMAIL_COOLDOWN_MAX_SECONDS:
+            raise serializers.ValidationError(
+                f"Must be at most {ALARM_EMAIL_COOLDOWN_MAX_SECONDS} seconds (30 days), "
+                "or null to use the server default."
+            )
+        return value
 
 
 class OwnerWithApiKeySerializer(OwnerReadSerializer):

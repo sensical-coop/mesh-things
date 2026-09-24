@@ -114,6 +114,7 @@ class OwnerFullRecordFieldTests(RegistryTestCase):
     """The fields the full record carries beyond the public directory."""
 
     EXPECTED = [
+        "alarm_email_cooldown_seconds",
         "created_at",
         "email",
         "email_verification_sent_at",
@@ -286,6 +287,70 @@ class OwnerMeTests(RegistryTestCase):
     def test_update_own_owner_requires_auth(self):
         resp = self.client.put("/owners/me", {"name": "X"}, format="json")
         self.assertEqual(resp.status_code, 401)
+
+    def test_alarm_email_cooldown_seconds_defaults_to_null(self):
+        owner = self.create_owner(name="Alice", email="alice-cooldown-default@example.com")
+        resp = self.client.get("/owners/me", **self.auth_headers(owner))
+        self.assertIsNone(resp.json()["alarm_email_cooldown_seconds"])
+
+    def test_owner_can_set_their_own_alarm_email_cooldown(self):
+        owner = self.create_owner(name="Alice", email="alice-cooldown-set@example.com")
+        resp = self.client.put(
+            "/owners/me",
+            {"alarm_email_cooldown_seconds": 7200},
+            format="json",
+            **self.auth_headers(owner),
+        )
+        self.assertEqual(resp.status_code, 200)
+        self.assertEqual(resp.json()["alarm_email_cooldown_seconds"], 7200)
+
+    def test_owner_can_clear_their_alarm_email_cooldown_back_to_the_default(self):
+        owner = self.create_owner(name="Alice", email="alice-cooldown-clear@example.com")
+        self.client.put(
+            "/owners/me",
+            {"alarm_email_cooldown_seconds": 7200},
+            format="json",
+            **self.auth_headers(owner),
+        )
+        resp = self.client.put(
+            "/owners/me",
+            {"alarm_email_cooldown_seconds": None},
+            format="json",
+            **self.auth_headers(owner),
+        )
+        self.assertEqual(resp.status_code, 200)
+        self.assertIsNone(resp.json()["alarm_email_cooldown_seconds"])
+
+    def test_alarm_email_cooldown_seconds_rejects_a_negative_value(self):
+        owner = self.create_owner(name="Alice", email="alice-cooldown-negative@example.com")
+        resp = self.client.put(
+            "/owners/me",
+            {"alarm_email_cooldown_seconds": -1},
+            format="json",
+            **self.auth_headers(owner),
+        )
+        self.assertEqual(resp.status_code, 400)
+
+    def test_alarm_email_cooldown_seconds_rejects_more_than_thirty_days(self):
+        owner = self.create_owner(name="Alice", email="alice-cooldown-toolong@example.com")
+        resp = self.client.put(
+            "/owners/me",
+            {"alarm_email_cooldown_seconds": 30 * 24 * 3600 + 1},
+            format="json",
+            **self.auth_headers(owner),
+        )
+        self.assertEqual(resp.status_code, 400)
+
+    def test_alarm_email_cooldown_seconds_accepts_zero(self):
+        owner = self.create_owner(name="Alice", email="alice-cooldown-zero@example.com")
+        resp = self.client.put(
+            "/owners/me",
+            {"alarm_email_cooldown_seconds": 0},
+            format="json",
+            **self.auth_headers(owner),
+        )
+        self.assertEqual(resp.status_code, 200)
+        self.assertEqual(resp.json()["alarm_email_cooldown_seconds"], 0)
 
 
 class ApiKeyRotationTests(RegistryTestCase):

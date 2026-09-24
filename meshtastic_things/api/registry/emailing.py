@@ -1,9 +1,19 @@
+import os
+
 import structlog
 from django.conf import settings
 from django.core.mail import send_mail
 from django.template.loader import render_to_string
 
 log = structlog.get_logger()
+
+ALARM_EMAIL_COOLDOWN_MIN_SECONDS = 0
+ALARM_EMAIL_COOLDOWN_MAX_SECONDS = 30 * 24 * 3600  # 30 days
+
+
+def default_alarm_email_cooldown_seconds() -> int:
+    """Server-wide fallback cooldown, used when an owner hasn't set their own."""
+    return int(os.environ.get("REGISTRY__ALARM_EMAIL_COOLDOWN_SECONDS", 3600))
 
 
 def send_templated_email(to_email: str, subject: str, template_name: str, context: dict) -> None:
