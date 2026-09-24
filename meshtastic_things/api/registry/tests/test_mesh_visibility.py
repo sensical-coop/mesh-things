@@ -6,7 +6,9 @@ import uuid
 from io import StringIO
 from unittest.mock import patch
 
+from django.conf import settings
 from django.core import mail
+from django.test import SimpleTestCase, override_settings
 from django.core.management import call_command
 
 from registry.models import (
@@ -18,6 +20,8 @@ from registry.models import (
     Owner,
     TelemetryVariant,
 )
+
+from registry.emailing import console_url, frontend_url
 
 from .helpers import RegistryTestCase
 
@@ -465,6 +469,15 @@ class MeshAccessEmailTests(MeshVisibilityTestCase):
         self.assertEqual(sent.to, ["outsider@example.com"])
         self.assertIn("Garden mesh", sent.body)
         self.assertIn("Owner", sent.body)
+        self.assertIn(f"{settings.PUBLIC_FRONTEND_URL}/console/meshes/{self.mesh['id']}", sent.body)
+
+    def test_the_mesh_link_follows_the_console_prefix(self):
+        with self.settings(FRONTEND_CONSOLE_PATH="/app/dashboard/"):
+            self.post_grant()
+
+        self.assertIn(f"{settings.PUBLIC_FRONTEND_URL}/app/dashboard/meshes/{self.mesh['id']}", mail.outbox[0].body)
+
+
 
     def test_revoking_emails_the_viewer(self):
         self.post_grant()
@@ -474,6 +487,9 @@ class MeshAccessEmailTests(MeshVisibilityTestCase):
 
         self.assertEqual(len(mail.outbox), 1)
         self.assertIn("Garden mesh", mail.outbox[0].body)
+        # Links to the list rather than the mesh, whose page now answers 404.
+        self.assertIn(f"{settings.PUBLIC_FRONTEND_URL}/console/meshes\n", mail.outbox[0].body)
+        self.assertNotIn(f"/console/meshes/{self.mesh['id']}", mail.outbox[0].body)
 
     def test_a_failing_send_does_not_fail_the_grant(self):
         """There is no retry loop here, so a dead mail server must not look like a
@@ -566,3 +582,20 @@ class IsPublicToggleTests(MeshVisibilityTestCase):
         mesh = Mesh.objects.get(pk=self.mesh["id"])
 
         self.assertEqual(mesh.psk_b64, "AAAA")
+
+
+class FrontendUrlTests(SimpleTestCase):
+    """Links are composed from the frontend base, the console prefix and the page."""
+
+    @override_settings(PUBLIC_FRONTEND_URL="https://app.example.org/", FRONTEND_CONSOLE_PATH="/console")
+    def test_console_pages_sit_under_the_prefix(self):
+        self.assertEqual(console_url("meshes", "m1"), "https://app.example.org/console/meshes/m1")
+        self.assertEqual(console_url("devices", "d1"), "https://app.example.org/console/devices/d1")
+
+    @override_settings(PUBLIC_FRONTEND_URL="https://app.example.org", FRONTEND_CONSOLE_PATH="/")
+    def test_a_root_prefix_puts_the_console_at_the_frontend_root(self):
+        self.assertEqual(console_url("meshes", "m1"), "https://app.example.org/meshes/m1")
+
+    @override_settings(PUBLIC_FRONTEND_URL="https://app.example.org", FRONTEND_CONSOLE_PATH="/console")
+    def test_public_pages_are_outside_the_console(self):
+        self.assertEqual(frontend_url("verify-email"), "https://app.example.org/verify-email")

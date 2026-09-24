@@ -16,6 +16,18 @@ def default_alarm_email_cooldown_seconds() -> int:
     return int(os.environ.get("REGISTRY__ALARM_EMAIL_COOLDOWN_SECONDS", 3600))
 
 
+def frontend_url(*segments) -> str:
+    """A page of the frontend app, e.g. frontend_url("verify-email")."""
+    parts = [settings.PUBLIC_FRONTEND_URL.rstrip("/")]
+    parts += [str(segment).strip("/") for segment in segments if str(segment).strip("/")]
+    return "/".join(parts)
+
+
+def console_url(*segments) -> str:
+    """A page in the frontend's console, e.g. console_url("meshes", mesh.id)."""
+    return frontend_url(settings.FRONTEND_CONSOLE_PATH, *segments)
+
+
 def send_templated_email(to_email: str, subject: str, template_name: str, context: dict) -> None:
     """Renders registry/templates/registry/emails/<template_name>.txt with context and
     sends it plaintext-only via the configured EMAIL_BACKEND"""
@@ -26,7 +38,7 @@ def send_templated_email(to_email: str, subject: str, template_name: str, contex
 
 def send_verification_email(owner, token: str) -> None:
 
-    verify_link = f"{settings.PUBLIC_FRONTEND_URL}/verify-email?token={token}"
+    verify_link = f"{frontend_url('verify-email')}?token={token}"
     send_templated_email(
         to_email=owner.email,
         subject="Verify your email - Mesh Things",
@@ -37,7 +49,7 @@ def send_verification_email(owner, token: str) -> None:
 
 def send_password_reset_email(owner, token: str) -> None:
 
-    reset_link = f"{settings.PUBLIC_FRONTEND_URL}/reset-password?token={token}"
+    reset_link = f"{frontend_url('reset-password')}?token={token}"
     send_templated_email(
         to_email=owner.email,
         subject="Reset your password - Mesh Things",
@@ -51,7 +63,9 @@ def _mesh_access_context(viewer, mesh) -> dict:
         "name": viewer.name,
         "mesh_label": mesh.label or mesh.channel_id,
         "owner_name": mesh.owner.name,
-        "mesh_link": f"{settings.PUBLIC_FRONTEND_URL}/meshes/{mesh.id}",
+        "mesh_link": console_url("meshes", mesh.id),
+        # The mesh's own page is no longer readable once access is revoked.
+        "meshes_link": console_url("meshes"),
     }
 
 
