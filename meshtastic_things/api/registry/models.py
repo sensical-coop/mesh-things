@@ -52,7 +52,7 @@ class Owner(AbstractBaseUser, PermissionsMixin):
     email_verification_sent_at = models.DateTimeField(null=True, blank=True)
     password_reset_token_hash = models.CharField(max_length=64, unique=True, db_index=True, null=True, blank=True)
     password_reset_sent_at = models.DateTimeField(null=True, blank=True)
-    # Minimum seconds between quality-alarm emails. Null uses the server default.
+    # Length of a device's alarm-email window, in seconds. Null uses the server default.
     alarm_email_cooldown_seconds = models.PositiveIntegerField(null=True, blank=True)
     role = models.CharField(max_length=16, choices=OwnerRole.choices, default=OwnerRole.MEMBER)
 
@@ -73,16 +73,11 @@ class Owner(AbstractBaseUser, PermissionsMixin):
 
     @property
     def visible_meshes(self):
-        """Meshes this owner may read: their own, public ones, and ones they hold a
-        viewer grant on. Every mesh for a superuser. The single definition of that rule."""
+        """Meshes this owner may read: their own and public ones. Every mesh for a
+        superuser. The single definition of that rule."""
         if self.is_superuser:
             return Mesh.objects.all()
-        return Mesh.objects.filter(
-            models.Q(owner_id=self.id)
-            | models.Q(is_public=True)
-            | models.Q(viewer_grants__viewer_id=self.id)
-            # The grant join duplicates a mesh that is both public and granted.
-        ).distinct()
+        return Mesh.objects.filter(models.Q(owner_id=self.id) | models.Q(is_public=True))
 
     @property
     def visible_devices(self):
@@ -92,16 +87,11 @@ class Owner(AbstractBaseUser, PermissionsMixin):
         return Device.objects.filter(mesh__in=self.visible_meshes)
 
     def can_view_mesh(self, mesh) -> bool:
-        """Reads. The grant lookup only runs once the cheaper cases have missed."""
-        return (
-            self.is_superuser
-            or mesh.owner_id == self.id
-            or mesh.is_public
-            or mesh.viewer_grants.filter(viewer_id=self.id).exists()
-        )
+        """Reads."""
+        return self.is_superuser or mesh.owner_id == self.id or mesh.is_public
 
     def can_edit_mesh(self, mesh) -> bool:
-        """Writes, which a grant and `is_public` never widen."""
+        """Writes, which `is_public` never widens."""
         return self.is_superuser or mesh.owner_id == self.id
 
     def _device_addresses(self):
@@ -165,24 +155,6 @@ class Mesh(models.Model):
         if not self.label or self.label == self.channel_id:
             return self.channel_id
         return f"{self.label} ({self.channel_id})"
-
-
-class MeshViewer(models.Model):
-    """Grants one owner read access to a mesh they do not own."""
-
-    id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
-    mesh = models.ForeignKey(Mesh, on_delete=models.CASCADE, related_name="viewer_grants")
-    viewer = models.ForeignKey(Owner, on_delete=models.CASCADE, related_name="mesh_view_grants")
-    created_at = models.DateTimeField(auto_now_add=True)
-
-    class Meta:
-        db_table = "mesh_viewers"
-        constraints = [
-            models.UniqueConstraint(fields=["mesh", "viewer"], name="uq_mesh_viewer")
-        ]
-
-    def __str__(self) -> str:
-        return f"{self.viewer.email} -> {self.mesh}"
 
 
 def _max_three_admin_keys(value: list[str]) -> None:

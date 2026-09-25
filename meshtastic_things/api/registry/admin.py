@@ -9,7 +9,6 @@ from .models import (
     Measurement,
     MeasurementType,
     Mesh,
-    MeshViewer,
     Owner,
     PostprocessingBlueprint,
     PostprocessingStep,
@@ -63,14 +62,6 @@ class SourceAdmin(admin.ModelAdmin):
 
     def has_delete_permission(self, request, obj=None):
         return False
-
-
-@admin.register(MeshViewer)
-class MeshViewerAdmin(admin.ModelAdmin):
-    list_display = ("mesh", "viewer", "created_at")
-    list_select_related = ("mesh", "viewer")
-    readonly_fields = ("id", "created_at")
-    search_fields = ("mesh__channel_id", "viewer__email")
 
 
 @admin.register(Device)

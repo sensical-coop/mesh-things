@@ -91,12 +91,16 @@ services:
       timeout: 5s
       retries: 5
 
-  # Shared cache for registry and readings
+  # Shared cache for registry and readings. Persisted (AOF) because it also holds
+  # alarm-email windows and the alarms held for their summaries.
   redis:
     mem_limit: 256m
     container_name: meshtastic-things-redis
     image: redis:7-alpine
+    command: ["redis-server", "--appendonly", "yes"]
     restart: unless-stopped
+    volumes:
+      - redis_data:/data
     healthcheck:
       test: ["CMD", "redis-cli", "ping"]
       interval: 10s
@@ -107,3 +111,4 @@ volumes:
   kafka_data:
   influx_data:
   postgres_data:
+  redis_data:

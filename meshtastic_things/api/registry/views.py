@@ -20,8 +20,6 @@ from rest_framework.views import APIView
 from .auth import generate_api_key, hash_api_key
 from .authentication import OwnerResetPasswordAuthentication
 from .emailing import (
-    send_mesh_access_granted_email,
-    send_mesh_access_revoked_email,
     send_password_reset_email,
     send_verification_email,
 )
@@ -36,7 +34,6 @@ from .models import (
     Measurement,
     MeasurementType,
     Mesh,
-    MeshViewer,
     Owner,
     PostprocessingBlueprint,
     Source,
@@ -57,8 +54,6 @@ from .serializers import (
     MeasurementTypeUpdateSerializer,
     MeshSerializer,
     MeshUpdateSerializer,
-    MeshViewerCreateSerializer,
-    MeshViewerSerializer,
     MetricsResponseSerializer,
     OwnerChangePasswordSerializer,
     OwnerCreateSerializer,
@@ -97,7 +92,7 @@ def _flag(name, description):
 
 
 MESH_FILTER_PARAMS = [
-    _flag("owned", "Restrict to meshes the caller owns, excluding public and granted ones."),
+    _flag("owned", "Restrict to meshes the caller owns, excluding public ones."),
     _query("source_id", "Restrict to meshes bridged from one source.", OpenApiTypes.UUID),
 ]
 
@@ -496,10 +491,12 @@ class OwnerMeView(APIView):
         is verified, and sends a fresh verification email.
 
         Args:
-            alarm_email_cooldown_seconds: Minimum time between quality-alarm
-                emails, in seconds. Accepts 0 (email on every alarm) up to
-                2592000 (30 days). Leave unset or null to use the server
-                default.
+            alarm_email_cooldown_seconds: Length of a device's alarm window,
+                in seconds. The first alarm on a device is emailed straight
+                away; any further alarms on that device during the window are
+                sent as one summary when it ends. Accepts 0 (email on every
+                alarm, no summaries) up to 2592000 (30 days). Leave unset or
+                null to use the server default.
         """
         email_changing = "email" in request.data and request.data["email"] != request.user.email
         serializer = OwnerUpdateSerializer(request.user, data=request.data, partial=True)
@@ -636,9 +633,8 @@ class MeshListCreateView(APIView):
     def get(self, request):
         """List the meshes the caller may read, or every mesh for a superuser.
 
-        Alongside their own, this includes public meshes and any they have been
-        granted access to. The pre-shared key is included only for meshes the
-        caller owns.
+        Alongside their own, this includes public meshes. The pre-shared key is
+        included only for meshes the caller owns.
 
         Args:
             owned: Restrict to meshes the caller owns. Defaults to false.
@@ -752,99 +748,6 @@ class MeshDetailView(APIView):
         return Response(status=status.HTTP_204_NO_CONTENT)
 
 
-def _email_quietly(send, *args, action: str, **context) -> None:
-    """Notify without letting a dead mail server fail the write that already happened."""
-    try:
-        send(*args)
-    except Exception as e:
-        log.warning(f"{action}_email_send_failed", error=str(e), **context)
-
-
-class MeshViewerListCreateView(APIView):
-    """Read access granted to owners other than the mesh's own."""
-
-    permission_classes = [IsVerifiedOwner]
-
-    @extend_schema(responses=MeshViewerSerializer(many=True))
-    def get(self, request, mesh_id):
-        """List the owners granted read access to this mesh.
-
-        Only the mesh's owner may read this. Email addresses are not included.
-        """
-        mesh = _get_mesh_or_404(mesh_id)
-        _require_mesh_ownership(mesh, request.user)
-        grants = mesh.viewer_grants.select_related("viewer").order_by("created_at")
-        return Response(MeshViewerSerializer(grants, many=True).data)
-
-    @extend_schema(request=MeshViewerCreateSerializer, responses={201: MeshViewerSerializer})
-    def post(self, request, mesh_id):
-        """Grant one owner read access to this mesh.
-
-        Only the mesh's owner may grant access, and the grant is read-only: it
-        never allows the recipient to change the mesh or its devices. The
-        recipient is emailed unless their address is still unverified. Granting
-        access that already exists returns the existing grant rather than
-        failing.
-
-        Args:
-            owner_id: The owner to grant access to. Required.
-        """
-        mesh = _get_mesh_or_404(mesh_id)
-        _require_mesh_ownership(mesh, request.user)
-        serializer = MeshViewerCreateSerializer(data=request.data)
-        serializer.is_valid(raise_exception=True)
-        owner_id = serializer.validated_data["owner_id"]
-        if owner_id == mesh.owner_id:
-            raise ValidationError({"owner_id": "The mesh's owner already has access"})
-        viewer = Owner.objects.filter(pk=owner_id).first()
-        if viewer is None:
-            raise ValidationError({"owner_id": f"No owner with id {owner_id}"})
-
-        grant, created = MeshViewer.objects.get_or_create(mesh=mesh, viewer=viewer)
-        if created and viewer.email and viewer.is_active:
-            _email_quietly(
-                send_mesh_access_granted_email,
-                viewer,
-                mesh,
-                action="mesh_access_granted",
-                mesh_id=str(mesh.id),
-                viewer_id=str(viewer.id),
-            )
-        return Response(
-            MeshViewerSerializer(grant).data,
-            status=status.HTTP_201_CREATED if created else status.HTTP_200_OK,
-        )
-
-
-class MeshViewerDetailView(APIView):
-    permission_classes = [IsVerifiedOwner]
-
-    @extend_schema(responses={204: NO_CONTENT})
-    def delete(self, request, mesh_id, owner_id):
-        """Revoke one owner's read access to this mesh.
-
-        Only the mesh's owner may revoke access. The recipient is emailed
-        unless their address is still unverified.
-        """
-        mesh = _get_mesh_or_404(mesh_id)
-        _require_mesh_ownership(mesh, request.user)
-        grant = mesh.viewer_grants.select_related("viewer").filter(viewer_id=owner_id).first()
-        if grant is None:
-            raise NotFound("This owner has no access to this mesh")
-        viewer = grant.viewer
-        grant.delete()
-        if viewer.email and viewer.is_active:
-            _email_quietly(
-                send_mesh_access_revoked_email,
-                viewer,
-                mesh,
-                action="mesh_access_revoked",
-                mesh_id=str(mesh.id),
-                viewer_id=str(viewer.id),
-            )
-        return Response(status=status.HTTP_204_NO_CONTENT)
-
-
 class MeshDevicesView(APIView):
     """List every device registered on this mesh, gateways and nodes alike."""
 
@@ -870,8 +773,7 @@ class DeviceListCreateView(APIView):
         """List the devices the caller may read, or every device for a superuser.
 
         Alongside devices on their own meshes, this includes those on public
-        meshes and on meshes they have been granted access to. Rejected
-        registrations are shown only to the mesh's owner.
+        meshes. Rejected registrations are shown only to the mesh's owner.
 
         Args:
             mesh_id: Restrict to devices on one mesh.

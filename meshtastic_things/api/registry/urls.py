@@ -21,8 +21,6 @@ urlpatterns = [
     path("meshes", views.MeshListCreateView.as_view()),
     path("meshes/<uuid:mesh_id>", views.MeshDetailView.as_view()),
     path("meshes/<uuid:mesh_id>/devices", views.MeshDevicesView.as_view()),
-    path("meshes/<uuid:mesh_id>/viewers", views.MeshViewerListCreateView.as_view()),
-    path("meshes/<uuid:mesh_id>/viewers/<uuid:owner_id>", views.MeshViewerDetailView.as_view()),
     path("sources", views.SourceListCreateView.as_view()),
     path("sources/<uuid:source_id>", views.SourceDetailView.as_view()),
     path("devices", views.DeviceListCreateView.as_view()),

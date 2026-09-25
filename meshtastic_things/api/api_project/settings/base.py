@@ -183,6 +183,9 @@ if COOKIE_DOMAIN:
     SESSION_COOKIE_DOMAIN = COOKIE_DOMAIN
     CSRF_COOKIE_DOMAIN = COOKIE_DOMAIN
 
+# Prefix under PUBLIC_FRONTEND_URL of the frontend's authenticated pages (meshes, devices, ...).
+FRONTEND_CONSOLE_PATH = env_str("REGISTRY__FRONTEND_CONSOLE_PATH", "/console")
+
 LOGGING = {
     "version": 1,
     "disable_existing_loggers": False,

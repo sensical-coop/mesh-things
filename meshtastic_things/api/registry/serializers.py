@@ -16,7 +16,6 @@ from .models import (
     Measurement,
     MeasurementType,
     Mesh,
-    MeshViewer,
     Owner,
     OwnerRole,
     PostprocessingBlueprint,
@@ -290,23 +289,6 @@ class SourceReadSerializer(SourceSerializer):
 
     class Meta(SourceSerializer.Meta):
         fields = SourceSerializer.Meta.fields + ["status"]
-
-
-class MeshViewerSerializer(serializers.ModelSerializer):
-    """A grant, reported to the mesh owner. The viewer's email is never included."""
-
-    viewer = OwnerPublicSerializer(read_only=True)
-
-    class Meta:
-        model = MeshViewer
-        fields = ["id", "viewer", "created_at"]
-        read_only_fields = fields
-
-
-class MeshViewerCreateSerializer(serializers.Serializer):
-    """POST /meshes/{id}/viewers input."""
-
-    owner_id = serializers.UUIDField()
 
 
 def _max_three_admin_keys(value):

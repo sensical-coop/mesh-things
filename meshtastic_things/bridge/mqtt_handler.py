@@ -195,9 +195,9 @@ class MQTTHandler(object):
                             log.debug('Dropping packet from a gateway outside its source', topic=message.topic.value)
                             continue
                         self.kafka_producer.send(os.environ['MQTT_BRIDGE__KAFKA_TOPIC'], key=_partition_key(message.topic), value=message.payload)
-            except aiomqtt.MqttError:
+            except aiomqtt.MqttError as e:
                 self.mqtt_health.mark_disconnected()
-                log.info(f"Connection lost; Reconnecting in {int(os.environ['MQTT_BRIDGE__RECONNECT'])} seconds ...")
+                log.warning(f"Connection lost ({e}); Reconnecting in {int(os.environ['MQTT_BRIDGE__RECONNECT'])} seconds ...")
                 await asyncio.sleep(int(os.environ['MQTT_BRIDGE__RECONNECT']))
             except Exception as e:
                 log.exception("An error occurred", exc_info=e)

@@ -3,7 +3,9 @@ Hi {{ name }},
 A data-quality check was triggered on one of your devices.
 
   Device:   {{ device_label }} (node {{ device_id }})
+            {{ device_link }}
   Mesh:     {{ mesh_label }}
+            {{ mesh_link }}
   Check:    {{ detector_summary }} ({{ detector }}){% if channel %}
   Channel:  {{ channel }}{% endif %}
   Detected: {{ triggered_at }}
@@ -13,5 +15,7 @@ A data-quality check was triggered on one of your devices.
 This means the device has not published data recently. If your device batches
 readings, it may still deliver this period later, so check data completeness.
 {% endif %}
-Note: you will not get another email about this same check on this device for at
-least {{ cooldown_hours }} hour(s).
+{% if cooldown_hours %}Note: further alarms on this device, from any check, will not be emailed one by
+one. If any occur in the next {{ cooldown_hours }} hour(s), you will get one summary
+of them when that period ends.
+{% endif %}

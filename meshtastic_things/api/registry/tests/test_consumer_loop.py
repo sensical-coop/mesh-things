@@ -4,7 +4,7 @@ from unittest.mock import MagicMock
 from django.db import IntegrityError, OperationalError
 from django.test import SimpleTestCase
 
-from registry.consumer_loop import consume_batch
+from registry.consumer_loop import consume_batch, consume_forever
 
 
 class _Record:
@@ -110,3 +110,32 @@ class ConsumeBatchTests(SimpleTestCase):
         self.assertTrue(rewound)
         self.consumer.seek.assert_called_once_with(self.tp, 11)
         self.consumer.commit.assert_called_once()
+
+
+class _Stop(Exception):
+    pass
+
+
+class ConsumeForeverTickTests(SimpleTestCase):
+    def _consumer(self, polls):
+        consumer = MagicMock()
+        consumer.poll.side_effect = [*polls, _Stop()]
+        return consumer
+
+    def test_tick_runs_when_no_records_arrive(self):
+        tick = MagicMock()
+
+        with self.assertRaises(_Stop):
+            consume_forever(self._consumer([{}, {}]), MagicMock(), "thing", tick=tick, tick_interval_seconds=0)
+
+        self.assertEqual(tick.call_count, 3)
+
+    def test_a_failing_tick_does_not_stop_the_consumer(self):
+        tick = MagicMock(side_effect=RuntimeError("smtp down"))
+        consumer = self._consumer([{}, {}])
+
+        with self.assertRaises(_Stop):
+            consume_forever(consumer, MagicMock(), "thing", tick=tick, tick_interval_seconds=0)
+
+        self.assertEqual(consumer.poll.call_count, 3)
+        consumer.close.assert_called_once()
