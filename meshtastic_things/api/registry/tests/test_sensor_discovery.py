@@ -210,7 +210,7 @@ class DeviceTelemetryVariantsEndpointTests(RegistryTestCase):
         url = f"/devices/{node['uuid']}/telemetry-variants"
 
         self.assertEqual(self.client.get(url).status_code, 401)
-        self.assertEqual(self.client.get(url, **self.auth_headers(owner_b)).status_code, 403)
+        self.assertEqual(self.client.get(url, **self.auth_headers(owner_b)).status_code, 404)
         self.assertEqual(self.client.get(url, **self.auth_headers(owner_a)).status_code, 200)
 
     def test_empty_when_none_discovered_yet(self):
@@ -273,7 +273,7 @@ class DeviceMeasurementsEndpointTests(SeededCatalogTestCase):
         url = f"/devices/{node['uuid']}/measurements"
 
         self.assertEqual(self.client.get(url).status_code, 401)
-        self.assertEqual(self.client.get(url, **self.auth_headers(owner_b)).status_code, 403)
+        self.assertEqual(self.client.get(url, **self.auth_headers(owner_b)).status_code, 404)
         self.assertEqual(self.client.get(url, **self.auth_headers(owner_a)).status_code, 200)
 
     def test_empty_when_none_discovered_yet(self):

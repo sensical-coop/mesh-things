@@ -3,7 +3,9 @@ Hi {{ name }},
 A data-quality check was triggered on one of your devices.
 
   Device:   {{ device_label }} (node {{ device_id }})
+            {{ device_link }}
   Mesh:     {{ mesh_label }}
+            {{ mesh_link }}
   Check:    {{ detector_summary }} ({{ detector }}){% if channel %}
   Channel:  {{ channel }}{% endif %}
   Detected: {{ triggered_at }}

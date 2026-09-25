@@ -61,12 +61,27 @@ class Owner(AbstractBaseUser, PermissionsMixin):
         return self.email
 
     @property
+    def visible_meshes(self):
+        """Meshes this owner may read: their own and public ones. Every mesh for a
+        superuser. The single definition of that rule."""
+        if self.is_superuser:
+            return Mesh.objects.all()
+        return Mesh.objects.filter(models.Q(owner_id=self.id) | models.Q(is_public=True))
+
+    @property
     def visible_devices(self):
-        """Devices this owner may see: every one for a superuser, otherwise
-        those on meshes they own. The single definition of that rule."""
+        """Devices this owner may see: those on meshes they may read."""
         if self.is_superuser:
             return Device.objects.all()
-        return Device.objects.filter(mesh__owner_id=self.id)
+        return Device.objects.filter(mesh__in=self.visible_meshes)
+
+    def can_view_mesh(self, mesh) -> bool:
+        """Reads."""
+        return self.is_superuser or mesh.owner_id == self.id or mesh.is_public
+
+    def can_edit_mesh(self, mesh) -> bool:
+        """Writes, which `is_public` never widens."""
+        return self.is_superuser or mesh.owner_id == self.id
 
     def _device_addresses(self):
         """Only the three columns the readings role is granted."""
@@ -89,6 +104,8 @@ class Mesh(models.Model):
     psk_b64 = models.TextField()
     label = models.CharField(max_length=255, null=True, blank=True)
     owner = models.ForeignKey(Owner, on_delete=models.CASCADE, related_name="meshes")
+    # Readable by any verified owner. Never widens writes.
+    is_public = models.BooleanField(default=False)
     created_at = models.DateTimeField(auto_now_add=True)
     updated_at = models.DateTimeField(auto_now=True)
 

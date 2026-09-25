@@ -188,6 +188,33 @@ class DeviceScopingTests(ReadingsTestCase):
 
         self.assertEqual(resp.status_code, 200)
 
+    def _someone_elses_device(self, email, node_id):
+        other = Owner.objects.create_user(email=email, name="Other")
+        other_mesh = Mesh.objects.create(owner=other, channel_id=self.OTHER_CHANNEL, psk_b64="AQ==")
+        device = Device.objects.create(mesh=other_mesh, device_id=node_id, is_gateway=False)
+        return other_mesh, device
+
+    def test_a_public_mesh_is_readable_by_anyone(self):
+        other_mesh, _ = self._someone_elses_device("public-owner@example.com", 888)
+        other_mesh.is_public = True
+        other_mesh.save(update_fields=["is_public"])
+
+        resp = self.client.get(
+            self.node_url("latest", mesh_id=str(other_mesh.id), node_id=888), **self.auth_headers()
+        )
+
+        self.assertEqual(resp.status_code, 200)
+
+    def test_a_public_device_is_reachable_by_its_uuid_too(self):
+        """devices_by_uuid is cached per request, so it has to widen with is_public."""
+        other_mesh, device = self._someone_elses_device("uuid-public@example.com", 2222)
+        other_mesh.is_public = True
+        other_mesh.save(update_fields=["is_public"])
+
+        resp = self.client.get(f"/readings/devices/{device.id}/latest", **self.auth_headers())
+
+        self.assertEqual(resp.status_code, 200)
+
 
 class ReadingsViewTests(ReadingsTestCase):
     def test_readings_shape(self):

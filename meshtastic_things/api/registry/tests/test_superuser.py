@@ -84,4 +84,4 @@ class SuperuserBypassTests(RegistryTestCase):
         owner_b = self.create_owner(name="B", email="su-scope-b@example.com")
         mesh = self.create_mesh(owner_a)
 
-        self.assertEqual(self.client.get(f"/meshes/{mesh['id']}", **self.auth_headers(owner_b)).status_code, 403)
+        self.assertEqual(self.client.get(f"/meshes/{mesh['id']}", **self.auth_headers(owner_b)).status_code, 404)

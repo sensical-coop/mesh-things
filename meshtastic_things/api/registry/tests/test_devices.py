@@ -174,7 +174,7 @@ class DeviceGatewayCrudTests(RegistryTestCase):
 
         self.assertEqual(self.client.get(f"/devices/{gateway['uuid']}").status_code, 401)
         self.assertEqual(
-            self.client.get(f"/devices/{gateway['uuid']}", **self.auth_headers(owner_b)).status_code, 403
+            self.client.get(f"/devices/{gateway['uuid']}", **self.auth_headers(owner_b)).status_code, 404
         )
         self.assertEqual(
             self.client.get(f"/devices/{gateway['uuid']}", **self.auth_headers(owner_a)).status_code, 200
@@ -449,7 +449,7 @@ class DeviceNodeCrudTests(RegistryTestCase):
         node = self.create_node(owner_a, mesh, device_id=333)
         device_uuid = node["uuid"]
 
-        self.assertEqual(self.client.get(f"/devices/{device_uuid}", **self.auth_headers(owner_b)).status_code, 403)
+        self.assertEqual(self.client.get(f"/devices/{device_uuid}", **self.auth_headers(owner_b)).status_code, 404)
         self.assertEqual(
             self.client.put(
                 f"/devices/{device_uuid}", {"label": "hijacked"}, format="json", **self.auth_headers(owner_b)
@@ -609,7 +609,7 @@ class DeviceCatalogTests(RegistryTestCase):
 
         self.assertEqual(self.client.get(f"/meshes/{mesh['id']}/devices").status_code, 401)
         self.assertEqual(
-            self.client.get(f"/meshes/{mesh['id']}/devices", **self.auth_headers(owner_b)).status_code, 403
+            self.client.get(f"/meshes/{mesh['id']}/devices", **self.auth_headers(owner_b)).status_code, 404
         )
         self.assertEqual(
             self.client.get(f"/meshes/{mesh['id']}/devices", **self.auth_headers(owner_a)).status_code, 200
