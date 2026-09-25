@@ -46,7 +46,7 @@ class Owner(AbstractBaseUser, PermissionsMixin):
     email_verification_sent_at = models.DateTimeField(null=True, blank=True)
     password_reset_token_hash = models.CharField(max_length=64, unique=True, db_index=True, null=True, blank=True)
     password_reset_sent_at = models.DateTimeField(null=True, blank=True)
-    # Minimum seconds between quality-alarm emails. Null uses the server default.
+    # Length of a device's alarm-email window, in seconds. Null uses the server default.
     alarm_email_cooldown_seconds = models.PositiveIntegerField(null=True, blank=True)
 
     objects = OwnerManager()

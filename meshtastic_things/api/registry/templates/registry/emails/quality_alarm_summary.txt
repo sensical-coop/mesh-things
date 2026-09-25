@@ -1,0 +1,15 @@
+Hi {{ name }},
+
+Since the last alarm email about this device, its data-quality checks were
+triggered {{ total }} more time(s).
+
+  Device:   {{ device_label }} (node {{ device_id }})
+            {{ device_link }}
+  Mesh:     {{ mesh_label }}
+            {{ mesh_link }}
+{% for alarm in alarms %}
+- {{ alarm.detector_summary }} ({{ alarm.detector }}){% if alarm.channel %}, {{ alarm.channel }}{% endif %}
+  {{ alarm.count }} time(s), first {{ alarm.first_triggered_at }}, last {{ alarm.last_triggered_at }}
+  Latest: {{ alarm.last_message }}
+{% endfor %}
+The next alarm on this device will be emailed straight away.
