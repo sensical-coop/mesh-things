@@ -21,7 +21,9 @@ COLUMN_GRANTS = {
 # Whole-table grants
 # django_session backs SessionAuthentication so a browser holding registry's
 # session cookie is also recognized here; readings never writes to it.
-TABLE_GRANTS = ("owners", "measurement_types", "django_session")
+# mesh_viewers is two foreign keys and a timestamp, so no column restriction is
+# needed; Owner.visible_meshes joins it to scope reads.
+TABLE_GRANTS = ("owners", "measurement_types", "django_session", "mesh_viewers")
 
 CONNECTION_LIMIT = int(os.environ.get("READINGS__DB_MAX_CONNECTIONS", "10"))
 

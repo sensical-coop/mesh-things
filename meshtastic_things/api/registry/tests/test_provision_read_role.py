@@ -42,6 +42,12 @@ class GrantsTests(SimpleTestCase):
         assert set(COLUMN_GRANTS["meshes"]) >= {"id", "owner_id", "is_public"}
         assert set(COLUMN_GRANTS["devices"]) >= {"id", "mesh_id", "device_id"}
 
+    def test_the_viewer_grants_are_readable(self):
+        """Owner.visible_meshes joins mesh_viewers. Without this grant readings raises a
+        Postgres permission error at request time, which the test runner cannot reproduce
+        because it connects as the superuser role."""
+        assert "mesh_viewers" in TABLE_GRANTS
+
     def test_the_connection_limit_is_set(self):
         """The cap is what stops read load exhausting the connections the registry needs;
         unlimited would make the isolation advisory."""

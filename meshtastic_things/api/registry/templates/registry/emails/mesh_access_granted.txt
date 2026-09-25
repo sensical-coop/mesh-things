@@ -1,0 +1,8 @@
+Hi {{ name }},
+
+{{ owner_name }} has given you access to the mesh "{{ mesh_label }}" on
+Mesh Things. You can now read the mesh, its devices and their readings:
+
+{{ mesh_link }}
+
+Access is read-only. Only the mesh's owner can change or remove anything on it.
