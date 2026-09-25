@@ -21,7 +21,7 @@ from django.core.management.base import BaseCommand
 from kafka import KafkaConsumer
 
 from registry.consumer_loop import consume_forever
-from registry.emailing import default_alarm_email_cooldown_seconds, send_templated_email
+from registry.emailing import console_url, default_alarm_email_cooldown_seconds, send_templated_email
 from registry.models import Device
 
 log = structlog.get_logger()
@@ -99,7 +99,9 @@ class Command(BaseCommand):
                 "name": owner.name,
                 "device_label": device.label or device.name or str(device.device_id),
                 "device_id": device.device_id,
+                "device_link": console_url("devices", device.id),
                 "mesh_label": device.mesh.label or device.mesh.channel_id,
+                "mesh_link": console_url("meshes", device.mesh_id),
                 "channel": channel,
                 "detector": detector,
                 "detector_summary": DETECTOR_SUBJECTS.get(detector, "Data quality alarm"),

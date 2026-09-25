@@ -12,8 +12,6 @@ from common.channels import (
     payload_kind_of_measurement,
     split_channel,
 )
-from registry.models import Mesh
-
 from .influx_client import get_client
 from .measurement_catalog import get_measurement_types
 from .serializers import (
@@ -88,12 +86,14 @@ def _as_channels(measurement: str, series: list[dict]) -> list[dict]:
     return [{"channel": f"{measurement}.{s['field']}", "points": s["points"]} for s in series]
 
 
-def _require_owned_mesh(request, mesh_id) -> None:
-    """Reject a mesh the caller does not own, without revealing whether it exists.
+def _require_visible_mesh(request, mesh_id) -> None:
+    """Reject a mesh the caller may not read, without revealing whether it exists.
+
+    Readable means their own or public.
     """
     if request.user.is_superuser:
         return
-    if not Mesh.objects.filter(pk=mesh_id, owner_id=request.user.id).exists():
+    if not request.user.visible_meshes.filter(pk=mesh_id).exists():
         raise NotFound("Device not found")
 
 
@@ -151,7 +151,7 @@ class ReadingsView(ReadingsAPIView):
 
     @extend_schema(parameters=READINGS_PARAMS, responses=ReadingsResponseSerializer)
     def get(self, request, mesh_id, node_id):
-        _require_owned_mesh(request, mesh_id)
+        _require_visible_mesh(request, mesh_id)
         params = request.query_params
         payload_kind, channel = params.get("payload_kind"), params.get("channel")
         if not payload_kind and not channel:
@@ -197,7 +197,7 @@ class LatestView(ReadingsAPIView):
 
     @extend_schema(parameters=LATEST_PARAMS, responses={200: LATEST_RESPONSE})
     def get(self, request, mesh_id, node_id):
-        _require_owned_mesh(request, mesh_id)
+        _require_visible_mesh(request, mesh_id)
         params = request.query_params
         payload_kind = params.get("payload_kind")
         lookback = params.get("lookback", "-30d")
@@ -259,7 +259,7 @@ class QualityView(ReadingsAPIView):
 
     @extend_schema(parameters=RANGE_PARAMS, responses=DeviceQualityResponseSerializer)
     def get(self, request, mesh_id, node_id):
-        _require_owned_mesh(request, mesh_id)
+        _require_visible_mesh(request, mesh_id)
         params = request.query_params
         start = params.get("start", "-1h")
         stop = params.get("stop", "now()")

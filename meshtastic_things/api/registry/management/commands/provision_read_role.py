@@ -15,7 +15,7 @@ ROLE = "readings_ro"
 
 # Column grants
 COLUMN_GRANTS = {
-    "meshes": ("id", "owner_id"),
+    "meshes": ("id", "owner_id", "is_public"),
     "devices": ("id", "device_id", "mesh_id", "is_allowed"),
 }
 # Whole-table grants

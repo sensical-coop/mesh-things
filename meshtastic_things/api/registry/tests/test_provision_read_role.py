@@ -37,9 +37,9 @@ class GrantsTests(SimpleTestCase):
         assert "owners" not in COLUMN_GRANTS
 
     def test_the_scoping_join_has_the_columns_it_needs(self):
-        """Owner.visible_devices filters devices by mesh__owner_id and Owner._device_addresses
+        """Owner.visible_meshes reads owner_id and is_public, and Owner._device_addresses
         reads three columns."""
-        assert set(COLUMN_GRANTS["meshes"]) >= {"id", "owner_id"}
+        assert set(COLUMN_GRANTS["meshes"]) >= {"id", "owner_id", "is_public"}
         assert set(COLUMN_GRANTS["devices"]) >= {"id", "mesh_id", "device_id"}
 
     def test_the_connection_limit_is_set(self):

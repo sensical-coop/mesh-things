@@ -5,7 +5,7 @@ from django.core import mail
 from django.core.cache import cache
 
 from registry.management.commands.consume_quality_alarms import Command as AlarmCommand
-from registry.models import Mesh, Owner
+from registry.models import Device, Mesh, Owner
 
 from .helpers import RegistryTestCase
 
@@ -46,6 +46,17 @@ class QualityAlarmRoutingTests(RegistryTestCase):
         self.assertIn("greenhouse", sent.subject)
         self.assertIn("Garden mesh", sent.body)
         self.assertIn("No telemetry received for 900s", sent.body)
+
+    def test_alarm_links_to_the_device_and_mesh_in_the_console(self):
+        _, mesh = self._device()
+        device = Device.objects.get(mesh_id=mesh["id"], device_id=1)
+
+        with self.settings(PUBLIC_FRONTEND_URL="https://app.example.org", FRONTEND_CONSOLE_PATH="/console"):
+            AlarmCommand._handle(_alarm(mesh["id"], 1))
+
+        body = mail.outbox[0].body
+        self.assertIn(f"https://app.example.org/console/devices/{device.id}", body)
+        self.assertIn(f"https://app.example.org/console/meshes/{mesh['id']}", body)
 
     def test_absence_email_explains_the_publish_vs_read_distinction(self):
         _, mesh = self._device()

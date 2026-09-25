@@ -98,7 +98,8 @@ class MeshCrudTests(RegistryTestCase):
         mesh = self.create_mesh(owner_a)
 
         self.assertEqual(self.client.get(f"/meshes/{mesh['id']}").status_code, 401)
-        self.assertEqual(self.client.get(f"/meshes/{mesh['id']}", **self.auth_headers(owner_b)).status_code, 403)
+        # A read the caller may not perform is a 404: a 403 would confirm the mesh exists.
+        self.assertEqual(self.client.get(f"/meshes/{mesh['id']}", **self.auth_headers(owner_b)).status_code, 404)
         self.assertEqual(self.client.get(f"/meshes/{mesh['id']}", **self.auth_headers(owner_a)).status_code, 200)
 
     def test_list_meshes_is_owner_scoped(self):
