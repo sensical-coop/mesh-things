@@ -1407,11 +1407,14 @@ class SourceListCreateView(APIView):
         Nothing is kept if the bridge cannot be set up.
 
         Args:
-            server: Remote broker as `host:port`. Cannot be this instance's own broker.
+            server: Remote broker as `host:port`. Cannot be this instance's own
+                broker or one the server has blocked.
             ssl: Connect to the remote broker over TLS. Defaults to true.
             username: Remote broker username, if it requires one.
             password: Remote broker password. Accepted but never returned.
             topic: Remote topic filter, for example `msh/EU_868/2/e/MyChannel/#`.
+                `$share`, `$SYS` and filters the server has blocked, such as `#`,
+                are rejected.
             qos: 0 or 1. Defaults to 1.
         """
         _require_operator(request)

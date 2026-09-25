@@ -186,6 +186,11 @@ if COOKIE_DOMAIN:
 # Prefix under PUBLIC_FRONTEND_URL of the frontend's authenticated pages (meshes, devices, ...).
 FRONTEND_CONSOLE_PATH = env_str("REGISTRY__FRONTEND_CONSOLE_PATH", "/console")
 
+# Remote brokers and topic filters a source may not use. Brokers are host or host:port
+# patterns (`*` wildcards); topics must match exactly. An empty topic list still blocks `#`.
+SOURCES_BLOCKED_BROKERS = env_list("REGISTRY__SOURCES_BLOCKED_BROKERS")
+SOURCES_BLOCKED_TOPICS = env_list("REGISTRY__SOURCES_BLOCKED_TOPICS", ["#"])
+
 LOGGING = {
     "version": 1,
     "disable_existing_loggers": False,

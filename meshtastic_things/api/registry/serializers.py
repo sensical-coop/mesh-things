@@ -1,4 +1,7 @@
+from fnmatch import fnmatch
 from urllib.parse import urlsplit
+
+from django.conf import settings
 
 from django.contrib.auth.password_validation import validate_password
 from django.core.exceptions import ValidationError as DjangoValidationError
@@ -262,18 +265,24 @@ class SourceSerializer(serializers.ModelSerializer):
         }
 
     def validate_server(self, value):
-        host, sep, port = value.strip().rpartition(":")
+        value = value.strip()
+        host, sep, port = value.rpartition(":")
         if not sep or not host or not port.isdigit() or not 0 < int(port) < 65536:
             raise serializers.ValidationError("Must be host:port.")
         # Bridging our own broker into itself would loop through the republished topics.
         if host.lower() == _own_emqx_host().lower():
             raise serializers.ValidationError("A source cannot point at this instance's own broker.")
-        return value.strip()
+        if any(fnmatch(candidate, pattern.lower()) for pattern in settings.SOURCES_BLOCKED_BROKERS
+               for candidate in (host.lower(), value.lower())):
+            raise serializers.ValidationError("This broker is not allowed as a source.")
+        return value
 
     def validate_topic(self, value):
         value = value.strip()
         if not value or value.startswith("$"):
             raise serializers.ValidationError("Must be a plain topic filter; $share and $SYS topics are not accepted.")
+        if value in settings.SOURCES_BLOCKED_TOPICS:
+            raise serializers.ValidationError("This topic filter is not allowed as a source.")
         return value
 
     def validate_qos(self, value):

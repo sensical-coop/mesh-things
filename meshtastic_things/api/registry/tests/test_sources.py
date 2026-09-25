@@ -3,6 +3,7 @@ from io import StringIO
 from unittest.mock import patch
 
 from django.core.management import CommandError, call_command
+from django.test import override_settings
 
 from registry.models import Mesh, Owner, Source
 
@@ -99,6 +100,31 @@ class SourceValidationTests(RegistryTestCase):
             self.assertEqual(self._post(server="MQTT.sensical.es:8883").status_code, 400)
         self.fake_emqx.apply_source.assert_not_called()
 
+
+    @override_settings(SOURCES_BLOCKED_BROKERS=["*.meshtastic.org", "blocked.example.org:1883"])
+    def test_blocked_brokers_are_rejected(self):
+        self.assertEqual(self._post(server="MQTT.meshtastic.org:1883").status_code, 400)
+        self.assertEqual(self._post(server="blocked.example.org:1883").status_code, 400)
+        self.assertEqual(self._post(server="blocked.example.org:8883").status_code, 201)
+
+    @override_settings(SOURCES_BLOCKED_TOPICS=["#", "msh/#"])
+    def test_blocked_topics_are_rejected(self):
+        self.assertEqual(self._post(topic="#").status_code, 400)
+        self.assertEqual(self._post(topic=" msh/# ").status_code, 400)
+        self.assertEqual(self._post(topic="msh/EU_868/#").status_code, 201)
+
+    def test_hash_is_blocked_by_default(self):
+        self.assertEqual(self._post(topic="#").status_code, 400)
+
+    def test_an_update_is_validated_against_the_blocklist(self):
+        source = self._post().json()
+
+        with override_settings(SOURCES_BLOCKED_TOPICS=["msh/EU_868/#"]):
+            resp = self.client.put(
+                f"/sources/{source['id']}", {"topic": "msh/EU_868/#"}, format="json", **self.auth_headers(self.operator)
+            )
+
+        self.assertEqual(resp.status_code, 400)
 
 class SourceFailurePolicyTests(RegistryTestCase):
     def setUp(self):
