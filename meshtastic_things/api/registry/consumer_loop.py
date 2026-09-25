@@ -12,10 +12,17 @@ MAX_RECORDS = 500
 RETRY_DELAY_SECONDS = 1
 
 
-def consume_forever(consumer, handle, action: str) -> None:
-    """Poll until interrupted, passing each record's value to `handle`."""
+def consume_forever(consumer, handle, action: str, tick=None, tick_interval_seconds: float = 10) -> None:
+    """Poll until interrupted, passing each record's value to `handle`.
+
+    `tick`, if given, runs every `tick_interval_seconds` whether or not records arrived.
+    """
+    last_tick = time.monotonic()
     try:
         while True:
+            if tick is not None and time.monotonic() - last_tick >= tick_interval_seconds:
+                last_tick = time.monotonic()
+                run_tick(tick, action)
             messages = consumer.poll(timeout_ms=POLL_TIMEOUT_MS, max_records=MAX_RECORDS)
             if not messages:
                 continue
@@ -23,6 +30,14 @@ def consume_forever(consumer, handle, action: str) -> None:
                 time.sleep(RETRY_DELAY_SECONDS)
     finally:
         consumer.close()
+
+
+def run_tick(tick, action: str) -> None:
+    """Run a periodic tick, logging failures so they don't stop the consumer."""
+    try:
+        tick()
+    except Exception as e:
+        log.warning(f"Periodic task failed while consuming to {action}", error=str(e))
 
 
 def consume_batch(consumer, messages, handle, action: str) -> bool:

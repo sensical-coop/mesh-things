@@ -469,10 +469,12 @@ class OwnerMeView(APIView):
         is verified, and sends a fresh verification email.
 
         Args:
-            alarm_email_cooldown_seconds: Minimum time between quality-alarm
-                emails, in seconds. Accepts 0 (email on every alarm) up to
-                2592000 (30 days). Leave unset or null to use the server
-                default.
+            alarm_email_cooldown_seconds: Length of a device's alarm window,
+                in seconds. The first alarm on a device is emailed straight
+                away; any further alarms on that device during the window are
+                sent as one summary when it ends. Accepts 0 (email on every
+                alarm, no summaries) up to 2592000 (30 days). Leave unset or
+                null to use the server default.
         """
         email_changing = "email" in request.data and request.data["email"] != request.user.email
         serializer = OwnerUpdateSerializer(request.user, data=request.data, partial=True)
