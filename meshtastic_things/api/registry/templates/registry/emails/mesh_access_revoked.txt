@@ -1,8 +1,0 @@
-Hi {{ name }},
-
-Your access to the mesh "{{ mesh_label }}" on Mesh Things has been removed by
-{{ owner_name }}. Its devices and readings are no longer readable by you.
-
-The meshes you can still read are listed here:
-
-{{ meshes_link }}

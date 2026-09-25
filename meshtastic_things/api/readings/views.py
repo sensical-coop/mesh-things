@@ -89,7 +89,7 @@ def _as_channels(measurement: str, series: list[dict]) -> list[dict]:
 def _require_visible_mesh(request, mesh_id) -> None:
     """Reject a mesh the caller may not read, without revealing whether it exists.
 
-    Readable means their own, public, or granted to them.
+    Readable means their own or public.
     """
     if request.user.is_superuser:
         return

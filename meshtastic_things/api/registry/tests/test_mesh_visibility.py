@@ -1,12 +1,9 @@
-"""Reading a mesh you don't own, through `is_public` or an explicit grant.
+"""Reading a mesh you don't own, through `is_public`.
 
 The rule under test throughout: reads widen, writes never do.
 """
-import uuid
 from io import StringIO
-from unittest.mock import patch
 
-from django.conf import settings
 from django.core import mail
 from django.test import SimpleTestCase, override_settings
 from django.core.management import call_command
@@ -16,8 +13,6 @@ from registry.models import (
     DeviceTelemetryVariant,
     Measurement,
     Mesh,
-    MeshViewer,
-    Owner,
     TelemetryVariant,
 )
 
@@ -39,12 +34,6 @@ class MeshVisibilityTestCase(RegistryTestCase):
 
     def make_public(self):
         Mesh.objects.filter(pk=self.mesh["id"]).update(is_public=True)
-
-    def grant(self, owner=None):
-        MeshViewer.objects.create(
-            mesh=Mesh.objects.get(pk=self.mesh["id"]),
-            viewer=Owner.objects.get(pk=uuid.UUID((owner or self.outsider)["id"])),
-        )
 
     def _seed_measurement(self):
         """A device only gets measurements once a telemetry variant is discovered for it."""
@@ -133,70 +122,6 @@ class PublicMeshTests(MeshVisibilityTestCase):
 
         self.assertEqual(self.as_outsider("get", f"/meshes/{self.mesh['id']}").status_code, 404)
 
-    def test_a_mesh_that_is_both_public_and_granted_is_listed_once(self):
-        """The grant join duplicates rows without the distinct()."""
-        self.make_public()
-        self.grant()
-
-        listed = self.as_outsider("get", "/meshes").json()
-
-        self.assertEqual(len(listed), 1)
-
-
-class GrantedViewerTests(MeshVisibilityTestCase):
-    def test_a_grant_makes_a_private_mesh_readable(self):
-        self.grant()
-
-        resp = self.as_outsider("get", f"/meshes/{self.mesh['id']}")
-
-        self.assertEqual(resp.status_code, 200)
-
-    def test_a_grant_covers_the_meshs_devices(self):
-        self.grant()
-
-        self.assertEqual(self.as_outsider("get", f"/meshes/{self.mesh['id']}/devices").status_code, 200)
-        self.assertEqual(self.as_outsider("get", f"/devices/{self.node['uuid']}").status_code, 200)
-        self.assertEqual(
-            self.as_outsider("get", f"/devices/{self.node['uuid']}/telemetry-variants").status_code, 200
-        )
-        self.assertEqual(self.as_outsider("get", f"/devices/{self.node['uuid']}/measurements").status_code, 200)
-
-    def test_the_device_appears_in_the_device_list(self):
-        self.grant()
-
-        listed = self.as_outsider("get", "/devices").json()
-
-        self.assertEqual([d["uuid"] for d in listed], [self.node["uuid"]])
-
-    def test_revoking_takes_effect_immediately(self):
-        self.grant()
-        self.assertEqual(self.as_outsider("get", f"/meshes/{self.mesh['id']}").status_code, 200)
-
-        MeshViewer.objects.all().delete()
-
-        self.assertEqual(self.as_outsider("get", f"/meshes/{self.mesh['id']}").status_code, 404)
-
-    def test_a_grant_on_one_mesh_does_not_reach_another(self):
-        other = self.create_mesh(self.owner, channel_id="other", label="Other mesh")
-        self.grant()
-
-        self.assertEqual(self.as_outsider("get", f"/meshes/{other['id']}").status_code, 404)
-
-    def test_deleting_the_viewer_leaves_the_mesh_intact(self):
-        self.grant()
-
-        Owner.objects.filter(pk=uuid.UUID(self.outsider["id"])).delete()
-
-        self.assertTrue(Mesh.objects.filter(pk=self.mesh["id"]).exists())
-        self.assertEqual(MeshViewer.objects.count(), 0)
-
-    def test_deleting_the_mesh_drops_the_grant(self):
-        self.grant()
-
-        Mesh.objects.filter(pk=self.mesh["id"]).delete()
-
-        self.assertEqual(MeshViewer.objects.count(), 0)
-
 
 class ViewerSecretsTests(MeshVisibilityTestCase):
     """The property the whole change rests on: a viewer reads data, never key material."""
@@ -206,7 +131,7 @@ class ViewerSecretsTests(MeshVisibilityTestCase):
         self.node_with_keys = self.create_node(
             self.owner, self.mesh, device_id=2, label="keyed", admin_keys_b64=["AAAA"]
         )
-        self.grant()
+        self.make_public()
 
     def test_a_viewer_never_receives_the_pre_shared_key(self):
         detail = self.as_outsider("get", f"/meshes/{self.mesh['id']}").json()
@@ -245,11 +170,11 @@ class ViewerSecretsTests(MeshVisibilityTestCase):
 
 
 class ViewerCannotWriteTests(MeshVisibilityTestCase):
-    """A grant and is_public widen reads only."""
+    """is_public widens reads only."""
 
     def setUp(self):
         super().setUp()
-        self.grant()
+        self.make_public()
 
     def test_a_viewer_cannot_edit_or_delete_the_mesh(self):
         self.assertEqual(
@@ -281,21 +206,13 @@ class ViewerCannotWriteTests(MeshVisibilityTestCase):
         self.assertEqual(readable.status_code, 200)
         self.assertEqual(written.status_code, 403)
 
-    def test_a_public_mesh_is_no_more_writable_than_a_granted_one(self):
-        MeshViewer.objects.all().delete()
-        self.make_public()
-
-        self.assertEqual(
-            self.as_outsider("put", f"/meshes/{self.mesh['id']}", {"label": "Mine now"}).status_code, 403
-        )
-
 
 class RejectedDevicesTests(MeshVisibilityTestCase):
     """A rejected registration is the owner's business, not a viewer's."""
 
     def setUp(self):
         super().setUp()
-        self.grant()
+        self.make_public()
         Device.objects.filter(pk=self.node["uuid"]).update(is_allowed=False)
 
     def test_a_viewer_does_not_see_a_rejected_device_on_the_mesh(self):
@@ -324,113 +241,12 @@ class RejectedDevicesTests(MeshVisibilityTestCase):
         self.assertEqual(one.status_code, 200)
 
 
-class MeshViewerManagementTests(MeshVisibilityTestCase):
-    def viewers_url(self):
-        return f"/meshes/{self.mesh['id']}/viewers"
-
-    def post_grant(self, owner_id=None, as_owner=None):
-        return self.client.post(
-            self.viewers_url(),
-            {"owner_id": owner_id or self.outsider["id"]},
-            format="json",
-            **self.auth_headers(as_owner or self.owner),
-        )
-
-    def test_the_owner_can_grant_and_list(self):
-        created = self.post_grant()
-
-        self.assertEqual(created.status_code, 201)
-        listed = self.client.get(self.viewers_url(), **self.auth_headers(self.owner)).json()
-        self.assertEqual(len(listed), 1)
-        self.assertEqual(listed[0]["viewer"]["id"], self.outsider["id"])
-
-    def test_the_viewer_list_never_includes_email(self):
-        self.post_grant()
-
-        listed = self.client.get(self.viewers_url(), **self.auth_headers(self.owner)).json()
-
-        self.assertNotIn("email", listed[0]["viewer"])
-
-    def test_granting_actually_grants_access(self):
-        self.post_grant()
-
-        self.assertEqual(self.as_outsider("get", f"/meshes/{self.mesh['id']}").status_code, 200)
-
-    def test_the_owner_can_revoke(self):
-        self.post_grant()
-
-        resp = self.client.delete(
-            f"{self.viewers_url()}/{self.outsider['id']}", **self.auth_headers(self.owner)
-        )
-
-        self.assertEqual(resp.status_code, 204)
-        self.assertEqual(self.as_outsider("get", f"/meshes/{self.mesh['id']}").status_code, 404)
-
-    def test_revoking_a_grant_that_does_not_exist_is_a_404(self):
-        resp = self.client.delete(
-            f"{self.viewers_url()}/{self.outsider['id']}", **self.auth_headers(self.owner)
-        )
-
-        self.assertEqual(resp.status_code, 404)
-
-    def test_granting_twice_is_idempotent(self):
-        first = self.post_grant()
-        second = self.post_grant()
-
-        self.assertEqual(first.status_code, 201)
-        self.assertEqual(second.status_code, 200)
-        self.assertEqual(MeshViewer.objects.count(), 1)
-
-    def test_granting_to_the_mesh_owner_is_rejected(self):
-        resp = self.post_grant(owner_id=self.owner["id"])
-
-        self.assertEqual(resp.status_code, 400)
-
-    def test_granting_to_an_unknown_owner_is_rejected(self):
-        resp = self.post_grant(owner_id=str(uuid.uuid4()))
-
-        self.assertEqual(resp.status_code, 400)
-
-    def test_a_viewer_cannot_read_the_viewer_list(self):
-        """Who else can see a mesh is the owner's business."""
-        self.grant()
-
-        resp = self.as_outsider("get", self.viewers_url())
-
-        self.assertEqual(resp.status_code, 403)
-
-    def test_a_viewer_cannot_grant_access_to_someone_else(self):
-        self.grant()
-        third = self.create_owner(name="Third", email="third@example.com")
-
-        resp = self.post_grant(owner_id=third["id"], as_owner=self.outsider)
-
-        self.assertEqual(resp.status_code, 403)
-
-    def test_a_viewer_cannot_revoke_their_own_removal_of_others(self):
-        self.grant()
-
-        resp = self.client.delete(
-            f"{self.viewers_url()}/{self.outsider['id']}", **self.auth_headers(self.outsider)
-        )
-
-        self.assertEqual(resp.status_code, 403)
-
-    def test_an_unrelated_owner_gets_404_on_the_viewer_list(self):
-        """Not 403 - the mesh must not confirm its existence to a stranger."""
-        stranger = self.create_owner(name="Stranger", email="stranger@example.com")
-
-        resp = self.client.get(self.viewers_url(), **self.auth_headers(stranger))
-
-        self.assertEqual(resp.status_code, 403)
-
-
 class SuperuserTests(MeshVisibilityTestCase):
     def setUp(self):
         super().setUp()
         self.promote_to_superuser(self.outsider)
 
-    def test_a_superuser_reads_every_mesh_without_a_grant(self):
+    def test_a_superuser_reads_every_private_mesh(self):
         resp = self.as_outsider("get", f"/meshes/{self.mesh['id']}")
 
         self.assertEqual(resp.status_code, 200)
@@ -444,102 +260,7 @@ class SuperuserTests(MeshVisibilityTestCase):
         self.assertNotIn("psk_b64", detail)
 
 
-class MeshAccessEmailTests(MeshVisibilityTestCase):
-    def viewers_url(self):
-        return f"/meshes/{self.mesh['id']}/viewers"
-
-    def post_grant(self, owner_id=None):
-        return self.client.post(
-            self.viewers_url(),
-            {"owner_id": owner_id or self.outsider["id"]},
-            format="json",
-            **self.auth_headers(self.owner),
-        )
-
-    def revoke(self, owner_id=None):
-        return self.client.delete(
-            f"{self.viewers_url()}/{owner_id or self.outsider['id']}", **self.auth_headers(self.owner)
-        )
-
-    def test_granting_emails_the_viewer(self):
-        self.post_grant()
-
-        self.assertEqual(len(mail.outbox), 1)
-        sent = mail.outbox[0]
-        self.assertEqual(sent.to, ["outsider@example.com"])
-        self.assertIn("Garden mesh", sent.body)
-        self.assertIn("Owner", sent.body)
-        self.assertIn(f"{settings.PUBLIC_FRONTEND_URL}/console/meshes/{self.mesh['id']}", sent.body)
-
-    def test_the_mesh_link_follows_the_console_prefix(self):
-        with self.settings(FRONTEND_CONSOLE_PATH="/app/dashboard/"):
-            self.post_grant()
-
-        self.assertIn(f"{settings.PUBLIC_FRONTEND_URL}/app/dashboard/meshes/{self.mesh['id']}", mail.outbox[0].body)
-
-
-
-    def test_revoking_emails_the_viewer(self):
-        self.post_grant()
-        mail.outbox.clear()
-
-        self.revoke()
-
-        self.assertEqual(len(mail.outbox), 1)
-        self.assertIn("Garden mesh", mail.outbox[0].body)
-        # Links to the list rather than the mesh, whose page now answers 404.
-        self.assertIn(f"{settings.PUBLIC_FRONTEND_URL}/console/meshes\n", mail.outbox[0].body)
-        self.assertNotIn(f"/console/meshes/{self.mesh['id']}", mail.outbox[0].body)
-
-    def test_a_failing_send_does_not_fail_the_grant(self):
-        """There is no retry loop here, so a dead mail server must not look like a
-        failed grant when the row was written."""
-        with patch(
-            "registry.views.send_mesh_access_granted_email", side_effect=RuntimeError("smtp down")
-        ):
-            resp = self.post_grant()
-
-        self.assertEqual(resp.status_code, 201)
-        self.assertEqual(MeshViewer.objects.count(), 1)
-
-    def test_a_failing_send_does_not_fail_the_revoke(self):
-        self.post_grant()
-
-        with patch(
-            "registry.views.send_mesh_access_revoked_email", side_effect=RuntimeError("smtp down")
-        ):
-            resp = self.revoke()
-
-        self.assertEqual(resp.status_code, 204)
-        self.assertEqual(MeshViewer.objects.count(), 0)
-
-    def test_an_unverified_viewer_is_granted_but_not_emailed(self):
-        unverified = self.client.post(
-            "/owners",
-            {"name": "Unverified", "email": "unverified@example.com", "password": self.DEFAULT_PASSWORD},
-            format="json",
-        ).json()
-        mail.outbox.clear()
-
-        resp = self.post_grant(owner_id=unverified["id"])
-
-        self.assertEqual(resp.status_code, 201)
-        self.assertEqual(len(mail.outbox), 0)
-
-    def test_granting_twice_emails_once(self):
-        self.post_grant()
-        self.post_grant()
-
-        self.assertEqual(len(mail.outbox), 1)
-
-    def test_regranting_after_a_revoke_emails_again(self):
-        """No cooldown here on purpose: a re-grant is a real event, not a repeat alarm."""
-        self.post_grant()
-        self.revoke()
-        self.post_grant()
-
-        self.assertEqual(len(mail.outbox), 3)
-
+class IsPublicToggleTests(MeshVisibilityTestCase):
     def test_making_a_mesh_public_emails_nobody(self):
         resp = self.client.put(
             f"/meshes/{self.mesh['id']}",
@@ -551,8 +272,6 @@ class MeshAccessEmailTests(MeshVisibilityTestCase):
         self.assertEqual(resp.status_code, 200)
         self.assertEqual(len(mail.outbox), 0)
 
-
-class IsPublicToggleTests(MeshVisibilityTestCase):
     def test_the_owner_can_publish_and_unpublish_through_put(self):
         published = self.client.put(
             f"/meshes/{self.mesh['id']}",
