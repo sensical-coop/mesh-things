@@ -8,6 +8,9 @@ Config comes from "registry" over mesh.quality_config.v1: flat_value's default
 enabled/disabled state and reading interval come from the catalog
 (TelemetryVariantMeasurement/TelemetryVariant); range has no catalog default -
 its bounds only ever come from a device's own Measurement row.
+
+Reads decoded and derived telemetry alike, so channels computed by
+postprocessing are checked exactly like the ones a device reports.
 """
 import argparse
 import datetime
@@ -31,6 +34,8 @@ from pyflink.datastream.connectors.kafka import (
 from pyflink.datastream.functions import FlatMapFunction, KeySelector, KeyedBroadcastProcessFunction
 from pyflink.datastream.state import ListStateDescriptor, MapStateDescriptor
 from pyflink.common.serialization import SimpleStringSchema
+
+from common.flink_kafka import committed_or_latest
 
 log = structlog.get_logger()
 
@@ -212,17 +217,20 @@ class DetectPatterns(KeyedBroadcastProcessFunction):
         )
 
 
-def build_pipeline(env, kafka_bootstrap: str, input_topic: str, alarms_topic: str, quality_config_topic: str):
+def build_pipeline(
+    env, kafka_bootstrap: str, input_topics: list[str], alarms_topic: str, quality_config_topic: str
+):
     source = (
         KafkaSource.builder()
         .set_bootstrap_servers(kafka_bootstrap)
-        .set_topics(input_topic)
+        .set_topics(*input_topics)
         .set_group_id("flink-pattern-detection-group")
-        .set_starting_offsets(KafkaOffsetsInitializer.earliest())
+        # Alarms are for live data: a topic seen for the first time is not replayed.
+        .set_starting_offsets(committed_or_latest())
         .set_value_only_deserializer(SimpleStringSchema())
         .build()
     )
-    stream = env.from_source(source, WatermarkStrategy.no_watermarks(), "calibrated-or-decoded-messages")
+    stream = env.from_source(source, WatermarkStrategy.no_watermarks(), "decoded-and-derived-messages")
     exploded = stream.flat_map(ExplodeFields(), output_type=Types.STRING())
 
     config_source = (
@@ -286,10 +294,10 @@ def main():
     build_pipeline(
         env,
         kafka_bootstrap=kafka_bootstrap,
-        input_topic=os.environ.get(
-            "PATTERN_DETECTION__INPUT_TOPIC",
-            os.environ.get("CALIBRATED__KAFKA_TOPIC", "mesh.telemetry.calibrated.v1"),
-        ),
+        input_topics=[
+            os.environ["PROTO_DECODE__KAFKA_TOPIC"],
+            os.environ.get("POSTPROCESSING__DERIVED_KAFKA_TOPIC", "mesh.telemetry.derived.v1"),
+        ],
         alarms_topic=os.environ.get("PATTERN_DETECTION__ALARMS_TOPIC", "mesh.telemetry.alarms.v1"),
         quality_config_topic=os.environ.get("REGISTRY__QUALITY_CONFIG_KAFKA_TOPIC", "mesh.quality_config.v1"),
     )

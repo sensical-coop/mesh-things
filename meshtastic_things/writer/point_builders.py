@@ -13,10 +13,9 @@ from common.channels import (
     TELEMETRY,
     measurement_of,
 )
+from common.timestamps import resolve_timestamp
 
 log = structlog.get_logger()
-
-MIN_FEASIBLE_TIME = 1577836800  # 2020-01-01 in epoch (s)
 
 # payload_kind values that are intentionally not persisted (logged at debug though).
 SKIP_PAYLOAD_KINDS = {
@@ -29,18 +28,8 @@ def _convert_date(timestamp: int) -> str:
     return datetime.fromtimestamp(timestamp, tz=timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
 
 
-def _resolve_timestamp(event: dict) -> tuple[int, str]:
-    timestamp = event["rx_time"]
-    quality = "rx_time"
-    payload_time = (event.get("payload") or {}).get("time")
-    if payload_time and payload_time > MIN_FEASIBLE_TIME:
-        timestamp = payload_time
-        quality = "payload"
-    return timestamp, quality
-
-
 def _base_point_dict(event: dict, measurement: str) -> dict:
-    timestamp, quality = _resolve_timestamp(event)
+    timestamp, quality = resolve_timestamp(event)
     tags = {"node_id": event["node_id"]}
     if event.get("mesh_id"):
         # node_id alone is not unique

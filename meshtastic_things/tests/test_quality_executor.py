@@ -119,7 +119,6 @@ class TestRunSteps:
         assert "no2_ugm3" in outputs
 
     def test_a_failing_row_is_skipped_not_fatal(self):
-        # Fail-soft, same convention as common/calibration.py's apply_calibration.
         rows = [
             {"time": START, "env.temperature": 20.0, "env.relative_humidity": 50.0},
             {"time": START + timedelta(seconds=60), "env.temperature": 20.0, "env.relative_humidity": 0.0},
