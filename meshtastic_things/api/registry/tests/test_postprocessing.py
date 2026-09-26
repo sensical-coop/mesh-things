@@ -29,7 +29,7 @@ def _blueprint_payload(name="air-quality-v1"):
                     "auxiliary": "ads1115.channel_1",
                     "temperature": "environment_metrics.temperature",
                 },
-                "params": {"sensitivity": 0.42, "working_zero": 220.0},
+                "params": {"temperature_coefficient": 0.01},
                 "outputs": {"concentration_ppb": "no2_ppb"},
             },
             {
@@ -57,7 +57,11 @@ class AlgorithmListTests(RegistryTestCase):
         self.assertIn("ec_sensor_ppb", by_name)
         # The multi-sensor case the blueprint design exists for.
         self.assertEqual(by_name["ec_sensor_ppb"]["inputs"], ["working", "auxiliary", "temperature"])
-        self.assertEqual(by_name["ec_sensor_ppb"]["params"], ["sensitivity"])
+        params = {p["name"]: p for p in by_name["ec_sensor_ppb"]["params"]}
+        self.assertTrue(params["sensitivity"]["calibration"])
+        self.assertTrue(params["sensitivity"]["required"])
+        self.assertFalse(params["reference_temperature"]["calibration"])
+        self.assertEqual(params["reference_temperature"]["default"], 20.0)
         self.assertEqual(by_name["ec_sensor_ppb"]["mode"], "pointwise")
 
     def test_requires_auth(self):
@@ -227,7 +231,7 @@ class PostprocessingStepValidationTests(RegistryTestCase):
                 "order": 0,
                 "function_name": "ec_sensor_ppb",
                 "inputs": {"working": "a"},
-                "params": {"sensitivity": 1.0},
+                "params": {},
                 "outputs": {"concentration_ppb": "x"},
             },
         )
@@ -253,14 +257,42 @@ class PostprocessingStepValidationTests(RegistryTestCase):
             self.create_owner(),
             {
                 "order": 0,
-                "function_name": "ec_sensor_ppb",
-                "inputs": {"working": "a", "auxiliary": "b", "temperature": "c"},
+                "function_name": "ppb_to_ugm3",
+                "inputs": {"concentration_ppb": "a", "temperature": "b"},
                 "params": {},
-                "outputs": {"concentration_ppb": "x"},
+                "outputs": {"concentration_ugm3": "x"},
             },
         )
         self.assertEqual(resp.status_code, 400)
         self.assertIn("requires param(s)", str(resp.json()))
+
+    def test_calibration_param_on_a_step_is_rejected(self):
+        resp = self._post(
+            self.create_owner(),
+            {
+                "order": 0,
+                "function_name": "ec_sensor_ppb",
+                "inputs": {"working": "a", "auxiliary": "b", "temperature": "c"},
+                "params": {"sensitivity": 1.0},
+                "outputs": {"concentration_ppb": "x"},
+            },
+        )
+        self.assertEqual(resp.status_code, 400)
+        self.assertIn("calibration parameters, set per device", str(resp.json()))
+
+    def test_unknown_output_is_rejected(self):
+        resp = self._post(
+            self.create_owner(),
+            {
+                "order": 0,
+                "function_name": "dew_point",
+                "inputs": {"temperature": "a", "relative_humidity": "b"},
+                "params": {},
+                "outputs": {"dewpoint": "x"},
+            },
+        )
+        self.assertEqual(resp.status_code, 400)
+        self.assertIn("has no output(s)", str(resp.json()))
 
     def test_unknown_param_is_rejected(self):
         resp = self._post(
@@ -283,7 +315,7 @@ class PostprocessingStepValidationTests(RegistryTestCase):
                 "order": 0,
                 "function_name": "ec_sensor_ppb",
                 "inputs": {"working": "a", "auxiliary": "b", "temperature": "c"},
-                "params": {"sensitivity": 1.0, "working_zero": 220.0, "temperature_coefficient": 0.01},
+                "params": {"temperature_coefficient": 0.01, "reference_temperature": 25.0},
                 "outputs": {"concentration_ppb": "x"},
             },
         )

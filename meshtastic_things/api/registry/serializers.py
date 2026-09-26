@@ -711,14 +711,26 @@ class DetailSerializer(serializers.Serializer):
     detail = serializers.CharField()
 
 
+class AlgorithmParamSerializer(serializers.Serializer):
+    """One keyword argument of an algorithm."""
+
+    name = serializers.CharField()
+    calibration = serializers.BooleanField(
+        help_text="Set per device rather than on the blueprint step, because it describes one physical sensor."
+    )
+    required = serializers.BooleanField()
+    default = serializers.JSONField(allow_null=True)
+    unit = serializers.CharField(allow_null=True)
+    doc = serializers.CharField(allow_blank=True)
+
+
 class AlgorithmSerializer(serializers.Serializer):
     """One entry of the postprocessing function registry."""
 
     name = serializers.CharField()
     inputs = serializers.ListField(child=serializers.CharField())
     outputs = serializers.ListField(child=serializers.CharField())
-    params = serializers.ListField(child=serializers.CharField())
-    optional_params = serializers.ListField(child=serializers.CharField())
+    params = AlgorithmParamSerializer(many=True)
     mode = serializers.CharField()
     doc = serializers.CharField(allow_null=True)
     output_units = serializers.DictField(child=serializers.CharField(allow_null=True))
@@ -947,7 +959,9 @@ class PostprocessingStepSerializer(serializers.ModelSerializer):
         read_only_fields = ["id"]
 
     def validate(self, attrs):
-        errors = validate_step(attrs.get("function_name"), attrs.get("inputs"), attrs.get("params"))
+        errors = validate_step(
+            attrs.get("function_name"), attrs.get("inputs"), attrs.get("params"), attrs.get("outputs") or {}
+        )
         if errors:
             raise serializers.ValidationError({"function_name": errors})
         return attrs
