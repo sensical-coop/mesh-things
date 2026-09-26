@@ -325,12 +325,16 @@ def _max_three_admin_keys(value: list[str]) -> None:
 
 
 class PostprocessingBlueprint(models.Model):
-    """Reusable recipe for calculating new channels."""
+    """Reusable recipe for calculating new channels, identified across its versions."""
 
     id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
     name = models.CharField(max_length=255)
     description = models.TextField(null=True, blank=True)
-    owner = models.ForeignKey(Owner, on_delete=models.CASCADE, related_name="blueprints")
+    # Null once the owner is deleted while other owners' devices still use it;
+    # only superusers edit it from then on.
+    owner = models.ForeignKey(Owner, on_delete=models.SET_NULL, null=True, blank=True, related_name="blueprints")
+    # Attachable to any owner's devices. Existing attachments survive it being unset.
+    is_public = models.BooleanField(default=False)
     created_at = models.DateTimeField(auto_now_add=True)
     updated_at = models.DateTimeField(auto_now=True)
 
@@ -344,28 +348,54 @@ class PostprocessingBlueprint(models.Model):
         return self.name
 
 
-class PostprocessingStep(models.Model):
-    """One step for a blueprint, run in `order`"""
+class BlueprintVersion(models.Model):
+    """An immutable set of steps. Editing a blueprint means adding a version."""
 
     id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
-    blueprint = models.ForeignKey(PostprocessingBlueprint, on_delete=models.CASCADE, related_name="steps")
+    blueprint = models.ForeignKey(PostprocessingBlueprint, on_delete=models.CASCADE, related_name="versions")
+    number = models.PositiveIntegerField()
+    # [{"slot": "temperature", "default_channel": "environment_metrics.temperature"}, ...]
+    inputs = models.JSONField(default=list)
+    notes = models.TextField(null=True, blank=True)
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        db_table = "blueprint_versions"
+        ordering = ["number"]
+        constraints = [
+            models.UniqueConstraint(fields=["blueprint", "number"], name="uq_blueprint_version_number")
+        ]
+
+    def __str__(self) -> str:
+        return f"{self.blueprint} v{self.number}"
+
+
+class PostprocessingStep(models.Model):
+    """One step of a blueprint version, run in `order`."""
+
+    id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
+    version = models.ForeignKey(BlueprintVersion, on_delete=models.CASCADE, related_name="steps")
+    # Stable across versions, so a device's calibration carries over.
+    key = models.SlugField(max_length=64)
     order = models.PositiveIntegerField()
     function_name = models.CharField(max_length=128)
-    inputs = models.JSONField(default=dict, blank=True)
+    # {algorithm input: "slot:<name>" | "step:<key>.<output>"}
+    inputs = models.JSONField(default=dict)
+    # Configuration only; calibration is per device.
     params = models.JSONField(default=dict, blank=True)
-    outputs = models.JSONField(default=dict, blank=True)
-    created_at = models.DateTimeField(auto_now_add=True)
-    updated_at = models.DateTimeField(auto_now=True)
+    # {algorithm output: derived field name}
+    outputs = models.JSONField(default=dict)
 
     class Meta:
         db_table = "postprocessing_steps"
         ordering = ["order"]
         constraints = [
-            models.UniqueConstraint(fields=["blueprint", "order"], name="uq_step_blueprint_order")
+            models.UniqueConstraint(fields=["version", "order"], name="uq_step_version_order"),
+            models.UniqueConstraint(fields=["version", "key"], name="uq_step_version_key"),
         ]
 
     def __str__(self) -> str:
-        return f"{self.order}. {self.function_name}"
+        return f"{self.order}. {self.key} ({self.function_name})"
 
 
 class Device(models.Model):
@@ -381,10 +411,6 @@ class Device(models.Model):
     # DeviceReadSerializer only shows this to the
     # device's actual mesh owner
     admin_keys_b64 = models.JSONField(default=list, blank=True, validators=[_max_three_admin_keys])
-    # Optional Blueprint
-    postprocessing_blueprint = models.ForeignKey(
-        PostprocessingBlueprint, on_delete=models.SET_NULL, null=True, blank=True, related_name="devices"
-    )
     reading_interval_seconds = models.PositiveIntegerField(null=True, blank=True)
     publish_interval_seconds = models.PositiveIntegerField(null=True, blank=True)
     # The absence detector is device-wide rather than per channel, so it is
@@ -541,6 +567,10 @@ class Measurement(models.Model):
     # the range detector is a not checked for this channel; set/cleared together.
     valid_min = models.FloatField(null=True, blank=True)
     valid_max = models.FloatField(null=True, blank=True)
+    # The postprocessing computing this channel; null for anything the device reports.
+    produced_by = models.ForeignKey(
+        "DevicePostprocessing", on_delete=models.CASCADE, null=True, blank=True, related_name="outputs"
+    )
     first_seen = models.DateTimeField(auto_now_add=True)
     last_seen = models.DateTimeField(null=True, blank=True)
 
@@ -555,3 +585,73 @@ class Measurement(models.Model):
 
     def __str__(self) -> str:
         return f"{self.measurement_type} on {self.device_telemetry_variant.device}"
+
+
+class DevicePostprocessing(models.Model):
+    """A blueprint version applied to one device, with its own wiring and calibration."""
+
+    id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
+    device = models.ForeignKey(Device, on_delete=models.CASCADE, related_name="postprocessings")
+    # RESTRICT rather than PROTECT so deleting the owner of both still cascades.
+    blueprint_version = models.ForeignKey(BlueprintVersion, on_delete=models.RESTRICT, related_name="attachments")
+    # Prepended to every derived field name, so one blueprint can run twice on a device.
+    output_prefix = models.CharField(max_length=64, blank=True, default="")
+    # Null falls back to half the device's reading interval.
+    tolerance_seconds = models.PositiveIntegerField(null=True, blank=True)
+    is_enabled = models.BooleanField(default=False)
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        db_table = "device_postprocessings"
+
+    def __str__(self) -> str:
+        return f"{self.blueprint_version} on {self.device}"
+
+
+class PostprocessingInputBinding(models.Model):
+    """Wires one blueprint input slot to a channel of the device."""
+
+    id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
+    device_postprocessing = models.ForeignKey(
+        DevicePostprocessing, on_delete=models.CASCADE, related_name="input_bindings"
+    )
+    slot = models.CharField(max_length=64)
+    # RESTRICT keeps a postprocessing from losing an input that another one
+    # produces, while still letting a whole device be deleted.
+    measurement = models.ForeignKey(Measurement, on_delete=models.RESTRICT, related_name="consumers")
+
+    class Meta:
+        db_table = "postprocessing_input_bindings"
+        constraints = [
+            models.UniqueConstraint(fields=["device_postprocessing", "slot"], name="uq_input_binding_slot")
+        ]
+
+    def __str__(self) -> str:
+        return f"{self.slot} <- {self.measurement.measurement_type}"
+
+
+class StepCalibration(models.Model):
+    """Calibration of one step on one device, in force from `valid_from`.
+
+    Append-only history, so reprocessing old data applies the calibration that
+    was in force at the time.
+    """
+
+    id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
+    device_postprocessing = models.ForeignKey(
+        DevicePostprocessing, on_delete=models.CASCADE, related_name="calibrations"
+    )
+    step_key = models.SlugField(max_length=64)
+    # A calibration only applies to a step still running the same algorithm.
+    function_name = models.CharField(max_length=128)
+    params = models.JSONField(default=dict)
+    valid_from = models.DateTimeField()
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        db_table = "step_calibrations"
+        ordering = ["step_key", "valid_from"]
+
+    def __str__(self) -> str:
+        return f"{self.step_key} from {self.valid_from:%Y-%m-%d %H:%M}"

@@ -34,9 +34,13 @@ def measurement_alarms_kafka_key(device: Device, channel: str) -> str:
     return f"{device.mesh_id}:{device.device_id}:{channel}"
 
 
+def postprocessing_kafka_key(device: Device) -> str:
+    return f"{device.mesh_id}:{device.device_id}"
+
+
 class KeyEventPublisher:
-    """Publishes to mesh.keys.v1, mesh.node_rejections.v1 and
-    mesh.quality_config.v1."""
+    """Publishes to mesh.keys.v1, mesh.node_rejections.v1,
+    mesh.quality_config.v1 and mesh.postprocessing_config.v1."""
 
     def __init__(
         self,
@@ -44,10 +48,12 @@ class KeyEventPublisher:
         keys_topic: str,
         node_rejections_topic: str,
         quality_config_topic: str,
+        postprocessing_config_topic: str,
     ):
         self._keys_topic = keys_topic
         self._node_rejections_topic = node_rejections_topic
         self._quality_config_topic = quality_config_topic
+        self._postprocessing_config_topic = postprocessing_config_topic
         self._producer = KafkaProducer(
             bootstrap_servers=bootstrap_servers,
             value_serializer=lambda v: json.dumps(v).encode("utf-8"),
@@ -186,6 +192,23 @@ class KeyEventPublisher:
         future.get(timeout=10)
         log.info("Published device intervals", key=key)
 
+    def publish_postprocessing_plans(self, device: Device, plans: list[dict]) -> None:
+        """Replace every plan the stream job runs for this device. An empty list
+        stops postprocessing on it."""
+        key = postprocessing_kafka_key(device)
+        event = {
+            "kind": "postprocessing_plans",
+            "key": key,
+            "mesh_id": str(device.mesh_id),
+            "device_id": device.device_id,
+            "plans": plans,
+            "op": "upsert" if plans else "delete",
+            "updated_at": datetime.now(timezone.utc).isoformat(),
+        }
+        future = self._producer.send(self._postprocessing_config_topic, key=key, value=event)
+        future.get(timeout=10)
+        log.info("Published postprocessing plans", key=key, plans=len(plans))
+
     def close(self) -> None:
         self._producer.flush()
         self._producer.close()
@@ -205,6 +228,9 @@ def get_publisher() -> KeyEventPublisher:
                 "REGISTRY__NODE_REJECTIONS_KAFKA_TOPIC", "mesh.node_rejections.v1"
             ),
             quality_config_topic=os.environ.get("REGISTRY__QUALITY_CONFIG_KAFKA_TOPIC", "mesh.quality_config.v1"),
+            postprocessing_config_topic=os.environ.get(
+                "REGISTRY__POSTPROCESSING_CONFIG_KAFKA_TOPIC", "mesh.postprocessing_config.v1"
+            ),
         )
     return _publisher
 

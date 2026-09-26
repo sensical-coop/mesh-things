@@ -4,8 +4,10 @@ from django.contrib.auth.admin import UserAdmin
 from common import node_ids
 
 from .models import (
+    BlueprintVersion,
     DataDeletion,
     Device,
+    DevicePostprocessing,
     DeviceTelemetryVariant,
     Measurement,
     MeasurementType,
@@ -13,8 +15,10 @@ from .models import (
     OperatorRequest,
     Owner,
     PostprocessingBlueprint,
+    PostprocessingInputBinding,
     PostprocessingStep,
     Source,
+    StepCalibration,
     TelemetryVariant,
     TelemetryVariantMeasurement,
     TermsAcceptance,
@@ -143,20 +147,73 @@ class MeasurementTypeAdmin(admin.ModelAdmin):
     search_fields = ("payload_kind", "field_name", "display_name")
 
 
-class PostprocessingStepInline(admin.TabularInline):
-    # Steps are only meaningful as part of their blueprint,
-    # so they're edited inline rather than as a standalone admin model.
-    model = PostprocessingStep
+class _ReadOnlyInline(admin.TabularInline):
     extra = 0
+
+    def has_add_permission(self, request, obj=None):
+        return False
+
+    def has_change_permission(self, request, obj=None):
+        return False
+
+    def has_delete_permission(self, request, obj=None):
+        return False
+
+
+class BlueprintVersionInline(_ReadOnlyInline):
+    model = BlueprintVersion
+    fields = ("number", "notes", "created_at")
+    readonly_fields = fields
+    show_change_link = True
 
 
 @admin.register(PostprocessingBlueprint)
 class PostprocessingBlueprintAdmin(admin.ModelAdmin):
-    list_display = ("name", "owner", "created_at", "updated_at")
+    """Versions are immutable and created through the API, which validates their steps."""
+
+    list_display = ("name", "owner", "is_public", "created_at", "updated_at")
     list_select_related = ("owner",)
+    list_filter = ("is_public",)
     readonly_fields = ("id", "created_at", "updated_at")
     search_fields = ("name", "owner__email")
+    inlines = [BlueprintVersionInline]
+
+
+class PostprocessingStepInline(_ReadOnlyInline):
+    model = PostprocessingStep
+    fields = ("order", "key", "function_name", "inputs", "params", "outputs")
+    readonly_fields = fields
+
+
+@admin.register(BlueprintVersion)
+class BlueprintVersionAdmin(_ReadOnlyAdmin):
+    list_display = ("blueprint", "number", "created_at")
+    list_select_related = ("blueprint",)
+    search_fields = ("blueprint__name",)
     inlines = [PostprocessingStepInline]
+
+
+class PostprocessingInputBindingInline(_ReadOnlyInline):
+    model = PostprocessingInputBinding
+    fields = ("slot", "measurement")
+    readonly_fields = fields
+
+
+class StepCalibrationInline(_ReadOnlyInline):
+    model = StepCalibration
+    fields = ("step_key", "function_name", "params", "valid_from", "created_at")
+    readonly_fields = fields
+
+
+@admin.register(DevicePostprocessing)
+class DevicePostprocessingAdmin(_ReadOnlyAdmin):
+    """Read-only: changes must go through the API so the stream job receives them."""
+
+    list_display = ("device", "blueprint_version", "output_prefix", "is_enabled", "updated_at")
+    list_select_related = ("device", "blueprint_version__blueprint")
+    list_filter = ("is_enabled",)
+    search_fields = ("device__device_id", "device__label", "blueprint_version__blueprint__name")
+    inlines = [PostprocessingInputBindingInline, StepCalibrationInline]
 
 
 @admin.register(TelemetryVariant)

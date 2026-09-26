@@ -40,10 +40,10 @@ class QualityWorkerFieldContractTests(SeededCatalogTestCase):
         self.device = self.create_node(self.owner, self.mesh, device_id=7)
 
     def test_devices_carry_what_scan_devices_and_the_tasks_read(self):
-        """The five keys tasks.py reads off a device row."""
+        """The keys tasks.py reads off a device row."""
         device = self.client.get("/devices", **self.auth_headers(self.owner)).json()[0]
 
-        for field in ("uuid", "mesh_id", "node_id", "reading_interval_seconds", "postprocessing_blueprint_id"):
+        for field in ("uuid", "mesh_id", "node_id", "reading_interval_seconds"):
             with self.subTest(field=field):
                 self.assertIn(field, device)
 

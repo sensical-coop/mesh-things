@@ -50,6 +50,7 @@ services:
           "$${REGISTRY__KAFKA_TOPIC:-mesh.keys.v1}" \
           "$${REGISTRY__NODE_REJECTIONS_KAFKA_TOPIC:-mesh.node_rejections.v1}" \
           "$${REGISTRY__QUALITY_CONFIG_KAFKA_TOPIC:-mesh.quality_config.v1}" \
+          "$${REGISTRY__POSTPROCESSING_CONFIG_KAFKA_TOPIC:-mesh.postprocessing_config.v1}" \
           "$$CALIBRATION__KAFKA_TOPIC" \
         ; do
           /opt/kafka/bin/kafka-topics.sh --bootstrap-server kafka:29092 \

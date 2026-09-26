@@ -41,6 +41,19 @@ urlpatterns = [
         "devices/<uuid:device_uuid>/measurements/<uuid:measurement_id>",
         views.DeviceMeasurementDetailView.as_view(),
     ),
+    path("devices/<uuid:device_uuid>/postprocessings", views.DevicePostprocessingListView.as_view()),
+    path(
+        "devices/<uuid:device_uuid>/postprocessings/<uuid:postprocessing_id>",
+        views.DevicePostprocessingDetailView.as_view(),
+    ),
+    path(
+        "devices/<uuid:device_uuid>/postprocessings/<uuid:postprocessing_id>/calibrations",
+        views.DevicePostprocessingCalibrationsView.as_view(),
+    ),
+    path(
+        "devices/<uuid:device_uuid>/postprocessings/<uuid:postprocessing_id>/calibrations/<uuid:calibration_id>",
+        views.DevicePostprocessingCalibrationDetailView.as_view(),
+    ),
     path("measurements", views.MeasurementTypeListCreateView.as_view()),
     path("measurements/<uuid:measurement_id>", views.MeasurementTypeDetailView.as_view()),
     path("telemetry-variants", views.TelemetryVariantListCreateView.as_view()),
@@ -57,4 +70,12 @@ urlpatterns = [
     path("detectors", views.DetectorListView.as_view()),
     path("postprocessing-blueprints", views.PostprocessingBlueprintListCreateView.as_view()),
     path("postprocessing-blueprints/<uuid:blueprint_id>", views.PostprocessingBlueprintDetailView.as_view()),
+    path(
+        "postprocessing-blueprints/<uuid:blueprint_id>/versions",
+        views.BlueprintVersionListCreateView.as_view(),
+    ),
+    path(
+        "postprocessing-blueprints/<uuid:blueprint_id>/versions/<int:number>",
+        views.BlueprintVersionDetailView.as_view(),
+    ),
 ]
