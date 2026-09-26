@@ -48,6 +48,10 @@ For local development, a special compose configuration is used with: `docker-com
 docker compose -f docker-compose.yml -f docker-compose.dev.yml up -d
 ```
 
+## Documentation
+
+Product overview, service map, data model, and feature list live in [`docs/`](docs/README.md).
+
 ## Work in progress
 
 This repository is still WIP. Documentation and licensing is on-going.
