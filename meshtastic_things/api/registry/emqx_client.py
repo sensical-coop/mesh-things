@@ -47,9 +47,12 @@ class EmqxClient:
             "proto_ver": "v5",
             "pool_size": POOL_SIZE,
             "ssl": {"enable": source.ssl},
-            "username": source.username or "",
-            "password": source.password or "",
         }
+        # Left out rather than sent empty, so EMQX connects without credentials.
+        if source.username:
+            connector["username"] = source.username
+        if source.password:
+            connector["password"] = source.password
         self._upsert(f"/connectors/mqtt:{name}", "/connectors", connector, {"type": "mqtt", "name": name})
         bridge = {"connector": name, "parameters": {"topic": source.topic, "qos": source.qos}}
         self._upsert(f"/sources/mqtt:{name}", "/sources", bridge, {"type": "mqtt", "name": name})
@@ -85,6 +88,17 @@ class EmqxClient:
             return "missing"
         resp.raise_for_status()
         return resp.json().get("status", "unknown")
+
+    def source_statuses(self) -> dict[str, str]:
+        """Connection status of every source in this instance's namespace, in one call."""
+        resp = self._request("GET", "/sources")
+        resp.raise_for_status()
+        statuses = {}
+        for item in resp.json():
+            source_id = sources.source_id_from_resource_name(item.get("name", ""))
+            if source_id:
+                statuses[source_id] = item.get("status", "unknown")
+        return statuses
 
     def managed_source_ids(self) -> set[str]:
         """Ids of every source with any resource in this instance's namespace."""

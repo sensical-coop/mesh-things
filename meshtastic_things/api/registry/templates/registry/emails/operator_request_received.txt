@@ -1,0 +1,12 @@
+Hi {{ name }},
+
+{{ requester_name }} ({{ requester_email }}) has asked to become an operator on
+Mesh Things. Operators can bridge remote MQTT brokers into this instance.
+
+Their reason:
+
+{{ reason }}
+
+Review the request and approve or reject it at:
+
+{{ request_link }}

@@ -1,7 +1,7 @@
 from registry.auth import hash_api_key
 from registry.models import Device
 
-from .helpers import RegistryTestCase
+from .helpers import SIGNUP_TERMS, RegistryTestCase
 
 
 class OwnerCrudTests(RegistryTestCase):
@@ -19,7 +19,7 @@ class OwnerCrudTests(RegistryTestCase):
 
     def test_create_owner_duplicate_email_conflict(self):
         self.create_owner(email="dup@example.com")
-        resp = self.client.post("/owners", {"name": "Bob", "email": "dup@example.com", "password": "Correct-Horse-Battery-42"}, format="json")
+        resp = self.client.post("/owners", {**SIGNUP_TERMS, "name": "Bob", "email": "dup@example.com", "password": "Correct-Horse-Battery-42"}, format="json")
         self.assertEqual(resp.status_code, 409)
 
     def test_owner_crud(self):
@@ -126,6 +126,7 @@ class OwnerFullRecordFieldTests(RegistryTestCase):
         "last_login",
         "name",
         "role",
+        "terms_accepted_version",
     ]
 
     def test_profile_carries_exactly_the_documented_fields(self):
@@ -219,7 +220,7 @@ class OwnerSuperuserDirectoryTests(RegistryTestCase):
     def test_detail_of_an_unverified_owner_reports_it(self):
         resp = self.client.post(
             "/owners",
-            {"name": "Iris", "email": "iris-directory@example.com", "password": self.DEFAULT_PASSWORD},
+            {**SIGNUP_TERMS, "name": "Iris", "email": "iris-directory@example.com", "password": self.DEFAULT_PASSWORD},
             format="json",
         )
         unverified_id = resp.json()["id"]

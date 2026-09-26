@@ -291,6 +291,7 @@ DJANGO_SERVICES = {
     "registry_device_consumer": "api_project.settings",
     "registry_sensor_discovery_consumer": "api_project.settings",
     "registry_quality_alarms_consumer": "api_project.settings",
+    "registry_data_lifecycle": "api_project.settings",
     "readings_api": "api_project.settings",
 }
 
@@ -302,6 +303,7 @@ APP_ROLES = {
     "registry_device_consumer": "registry",
     "registry_sensor_discovery_consumer": "registry",
     "registry_quality_alarms_consumer": "registry",
+    "registry_data_lifecycle": "registry",
     "readings_api": "readings",
 }
 

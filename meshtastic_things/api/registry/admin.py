@@ -4,17 +4,20 @@ from django.contrib.auth.admin import UserAdmin
 from common import node_ids
 
 from .models import (
+    DataDeletion,
     Device,
     DeviceTelemetryVariant,
     Measurement,
     MeasurementType,
     Mesh,
+    OperatorRequest,
     Owner,
     PostprocessingBlueprint,
     PostprocessingStep,
     Source,
     TelemetryVariant,
     TelemetryVariantMeasurement,
+    TermsAcceptance,
 )
 
 @admin.register(Owner)
@@ -62,6 +65,45 @@ class SourceAdmin(admin.ModelAdmin):
 
     def has_delete_permission(self, request, obj=None):
         return False
+
+
+class _ReadOnlyAdmin(admin.ModelAdmin):
+    def has_add_permission(self, request):
+        return False
+
+    def has_change_permission(self, request, obj=None):
+        return False
+
+    def has_delete_permission(self, request, obj=None):
+        return False
+
+
+@admin.register(TermsAcceptance)
+class TermsAcceptanceAdmin(_ReadOnlyAdmin):
+    """Read-only: acceptances are append-only evidence."""
+
+    list_display = ("acceptor_email", "kind", "mesh", "source", "terms_version", "locale", "accepted_at", "expires_at")
+    list_filter = ("kind", "terms_version", "locale")
+    search_fields = ("acceptor_email", "acceptor_name")
+
+
+@admin.register(DataDeletion)
+class DataDeletionAdmin(_ReadOnlyAdmin):
+    """Read-only: the lifecycle job owns these rows."""
+
+    list_display = ("mesh_id", "reason", "status", "requested_at", "delete_after", "completed_at", "attempts")
+    list_filter = ("status", "reason")
+    search_fields = ("mesh_id", "source_id")
+
+
+@admin.register(OperatorRequest)
+class OperatorRequestAdmin(_ReadOnlyAdmin):
+    """Read-only: deciding through the API sets the role and emails the requester."""
+
+    list_display = ("owner", "status", "created_at", "decided_by", "decided_at")
+    list_filter = ("status",)
+    list_select_related = ("owner", "decided_by")
+    search_fields = ("owner__email", "owner__name")
 
 
 @admin.register(Device)

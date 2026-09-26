@@ -1,3 +1,4 @@
+import json
 import uuid
 from io import StringIO
 from unittest.mock import patch
@@ -5,9 +6,10 @@ from unittest.mock import patch
 from django.core.management import CommandError, call_command
 from django.test import override_settings
 
-from registry.models import Mesh, Owner, Source
+from registry.models import Mesh, Owner, Source, TermsKind
+from registry.terms import VERSIONS
 
-from .helpers import RegistryTestCase
+from .helpers import MESH_TERMS, RegistryTestCase
 
 
 class SourcePermissionTests(RegistryTestCase):
@@ -19,7 +21,8 @@ class SourcePermissionTests(RegistryTestCase):
 
     def test_a_member_cannot_create_a_source(self):
         resp = self.client.post(
-            "/sources", {"server": "r.example.org:1883", "topic": "msh/#"}, format="json",
+            "/sources", {"server": "r.example.org:1883", "topic": "msh/#", "terms_version": VERSIONS[TermsKind.SOURCE]},
+            format="json",
             **self.auth_headers(self.member),
         )
 
@@ -40,11 +43,11 @@ class SourcePermissionTests(RegistryTestCase):
 
         self.create_source(admin)
 
-    def test_any_verified_owner_can_list_and_read_sources(self):
+    def test_a_member_cannot_list_or_read_sources(self):
         source = self.create_source(self.operator)
 
-        self.assertEqual([s["id"] for s in self.client.get("/sources", **self.auth_headers(self.member)).json()], [source["id"]])
-        self.assertEqual(self.client.get(f"/sources/{source['id']}", **self.auth_headers(self.member)).status_code, 200)
+        self.assertEqual(self.client.get("/sources", **self.auth_headers(self.member)).status_code, 403)
+        self.assertEqual(self.client.get(f"/sources/{source['id']}", **self.auth_headers(self.member)).status_code, 403)
 
     def test_a_member_cannot_update_or_delete_a_source(self):
         source = self.create_source(self.operator)
@@ -54,6 +57,38 @@ class SourcePermissionTests(RegistryTestCase):
             403,
         )
         self.assertEqual(self.client.delete(f"/sources/{source['id']}", **self.auth_headers(self.member)).status_code, 403)
+
+    def test_an_operator_sees_only_their_own_sources(self):
+        other = self.create_owner(name="Other operator", email="src-other-op@example.com")
+        self.promote_to_operator(other)
+        mine = self.create_source(self.operator)
+        theirs = self.create_source(other)
+
+        listed = self.client.get("/sources", **self.auth_headers(self.operator)).json()
+
+        self.assertEqual([s["id"] for s in listed], [mine["id"]])
+        self.assertEqual(self.client.get(f"/sources/{theirs['id']}", **self.auth_headers(self.operator)).status_code, 404)
+
+    def test_an_operator_cannot_update_or_delete_another_operators_source(self):
+        other = self.create_owner(name="Other operator", email="src-other-op2@example.com")
+        self.promote_to_operator(other)
+        theirs = self.create_source(other)
+        self.fake_emqx.apply_source.reset_mock()
+
+        put = self.client.put(f"/sources/{theirs['id']}", {"label": "x"}, format="json", **self.auth_headers(self.operator))
+        delete = self.client.delete(f"/sources/{theirs['id']}", **self.auth_headers(self.operator))
+
+        self.assertEqual((put.status_code, delete.status_code), (404, 404))
+        self.fake_emqx.apply_source.assert_not_called()
+        self.fake_emqx.delete_source.assert_not_called()
+
+    def test_a_superuser_sees_every_source(self):
+        admin = self.create_owner(name="Admin", email="src-admin2@example.com")
+        self.promote_to_superuser(admin)
+        source = self.create_source(self.operator)
+
+        self.assertEqual([s["id"] for s in self.client.get("/sources", **self.auth_headers(admin)).json()], [source["id"]])
+        self.assertEqual(self.client.get(f"/sources/{source['id']}", **self.auth_headers(admin)).status_code, 200)
 
     def test_sources_require_auth(self):
         self.assertEqual(self.client.get("/sources").status_code, 401)
@@ -81,7 +116,7 @@ class SourceValidationTests(RegistryTestCase):
         self.promote_to_operator(self.operator)
 
     def _post(self, **fields):
-        body = {"server": "r.example.org:1883", "topic": "msh/#", **fields}
+        body = {"server": "r.example.org:1883", "topic": "msh/#", "terms_version": VERSIONS[TermsKind.SOURCE], **fields}
         return self.client.post("/sources", body, format="json", **self.auth_headers(self.operator))
 
     def test_server_must_be_host_and_port(self):
@@ -99,7 +134,6 @@ class SourceValidationTests(RegistryTestCase):
         with patch.dict("os.environ", {"REGISTRY__EMQX_API_URL": "https://mqtt.sensical.es:18084/api/v5"}):
             self.assertEqual(self._post(server="MQTT.sensical.es:8883").status_code, 400)
         self.fake_emqx.apply_source.assert_not_called()
-
 
     @override_settings(SOURCES_BLOCKED_BROKERS=["*.meshtastic.org", "blocked.example.org:1883"])
     def test_blocked_brokers_are_rejected(self):
@@ -126,6 +160,7 @@ class SourceValidationTests(RegistryTestCase):
 
         self.assertEqual(resp.status_code, 400)
 
+
 class SourceFailurePolicyTests(RegistryTestCase):
     def setUp(self):
         super().setUp()
@@ -136,7 +171,8 @@ class SourceFailurePolicyTests(RegistryTestCase):
         self.fake_emqx.apply_source.side_effect = RuntimeError("emqx down")
 
         resp = self.client.post(
-            "/sources", {"server": "r.example.org:1883", "topic": "msh/#"}, format="json",
+            "/sources", {"server": "r.example.org:1883", "topic": "msh/#", "terms_version": VERSIONS[TermsKind.SOURCE]},
+            format="json",
             **self.auth_headers(self.operator),
         )
 
@@ -189,9 +225,10 @@ class SourceFailurePolicyTests(RegistryTestCase):
 
     def test_a_source_with_meshes_cannot_be_deleted(self):
         source = self.create_source(self.operator)
-        owner = self.create_owner(name="Owner", email="src-fail-owner@example.com")
-        mesh = self.create_mesh(owner)
-        self.client.put(f"/meshes/{mesh['id']}", {"source_id": source["id"]}, format="json", **self.auth_headers(owner))
+        mesh = self.create_mesh(self.operator)
+        self.client.put(
+            f"/meshes/{mesh['id']}", {"source_id": source["id"]}, format="json", **self.auth_headers(self.operator)
+        )
 
         resp = self.client.delete(f"/sources/{source['id']}", **self.auth_headers(self.operator))
 
@@ -214,12 +251,68 @@ class MeshSourceTests(RegistryTestCase):
         self.operator = self.create_owner(name="Operator", email="mesh-src-op@example.com")
         self.promote_to_operator(self.operator)
         self.source = self.create_source(self.operator)
-        self.owner = self.create_owner(name="Owner", email="mesh-src-owner@example.com")
+        self.owner = self.operator
+        self.member = self.create_owner(name="Member", email="mesh-src-member@example.com")
 
-    def test_a_member_can_create_a_mesh_on_a_source(self):
+    def _create_on_source(self, owner, source_id):
+        return self.client.post(
+            "/meshes",
+            {**MESH_TERMS, "channel_id": "LongFast", "psk_b64": "AQ==", "source_id": source_id},
+            format="json",
+            **self.auth_headers(owner),
+        )
+
+    def test_a_member_cannot_attach_a_mesh_to_a_source(self):
+        mesh = self.create_mesh(self.member)
+
+        created = self._create_on_source(self.member, self.source["id"])
+        updated = self.client.put(
+            f"/meshes/{mesh['id']}", {"source_id": self.source["id"]}, format="json", **self.auth_headers(self.member)
+        )
+
+        self.assertEqual((created.status_code, updated.status_code), (400, 400))
+        # Indistinguishable from a source that does not exist.
+        missing_id = str(uuid.uuid4())
+        missing = self._create_on_source(self.member, missing_id).json()
+        self.assertEqual(json.dumps(created.json()).replace(self.source["id"], missing_id), json.dumps(missing))
+
+    def test_an_operator_cannot_attach_another_operators_source(self):
+        other = self.create_owner(name="Other operator", email="mesh-src-op2@example.com")
+        self.promote_to_operator(other)
+
+        self.assertEqual(self._create_on_source(other, self.source["id"]).status_code, 400)
+
+    def test_a_superuser_can_attach_any_source(self):
+        admin = self.create_owner(name="Admin", email="mesh-src-admin@example.com")
+        self.promote_to_superuser(admin)
+
+        self.assertEqual(self._create_on_source(admin, self.source["id"]).status_code, 201)
+
+    def test_resending_the_current_source_is_accepted(self):
+        mesh = self.create_mesh(self.owner)
+        self.client.put(f"/meshes/{mesh['id']}", {"source_id": self.source["id"]}, format="json", **self.auth_headers(self.owner))
+        Owner.objects.filter(pk=self.owner["id"]).update(role="member")
+
+        resp = self.client.put(
+            f"/meshes/{mesh['id']}", {"label": "x", "source_id": self.source["id"]}, format="json",
+            **self.auth_headers(self.owner),
+        )
+
+        self.assertEqual(resp.status_code, 200)
+
+    def test_the_source_is_hidden_from_viewers_of_a_public_mesh(self):
+        mesh = self.create_mesh(self.owner)
+        self.client.put(
+            f"/meshes/{mesh['id']}", {"source_id": self.source["id"], "is_public": True}, format="json",
+            **self.auth_headers(self.owner),
+        )
+
+        self.assertNotIn("source_id", self.client.get(f"/meshes/{mesh['id']}", **self.auth_headers(self.member)).json())
+
+    def test_an_operator_can_create_a_mesh_on_their_source(self):
         resp = self.client.post(
             "/meshes",
-            {"channel_id": "LongFast", "psk_b64": "AQ==", "source_id": self.source["id"]},
+            {**MESH_TERMS, "channel_id": "LongFast", "psk_b64": "AQ==", "source_id": self.source["id"]},
             format="json",
             **self.auth_headers(self.owner),
         )
@@ -230,7 +323,7 @@ class MeshSourceTests(RegistryTestCase):
     def test_an_unknown_source_is_rejected(self):
         resp = self.client.post(
             "/meshes",
-            {"channel_id": "LongFast", "psk_b64": "AQ==", "source_id": str(uuid.uuid4())},
+            {**MESH_TERMS, "channel_id": "LongFast", "psk_b64": "AQ==", "source_id": str(uuid.uuid4())},
             format="json",
             **self.auth_headers(self.owner),
         )

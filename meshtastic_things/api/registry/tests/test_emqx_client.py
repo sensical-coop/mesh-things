@@ -100,3 +100,28 @@ class EmqxClientTests(SimpleTestCase):
         self.responses[("GET", "/rules?limit=10000")] = _response(body={"data": [{"id": f"mt-sources-src-{other}"}]})
 
         self.assertEqual(self.client.managed_source_ids(), {str(SOURCE_ID), str(other)})
+
+    def test_credentials_are_sent_when_set(self):
+        self.client.apply_source(_source())
+
+        connector = self.calls[0][2]
+        self.assertEqual((connector["username"], connector["password"]), ("u", "p"))
+
+    def test_a_removed_password_is_left_out_rather_than_sent_empty(self):
+        self.client.apply_source(_source(username=None, password=None))
+
+        connector = self.calls[0][2]
+        self.assertNotIn("username", connector)
+        self.assertNotIn("password", connector)
+
+    def test_statuses_come_from_one_call_and_skip_other_namespaces(self):
+        other = uuid.uuid4()
+        self.responses[("GET", "/sources")] = _response(
+            body=[
+                {"name": NAME, "status": "connected"},
+                {"name": f"mt-sources-dev-src-{other}", "status": "disconnected"},
+            ]
+        )
+
+        self.assertEqual(self.client.source_statuses(), {str(SOURCE_ID): "connected"})
+        self.assertEqual(len(self.calls), 1)

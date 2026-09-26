@@ -7,7 +7,8 @@ from registry.models import Source
 class Command(BaseCommand):
     help = (
         "Reconcile EMQX with the sources in Postgres: re-apply every source's bridge and remove "
-        "bridges in this instance's namespace that no source owns. Run after EMQX is redeployed."
+        "bridges in this instance's namespace that no source owns. Paused sources count as having "
+        "no bridge. Run after EMQX is redeployed."
     )
 
     def add_arguments(self, parser):
@@ -16,7 +17,8 @@ class Command(BaseCommand):
     def handle(self, *args, check: bool, **options):
         client = get_emqx_client()
         managed = client.managed_source_ids()
-        wanted = {str(source.id): source for source in Source.objects.all()}
+        # A paused source's bridge was removed on purpose when its terms lapsed.
+        wanted = {str(source.id): source for source in Source.objects.filter(paused_at__isnull=True)}
         missing = sorted(set(wanted) - managed)
         orphaned = sorted(managed - set(wanted))
 

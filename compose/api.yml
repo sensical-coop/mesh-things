@@ -116,3 +116,19 @@ services:
       registry_api:
         condition: service_healthy
     command: ["python", "manage.py", "consume_quality_alarms"]
+
+  # Terms renewal notices, pausing lapsed sources, and deleting readings after the grace period.
+  registry_data_lifecycle:
+    <<: *registry-role
+    mem_limit: 256m
+    container_name: registry-data-lifecycle
+    depends_on:
+      kafka:
+        condition: service_healthy
+      postgres:
+        condition: service_healthy
+      influxdb:
+        condition: service_healthy
+      registry_api:
+        condition: service_healthy
+    command: ["python", "manage.py", "run_data_lifecycle"]

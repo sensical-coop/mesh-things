@@ -8,7 +8,7 @@ from django.utils import timezone
 from registry.models import Owner
 from registry.throttling import ResendVerificationThrottle
 
-from .helpers import RegistryTestCase
+from .helpers import MESH_TERMS, SIGNUP_TERMS, RegistryTestCase
 
 def _extract_token(email) -> str:
     match = re.search(r"token=(\S+)", email.body)
@@ -18,7 +18,7 @@ def _extract_token(email) -> str:
 
 class SignupVerificationTests(RegistryTestCase):
     def test_signup_creates_unverified_owner_and_sends_one_email(self):
-        resp = self.client.post("/owners", {"name": "Alice", "email": "verify-a@example.com", "password": "Correct-Horse-Battery-42"}, format="json")
+        resp = self.client.post("/owners", {**SIGNUP_TERMS, "name": "Alice", "email": "verify-a@example.com", "password": "Correct-Horse-Battery-42"}, format="json")
 
         self.assertEqual(resp.status_code, 201, resp.content)
         body = resp.json()
@@ -30,7 +30,7 @@ class SignupVerificationTests(RegistryTestCase):
 
     def test_signup_email_send_failure_does_not_roll_back_account_creation(self):
         with patch("registry.views.send_verification_email", side_effect=RuntimeError("smtp down")):
-            resp = self.client.post("/owners", {"name": "Bob", "email": "verify-b@example.com", "password": "Correct-Horse-Battery-42"}, format="json")
+            resp = self.client.post("/owners", {**SIGNUP_TERMS, "name": "Bob", "email": "verify-b@example.com", "password": "Correct-Horse-Battery-42"}, format="json")
 
         self.assertEqual(resp.status_code, 201, resp.content)
         self.assertTrue(Owner.objects.filter(email="verify-b@example.com").exists())
@@ -40,7 +40,7 @@ class SignupVerificationTests(RegistryTestCase):
 
 class VerifyEmailTests(RegistryTestCase):
     def test_verify_with_valid_token_activates_owner(self):
-        self.client.post("/owners", {"name": "Carol", "email": "verify-c@example.com", "password": "Correct-Horse-Battery-42"}, format="json")
+        self.client.post("/owners", {**SIGNUP_TERMS, "name": "Carol", "email": "verify-c@example.com", "password": "Correct-Horse-Battery-42"}, format="json")
         token = _extract_token(mail.outbox[0])
 
         resp = self.client.get(f"/owners/verify-email?token={token}")
@@ -51,24 +51,24 @@ class VerifyEmailTests(RegistryTestCase):
         self.assertIsNotNone(owner.email_verified_at)
 
     def test_verified_owner_gains_access_to_gated_route(self):
-        resp = self.client.post("/owners", {"name": "Dave", "email": "verify-d@example.com", "password": "Correct-Horse-Battery-42"}, format="json")
+        resp = self.client.post("/owners", {**SIGNUP_TERMS, "name": "Dave", "email": "verify-d@example.com", "password": "Correct-Horse-Battery-42"}, format="json")
         owner = resp.json()
         token = _extract_token(mail.outbox[0])
 
         blocked = self.client.post(
-            "/meshes", {"channel_id": "X", "psk_b64": "AAAA"}, format="json", **self.auth_headers(owner)
+            "/meshes", {**MESH_TERMS, "channel_id": "X", "psk_b64": "AAAA"}, format="json", **self.auth_headers(owner)
         )
         self.assertEqual(blocked.status_code, 403)
 
         self.client.get(f"/owners/verify-email?token={token}")
 
         allowed = self.client.post(
-            "/meshes", {"channel_id": "X", "psk_b64": "AAAA"}, format="json", **self.auth_headers(owner)
+            "/meshes", {**MESH_TERMS, "channel_id": "X", "psk_b64": "AAAA"}, format="json", **self.auth_headers(owner)
         )
         self.assertEqual(allowed.status_code, 201, allowed.content)
 
     def test_unverified_owner_blocked_with_403_on_gated_routes(self):
-        resp = self.client.post("/owners", {"name": "Eve", "email": "verify-e@example.com", "password": "Correct-Horse-Battery-42"}, format="json")
+        resp = self.client.post("/owners", {**SIGNUP_TERMS, "name": "Eve", "email": "verify-e@example.com", "password": "Correct-Horse-Battery-42"}, format="json")
         owner = resp.json()
 
         self.assertEqual(
@@ -88,7 +88,7 @@ class VerifyEmailTests(RegistryTestCase):
         )
 
     def test_exempted_routes_stay_reachable_while_unverified(self):
-        resp = self.client.post("/owners", {"name": "Frank", "email": "verify-f@example.com", "password": "Correct-Horse-Battery-42"}, format="json")
+        resp = self.client.post("/owners", {**SIGNUP_TERMS, "name": "Frank", "email": "verify-f@example.com", "password": "Correct-Horse-Battery-42"}, format="json")
         owner = resp.json()
 
         self.assertEqual(self.client.get("/owners/me", **self.auth_headers(owner)).status_code, 200)
@@ -104,12 +104,12 @@ class VerifyEmailTests(RegistryTestCase):
     def test_public_and_anon_routes_unaffected(self):
         self.assertEqual(self.client.get("/health").status_code, 200)
         self.assertEqual(self.client.get("/owners").status_code, 200)
-        resp = self.client.post("/owners", {"name": "Grace", "email": "verify-g@example.com", "password": "Correct-Horse-Battery-42"}, format="json")
+        resp = self.client.post("/owners", {**SIGNUP_TERMS, "name": "Grace", "email": "verify-g@example.com", "password": "Correct-Horse-Battery-42"}, format="json")
         self.assertEqual(resp.status_code, 201)
         self.assertEqual(self.client.get(f"/owners/{resp.json()['id']}").status_code, 200)
 
     def test_reverifying_already_verified_link_is_idempotent(self):
-        self.client.post("/owners", {"name": "Hank", "email": "verify-h@example.com", "password": "Correct-Horse-Battery-42"}, format="json")
+        self.client.post("/owners", {**SIGNUP_TERMS, "name": "Hank", "email": "verify-h@example.com", "password": "Correct-Horse-Battery-42"}, format="json")
         token = _extract_token(mail.outbox[0])
         self.client.get(f"/owners/verify-email?token={token}")
 
@@ -129,7 +129,7 @@ class VerifyEmailTests(RegistryTestCase):
         self.assertEqual(resp.status_code, 400)
 
     def test_expired_token_returns_400(self):
-        self.client.post("/owners", {"name": "Ivy", "email": "verify-i@example.com", "password": "Correct-Horse-Battery-42"}, format="json")
+        self.client.post("/owners", {**SIGNUP_TERMS, "name": "Ivy", "email": "verify-i@example.com", "password": "Correct-Horse-Battery-42"}, format="json")
         token = _extract_token(mail.outbox[0])
         owner = Owner.objects.get(email="verify-i@example.com")
         owner.email_verification_sent_at = timezone.now() - timedelta(hours=25)
@@ -142,7 +142,7 @@ class VerifyEmailTests(RegistryTestCase):
 
 class ResendVerificationTests(RegistryTestCase):
     def test_resend_issues_fresh_token_invalidating_old_one(self):
-        resp = self.client.post("/owners", {"name": "Jack", "email": "verify-j@example.com", "password": "Correct-Horse-Battery-42"}, format="json")
+        resp = self.client.post("/owners", {**SIGNUP_TERMS, "name": "Jack", "email": "verify-j@example.com", "password": "Correct-Horse-Battery-42"}, format="json")
         owner = resp.json()
         old_token = _extract_token(mail.outbox[0])
 
@@ -155,7 +155,7 @@ class ResendVerificationTests(RegistryTestCase):
         self.assertEqual(self.client.get(f"/owners/verify-email?token={new_token}").status_code, 200)
 
     def test_resend_is_noop_once_verified(self):
-        resp = self.client.post("/owners", {"name": "Kim", "email": "verify-k@example.com", "password": "Correct-Horse-Battery-42"}, format="json")
+        resp = self.client.post("/owners", {**SIGNUP_TERMS, "name": "Kim", "email": "verify-k@example.com", "password": "Correct-Horse-Battery-42"}, format="json")
         owner = resp.json()
         token = _extract_token(mail.outbox[0])
         self.client.get(f"/owners/verify-email?token={token}")
@@ -166,7 +166,7 @@ class ResendVerificationTests(RegistryTestCase):
         self.assertEqual(len(mail.outbox), 1)
 
     def test_resend_requires_auth_but_not_verification(self):
-        resp = self.client.post("/owners", {"name": "Liam", "email": "verify-l@example.com", "password": "Correct-Horse-Battery-42"}, format="json")
+        resp = self.client.post("/owners", {**SIGNUP_TERMS, "name": "Liam", "email": "verify-l@example.com", "password": "Correct-Horse-Battery-42"}, format="json")
         owner = resp.json()
 
         self.assertEqual(self.client.post("/owners/me/resend-verification").status_code, 401)
@@ -175,7 +175,7 @@ class ResendVerificationTests(RegistryTestCase):
         )
 
     def test_resend_send_failure_returns_502(self):
-        resp = self.client.post("/owners", {"name": "Mona", "email": "verify-m@example.com", "password": "Correct-Horse-Battery-42"}, format="json")
+        resp = self.client.post("/owners", {**SIGNUP_TERMS, "name": "Mona", "email": "verify-m@example.com", "password": "Correct-Horse-Battery-42"}, format="json")
         owner = resp.json()
 
         with patch("registry.views.send_verification_email", side_effect=RuntimeError("smtp down")):
@@ -184,7 +184,7 @@ class ResendVerificationTests(RegistryTestCase):
         self.assertEqual(resend.status_code, 502)
 
     def test_resend_throttled_after_limit(self):
-        resp = self.client.post("/owners", {"name": "Nina", "email": "verify-n@example.com", "password": "Correct-Horse-Battery-42"}, format="json")
+        resp = self.client.post("/owners", {**SIGNUP_TERMS, "name": "Nina", "email": "verify-n@example.com", "password": "Correct-Horse-Battery-42"}, format="json")
         owner = resp.json()
 
         with patch.object(ResendVerificationThrottle, "rate", "2/hour", create=True):
@@ -211,7 +211,7 @@ class EmailChangeResetsVerificationTests(RegistryTestCase):
         self.assertIn("verify-o-new@example.com", mail.outbox[0].to)
 
         blocked = self.client.post(
-            "/meshes", {"channel_id": "X", "psk_b64": "AAAA"}, format="json", **self.auth_headers(owner)
+            "/meshes", {**MESH_TERMS, "channel_id": "X", "psk_b64": "AAAA"}, format="json", **self.auth_headers(owner)
         )
         self.assertEqual(blocked.status_code, 403)
 
@@ -252,7 +252,7 @@ class CreateOwnerHelperTests(RegistryTestCase):
         owner = self.create_owner()
 
         resp = self.client.post(
-            "/meshes", {"channel_id": "X", "psk_b64": "AAAA"}, format="json", **self.auth_headers(owner)
+            "/meshes", {**MESH_TERMS, "channel_id": "X", "psk_b64": "AAAA"}, format="json", **self.auth_headers(owner)
         )
 
         self.assertEqual(resp.status_code, 201, resp.content)

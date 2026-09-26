@@ -11,7 +11,7 @@ from registry.management.commands.consume_quality_alarms import (
 )
 from registry.models import Device, Mesh, Owner
 
-from .helpers import RegistryTestCase
+from .helpers import SIGNUP_TERMS, RegistryTestCase
 
 NOW = 1_800_000_000.0
 
@@ -251,7 +251,7 @@ class QualityAlarmRoutingTests(RegistryTestCase):
         _, mesh = self._device()
         unverified = self.client.post(
             "/owners",
-            {"name": "Unverified", "email": "unverified@example.com", "password": self.DEFAULT_PASSWORD},
+            {**SIGNUP_TERMS, "name": "Unverified", "email": "unverified@example.com", "password": self.DEFAULT_PASSWORD},
             format="json",
         ).json()
         mesh_row = Mesh.objects.get(pk=uuid.UUID(mesh["id"]))

@@ -1,14 +1,19 @@
 import uuid
 from io import StringIO
-from unittest.mock import MagicMock
+from unittest.mock import MagicMock, patch
 
 from django.core.cache import cache
 from django.core.management import call_command
 from django.utils import timezone
 from rest_framework.test import APITestCase
 
-from registry import emqx_client, kafka_publisher
-from registry.models import Owner, OwnerRole
+from registry import broker_hosts, data_store, emqx_client, kafka_publisher
+from registry.models import Owner, OwnerRole, TermsKind
+from registry.terms import VERSIONS
+
+# Signing up accepts the account terms, and a mesh on the default broker its mesh terms.
+SIGNUP_TERMS = {"terms_version": VERSIONS[TermsKind.ACCOUNT]}
+MESH_TERMS = {"terms_version": VERSIONS[TermsKind.MESH]}
 
 
 class RegistryTestCase(APITestCase):
@@ -22,12 +27,21 @@ class RegistryTestCase(APITestCase):
         kafka_publisher._publisher = self.fake_publisher
         self.fake_emqx = MagicMock()
         self.fake_emqx.source_status.return_value = "connected"
+        self.fake_emqx.source_statuses.return_value = {}
         self._original_emqx = emqx_client._client
         emqx_client._client = self.fake_emqx
+        # Broker names in tests never hit DNS; tests that need an answer patch it.
+        self._resolve = patch.object(broker_hosts, "resolve", return_value=[])
+        self._resolve.start()
+        self.fake_store = MagicMock()
+        self._original_store = data_store._store
+        data_store._store = self.fake_store
 
     def tearDown(self):
         kafka_publisher._publisher = self._original_publisher
         emqx_client._client = self._original_emqx
+        data_store._store = self._original_store
+        self._resolve.stop()
         cache.clear()
         super().tearDown()
 
@@ -37,7 +51,7 @@ class RegistryTestCase(APITestCase):
         """Signs up then marks verified directly in the DB"""
         resp = self.client.post(
             "/owners",
-            {"name": name, "email": email, "password": password or self.DEFAULT_PASSWORD},
+            {**SIGNUP_TERMS, "name": name, "email": email, "password": password or self.DEFAULT_PASSWORD},
             format="json",
         )
         assert resp.status_code == 201, resp.content
@@ -58,7 +72,7 @@ class RegistryTestCase(APITestCase):
     def create_mesh(self, owner, channel_id="X", psk_b64="AAAA", label=None) -> dict:
         resp = self.client.post(
             "/meshes",
-            {"channel_id": channel_id, "psk_b64": psk_b64, "label": label},
+            {**MESH_TERMS, "channel_id": channel_id, "psk_b64": psk_b64, "label": label},
             format="json",
             **self.auth_headers(owner),
         )
@@ -94,7 +108,7 @@ class RegistryTestCase(APITestCase):
     def create_source(self, operator, server="remote.example.org:8883", topic="msh/EU_868/#", **fields) -> dict:
         resp = self.client.post(
             "/sources",
-            {"server": server, "topic": topic, **fields},
+            {"server": server, "topic": topic, "terms_version": VERSIONS[TermsKind.SOURCE], **fields},
             format="json",
             **self.auth_headers(operator),
         )

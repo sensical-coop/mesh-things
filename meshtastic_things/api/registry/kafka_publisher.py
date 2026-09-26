@@ -207,3 +207,11 @@ def get_publisher() -> KeyEventPublisher:
             quality_config_topic=os.environ.get("REGISTRY__QUALITY_CONFIG_KAFKA_TOPIC", "mesh.quality_config.v1"),
         )
     return _publisher
+
+
+def publish_gateway_state(publisher: KeyEventPublisher, device: Device, mesh: Mesh) -> None:
+    """Register an allowed gateway with the decoder, or deregister it while its mesh's ingest is paused."""
+    if mesh.ingest_paused:
+        publisher.publish_gateway_delete(device)
+    else:
+        publisher.publish_gateway_upsert(device, mesh)

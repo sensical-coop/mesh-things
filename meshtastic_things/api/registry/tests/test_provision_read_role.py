@@ -47,6 +47,17 @@ class GrantsTests(SimpleTestCase):
         assert "sources" not in TABLE_GRANTS
         assert "sources" not in COLUMN_GRANTS
 
+    def test_terms_acceptances_and_deletions_are_not_readable(self):
+        """They hold acceptors' names and emails and the deletion log; readings needs neither."""
+        for table in ("terms_acceptances", "data_deletions"):
+            assert table not in TABLE_GRANTS
+            assert table not in COLUMN_GRANTS
+
+    def test_operator_requests_are_not_readable(self):
+        """Readings never needs them, and they hold requesters' reasons."""
+        assert "operator_requests" not in TABLE_GRANTS
+        assert "operator_requests" not in COLUMN_GRANTS
+
     def test_the_connection_limit_is_set(self):
         """The cap is what stops read load exhausting the connections the registry needs;
         unlimited would make the isolation advisory."""

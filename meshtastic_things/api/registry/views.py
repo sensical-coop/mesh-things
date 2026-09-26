@@ -6,7 +6,7 @@ from django.contrib.auth import login as auth_login, logout as auth_logout
 from django.contrib.auth.password_validation import validate_password
 from django.core.cache import cache
 from django.core.exceptions import ValidationError as DjangoValidationError
-from django.db import IntegrityError
+from django.db import IntegrityError, transaction
 from django.db.models import Q
 from django.middleware.csrf import get_token as get_csrf_token
 from django.utils import timezone
@@ -20,23 +20,39 @@ from rest_framework.views import APIView
 from .auth import generate_api_key, hash_api_key
 from .authentication import OwnerResetPasswordAuthentication
 from .emailing import (
+    send_operator_request_decided_email,
+    send_operator_request_email,
     send_password_reset_email,
     send_verification_email,
 )
+from .data_lifecycle import (
+    cancel_mesh_deletions,
+    record_acceptance,
+    resume_mesh,
+    resume_source,
+    schedule_mesh_deletion,
+)
 from .emqx_client import get_emqx_client
 from .exceptions import BadGateway, Conflict
-from .kafka_publisher import get_publisher
+from .kafka_publisher import get_publisher, publish_gateway_state
 from common.algorithms import REGISTRY, discover
 from common.detectors import DETECTOR_SPECS
 
 from .models import (
+    DataDeletion,
+    DataDeletionReason,
+    DataDeletionStatus,
     Device,
     Measurement,
     MeasurementType,
     Mesh,
+    OperatorRequest,
+    OperatorRequestStatus,
     Owner,
+    OwnerRole,
     PostprocessingBlueprint,
     Source,
+    TermsKind,
     TelemetryVariant,
     TelemetryVariantMeasurement,
 )
@@ -55,6 +71,10 @@ from .serializers import (
     MeshSerializer,
     MeshUpdateSerializer,
     MetricsResponseSerializer,
+    OperatorRequestAdminSerializer,
+    OperatorRequestCreateSerializer,
+    OperatorRequestDecisionSerializer,
+    OperatorRequestSerializer,
     OwnerChangePasswordSerializer,
     OwnerCreateSerializer,
     OwnerLoginSerializer,
@@ -66,8 +86,14 @@ from .serializers import (
     OwnerUpdateSerializer,
     OwnerWithApiKeySerializer,
     PostprocessingBlueprintSerializer,
+    DataDeletionSerializer,
+    SourceCreateSerializer,
     SourceReadSerializer,
-    SourceSerializer,
+    AccountTermsAcceptanceSerializer,
+    MeshTermsAcceptanceSerializer,
+    SourceTermsAcceptanceSerializer,
+    SourceUpdateSerializer,
+    TermsSerializer,
     DeviceMeasurementSerializer,
     DeviceMeasurementUpdateSerializer,
     DetectorSerializer,
@@ -78,6 +104,8 @@ from .serializers import (
     TelemetryVariantReadSerializer,
     TelemetryVariantUpdateSerializer,
 )
+from .terms import terms as current_terms
+from .terms import terms_enforced
 from .throttling import ResendVerificationThrottle
 
 log = structlog.get_logger()
@@ -194,23 +222,33 @@ class OwnerListCreateView(APIView):
     def post(self, request):
         """Register an owner and return its API key.
 
-        The key is shown in this response and cannot be retrieved again afterwards.
+        Signing up accepts the current account terms, which are recorded. The
+        key is shown in this response and cannot be retrieved again afterwards.
         A new owner stays inactive until its email address is verified.
+
+        Args:
+            terms_version: The `version` of the account terms accepted, as
+                served by the terms endpoint. Required, and refused once the
+                terms have changed, unless the instance does not enforce terms.
+            terms_locale: Locale the terms were shown in, `en` or `es`. Defaults
+                to `en`.
         """
         serializer = OwnerCreateSerializer(data=request.data)
         serializer.is_valid(raise_exception=True)
         api_key = generate_api_key()
         verification_token = generate_api_key()
         try:
-            owner = Owner.objects.create_user(
-                email=serializer.validated_data["email"],
-                name=serializer.validated_data["name"],
-                password=serializer.validated_data["password"],
-                api_key_hash=hash_api_key(api_key),
-                is_active=False,
-                email_verification_token_hash=hash_api_key(verification_token),
-                email_verification_sent_at=timezone.now(),
-            )
+            with transaction.atomic():
+                owner = Owner.objects.create_user(
+                    email=serializer.validated_data["email"],
+                    name=serializer.validated_data["name"],
+                    password=serializer.validated_data["password"],
+                    api_key_hash=hash_api_key(api_key),
+                    is_active=False,
+                    email_verification_token_hash=hash_api_key(verification_token),
+                    email_verification_sent_at=timezone.now(),
+                )
+                record_acceptance(TermsKind.ACCOUNT, owner, serializer.validated_data["terms_locale"])
         except IntegrityError:
             raise Conflict(f"Owner with email {serializer.validated_data['email']} already exists")
         # api_key is never persisted or retrievable again
@@ -278,6 +316,128 @@ class OwnerResendVerificationView(APIView):
             log.warning("verification_email_send_failed", owner_id=str(owner.id), error=str(e))
             raise BadGateway("Failed to send verification email, try again shortly")
         return Response({"detail": "Verification email sent"})
+
+
+class OwnerOperatorRequestView(APIView):
+    permission_classes = [IsVerifiedOwner]
+
+    @extend_schema(responses=OperatorRequestSerializer)
+    def get(self, request):
+        """Return the caller's most recent operator request and its status."""
+        operator_request = request.user.operator_requests.order_by("-created_at").first()
+        if operator_request is None:
+            raise NotFound("No operator request")
+        return Response(OperatorRequestSerializer(operator_request).data)
+
+    @extend_schema(request=OperatorRequestCreateSerializer, responses={201: OperatorRequestSerializer})
+    def post(self, request):
+        """Ask for the operator role, which lets an owner create sources.
+
+        Every superuser is emailed and one of them approves or rejects the
+        request. Only one request can be pending at a time, and an owner who
+        is already an operator cannot file one. Limited to 3 requests a day.
+
+        Args:
+            reason: Why the role is needed. Shown to superusers. Required.
+        """
+        if request.user.is_operator:
+            raise Conflict("You are already an operator")
+        serializer = OperatorRequestCreateSerializer(data=request.data)
+        serializer.is_valid(raise_exception=True)
+        try:
+            with transaction.atomic():
+                operator_request = serializer.save(owner=request.user)
+        except IntegrityError:
+            raise Conflict("You already have a pending operator request")
+        try:
+            send_operator_request_email(operator_request)
+        except Exception as e:
+            # Superusers still find the request in the list.
+            log.warning("operator_request_email_failed", request_id=str(operator_request.id), error=str(e))
+        return Response(OperatorRequestSerializer(operator_request).data, status=status.HTTP_201_CREATED)
+
+
+def _get_operator_request_or_404(request_id) -> OperatorRequest:
+    try:
+        return OperatorRequest.objects.select_related("owner").get(pk=request_id)
+    except (OperatorRequest.DoesNotExist, ValueError, TypeError):
+        raise NotFound("Operator request not found")
+
+
+class OperatorRequestListView(APIView):
+    permission_classes = [IsVerifiedOwner]
+
+    @extend_schema(
+        parameters=[
+            _query(
+                "status",
+                "Restrict to one status: `pending` (the default), `approved`, `rejected`, or `all`.",
+                OpenApiTypes.STR,
+            )
+        ],
+        responses=OperatorRequestAdminSerializer(many=True),
+    )
+    def get(self, request):
+        """List operator requests, newest first. Superusers only.
+
+        Args:
+            status: `pending`, the default, `approved`, `rejected`, or `all`.
+        """
+        _require_superuser(request)
+        wanted = request.query_params.get("status", OperatorRequestStatus.PENDING)
+        qs = OperatorRequest.objects.select_related("owner").order_by("-created_at")
+        if wanted != "all":
+            if wanted not in OperatorRequestStatus.values:
+                raise ValidationError({"status": "Must be pending, approved, rejected or all."})
+            qs = qs.filter(status=wanted)
+        return Response(OperatorRequestAdminSerializer(qs, many=True).data)
+
+
+class OperatorRequestDetailView(APIView):
+    permission_classes = [IsVerifiedOwner]
+
+    @extend_schema(responses=OperatorRequestAdminSerializer)
+    def get(self, request, request_id):
+        """Return one operator request. Superusers only."""
+        _require_superuser(request)
+        return Response(OperatorRequestAdminSerializer(_get_operator_request_or_404(request_id)).data)
+
+    @extend_schema(request=OperatorRequestDecisionSerializer, responses=OperatorRequestAdminSerializer)
+    def put(self, request, request_id):
+        """Approve or reject a pending operator request. Superusers only.
+
+        Approving makes the requester an operator. The requester is emailed
+        the decision, and the decision stands even if that email fails.
+
+        Args:
+            decision: `approve` or `reject`. Required.
+            note: Message to the requester, included in the email. Optional.
+        """
+        _require_superuser(request)
+        serializer = OperatorRequestDecisionSerializer(data=request.data)
+        serializer.is_valid(raise_exception=True)
+        approve = serializer.validated_data["decision"] == "approve"
+        with transaction.atomic():
+            operator_request = (
+                OperatorRequest.objects.select_for_update().select_related("owner").filter(pk=request_id).first()
+            )
+            if operator_request is None:
+                raise NotFound("Operator request not found")
+            if operator_request.status != OperatorRequestStatus.PENDING:
+                raise Conflict(f"This request was already {operator_request.status}")
+            operator_request.status = OperatorRequestStatus.APPROVED if approve else OperatorRequestStatus.REJECTED
+            operator_request.decision_note = serializer.validated_data["note"]
+            operator_request.decided_by = request.user
+            operator_request.decided_at = timezone.now()
+            operator_request.save(update_fields=["status", "decision_note", "decided_by", "decided_at"])
+            if approve and not operator_request.owner.is_operator:
+                operator_request.owner.role = OwnerRole.OPERATOR
+                operator_request.owner.save(update_fields=["role"])
+        try:
+            send_operator_request_decided_email(operator_request)
+        except Exception as e:
+            log.warning("operator_request_decision_email_failed", request_id=str(operator_request.id), error=str(e))
+        return Response(OperatorRequestAdminSerializer(operator_request).data)
 
 
 class CsrfCookieView(APIView):
@@ -419,7 +579,11 @@ def _delete_owner_cascading(owner: Owner) -> None:
             publisher.publish_node_unreject(node)
         except Exception as e:
             raise BadGateway(f"Failed to publish unreject for device {node.id}, owner NOT removed: {e}")
-    owner.delete()
+    with transaction.atomic():
+        meshes = list(owner.meshes.values_list("id", "source_id"))
+        owner.delete()
+        for mesh_id, source_id in meshes:
+            schedule_mesh_deletion(mesh_id, DataDeletionReason.MESH_DELETED, source_id=source_id)
 
 
 class OwnerDetailView(APIView):
@@ -450,14 +614,21 @@ class OwnerDetailView(APIView):
 
         Args:
             role: `member`, the default, or `operator`, which may also manage
-                sources.
+                sources. Granting `operator` also approves any pending operator
+                request from this owner, without emailing them.
         """
         _require_superuser(request)
         owner = _get_owner_or_404(owner_id)
         serializer = OwnerRoleSerializer(data=request.data)
         serializer.is_valid(raise_exception=True)
-        owner.role = serializer.validated_data["role"]
-        owner.save(update_fields=["role"])
+        with transaction.atomic():
+            owner.role = serializer.validated_data["role"]
+            owner.save(update_fields=["role"])
+            if owner.role == OwnerRole.OPERATOR:
+                # A direct grant answers any request still waiting.
+                owner.operator_requests.filter(status=OperatorRequestStatus.PENDING).update(
+                    status=OperatorRequestStatus.APPROVED, decided_by=request.user, decided_at=timezone.now()
+                )
         return Response(OwnerReadSerializer(owner).data)
 
     @extend_schema(responses={204: NO_CONTENT})
@@ -649,22 +820,38 @@ class MeshListCreateView(APIView):
                 qs = qs.filter(source_id=source_id)
             except (ValueError, DjangoValidationError):
                 raise ValidationError({"source_id": "Must be a UUID."})
-        return Response(MeshSerializer(qs, many=True, context={"viewer_id": request.user.id}).data)
+        return Response(MeshSerializer(qs, many=True, context=_mesh_context(request)).data)
 
     @extend_schema(request=MeshSerializer, responses={201: MeshSerializer})
     def post(self, request):
         """Create a mesh owned by the caller.
 
+        A mesh on the default broker needs its mesh terms accepted, which are
+        recorded with it. A mesh on a source is covered by the source's terms.
+
         Args:
-            source_id: Source the mesh's traffic is bridged from. Leave unset
-                for traffic on this instance's own broker.
+            source_id: Source the mesh's traffic is bridged from, which must be
+                one the caller created, or any source for a superuser. Leave
+                unset for traffic on this instance's own broker.
+            terms_version: The `version` of the mesh terms accepted. Required
+                without a source, ignored with one, and ignored on an instance
+                that does not enforce terms.
+            terms_locale: Locale the terms were shown in, `en` or `es`. Defaults
+                to `en`.
         """
-        serializer = MeshSerializer(data=request.data)
+        serializer = MeshSerializer(data=request.data, context={"owner": request.user})
         serializer.is_valid(raise_exception=True)
-        mesh = serializer.save(owner=request.user)
+        with transaction.atomic():
+            mesh = serializer.save(owner=request.user)
+            if serializer.accept_terms_locale:
+                record_acceptance(TermsKind.MESH, request.user, serializer.accept_terms_locale, mesh=mesh)
         return Response(
-            MeshSerializer(mesh, context={"viewer_id": request.user.id}).data, status=status.HTTP_201_CREATED
+            MeshSerializer(mesh, context=_mesh_context(request)).data, status=status.HTTP_201_CREATED
         )
+
+
+def _mesh_context(request) -> dict:
+    return {"viewer_id": request.user.id, "viewer_is_superuser": request.user.is_superuser}
 
 
 def _publish_mesh_gateways(mesh: Mesh, previous: dict) -> None:
@@ -677,14 +864,14 @@ def _publish_mesh_gateways(mesh: Mesh, previous: dict) -> None:
     published = []
     for gateway in mesh.devices.filter(is_gateway=True, is_allowed=True):
         try:
-            publisher.publish_gateway_upsert(gateway, mesh)
+            publish_gateway_state(publisher, gateway, mesh)
         except Exception as e:
             for field, value in previous.items():
                 setattr(mesh, field, value)
             mesh.save(update_fields=list(previous))
             for done in published:
                 try:
-                    publisher.publish_gateway_upsert(done, mesh)
+                    publish_gateway_state(publisher, done, mesh)
                 except Exception as restore_error:
                     log.error("gateway_restore_failed", device_id=str(done.id), error=str(restore_error))
             raise BadGateway(f"Failed to publish mesh change, rolled back: {e}")
@@ -699,7 +886,7 @@ class MeshDetailView(APIView):
         """Return one mesh."""
         mesh = _get_mesh_or_404(mesh_id)
         _require_mesh_visible(mesh, request.user)
-        return Response(MeshSerializer(mesh, context={"viewer_id": request.user.id}).data)
+        return Response(MeshSerializer(mesh, context=_mesh_context(request)).data)
 
     @extend_schema(request=MeshUpdateSerializer, responses=MeshSerializer)
     def put(self, request, mesh_id):
@@ -709,25 +896,64 @@ class MeshDetailView(APIView):
         them to every allowed gateway on the mesh, and the whole update is
         rolled back if that fails. Once the source changes, the mesh's gateways
         are only accepted through the new one.
+
+        Args:
+            source_id: Source to bridge the mesh's traffic from, which must be one
+                the caller created, or any source for a superuser, and not paused.
+                Null moves it to the default broker. Moving a mesh off a source
+                schedules the readings stored until then for deletion after the
+                grace period; moving it back within that period cancels it.
+            terms_version: The `version` of the mesh terms accepted. Required when
+                moving the mesh onto the default broker unless it already holds a
+                current acceptance, or the instance does not enforce terms;
+                ignored otherwise.
+            terms_locale: Locale the terms were shown in, `en` or `es`. Defaults
+                to `en`.
         """
         mesh = _get_mesh_or_404(mesh_id)
         _require_mesh_ownership(mesh, request.user)
         redistributed = ("channel_id", "psk_b64", "source_id")
         changing_gateway_state = any(field in request.data for field in redistributed)
         previous = {"channel_id": mesh.channel_id, "psk_b64": mesh.psk_b64, "source_id": mesh.source_id}
-        serializer = MeshUpdateSerializer(mesh, data=request.data, partial=True)
+        serializer = MeshUpdateSerializer(mesh, data=request.data, partial=True, context={"owner": request.user})
         serializer.is_valid(raise_exception=True)
         updated = serializer.save()
+        accept_locale = serializer.accept_terms_locale
+        was_paused = updated.paused_at is not None
+        if accept_locale:
+            # Accepting the terms resumes a mesh paused by an earlier lapse, so its gateways
+            # are published as registered below.
+            updated.paused_at = None
         if changing_gateway_state:
             _publish_mesh_gateways(updated, previous)
-        return Response(MeshSerializer(updated, context={"viewer_id": request.user.id}).data)
+        if accept_locale:
+            with transaction.atomic():
+                if was_paused:
+                    updated.save(update_fields=["paused_at"])
+                    cancel_mesh_deletions([updated.id], DataDeletionReason.TERMS_LAPSED, None)
+                record_acceptance(TermsKind.MESH, request.user, accept_locale, mesh=updated)
+        old_source, new_source = previous["source_id"], updated.source_id
+        if old_source != new_source:
+            if old_source is not None:
+                # Readings bridged so far belonged to the old source's service.
+                schedule_mesh_deletion(
+                    updated.id,
+                    DataDeletionReason.SOURCE_DETACHED,
+                    source_id=old_source,
+                    requested_by=request.user,
+                    data_until=timezone.now(),
+                )
+            if new_source is not None:
+                cancel_mesh_deletions([updated.id], DataDeletionReason.SOURCE_DETACHED, new_source)
+        return Response(MeshSerializer(updated, context=_mesh_context(request)).data)
 
     @extend_schema(responses={204: NO_CONTENT})
     def delete(self, request, mesh_id):
         """Delete a mesh and every device registered on it.
 
         Its gateways are deregistered from the decoder first, and nothing is
-        removed if that fails.
+        removed if that fails. The mesh's stored readings are deleted after the
+        grace period, so export them first if they are needed.
         """
         mesh = _get_mesh_or_404(mesh_id)
         _require_mesh_ownership(mesh, request.user)
@@ -744,7 +970,12 @@ class MeshDetailView(APIView):
                 publisher.publish_node_unreject(node)
             except Exception as e:
                 raise BadGateway(f"Failed to publish unreject for device {node.id}, mesh NOT removed: {e}")
-        mesh.delete()
+        with transaction.atomic():
+            mesh_id, source_id = mesh.id, mesh.source_id
+            mesh.delete()
+            schedule_mesh_deletion(
+                mesh_id, DataDeletionReason.MESH_DELETED, source_id=source_id, requested_by=request.user
+            )
         return Response(status=status.HTTP_204_NO_CONTENT)
 
 
@@ -833,7 +1064,7 @@ class DeviceListCreateView(APIView):
             raise Conflict(f"Device with device_id {data['device_id']} already has an allowed registration")
         if device.is_gateway:
             try:
-                get_publisher().publish_gateway_upsert(device, mesh)
+                publish_gateway_state(get_publisher(), device, mesh)
             except Exception as e:
                 device.delete()
                 raise BadGateway(f"Failed to publish gateway registration, rolled back: {e}")
@@ -917,7 +1148,7 @@ class DeviceDetailView(APIView):
             try:
                 if updated.is_gateway:
                     if attempted_allowed:
-                        publisher.publish_gateway_upsert(updated, updated.mesh)
+                        publish_gateway_state(publisher, updated, updated.mesh)
                     else:
                         publisher.publish_gateway_delete(updated)
                 else:
@@ -1053,7 +1284,7 @@ def _require_operator(request) -> None:
     if not request.user.is_authenticated:
         raise AuthenticationFailed()
     if not IsOperator().has_permission(request, None):
-        raise PermissionDenied("Only an operator may modify this")
+        raise PermissionDenied("Only an operator may access sources")
 
 
 def _require_superuser(request) -> None:
@@ -1366,14 +1597,17 @@ class PostprocessingBlueprintDetailView(APIView):
         return Response(status=status.HTTP_204_NO_CONTENT)
 
 
-def _get_source_or_404(source_id) -> Source:
+def _get_source_or_404(request, source_id) -> Source:
+    """A source outside the caller's reach is reported as missing, not forbidden."""
     try:
-        return Source.objects.get(pk=source_id)
+        return request.user.visible_sources.get(pk=source_id)
     except (Source.DoesNotExist, ValueError, TypeError):
         raise NotFound("Source not found")
 
 
 def _source_status(source: Source) -> str:
+    if source.paused_at is not None:
+        return "paused"
     try:
         return get_emqx_client().source_status(str(source.id))
     except Exception as e:
@@ -1389,22 +1623,175 @@ def _source_read_data(source: Source) -> dict:
 _SOURCE_FIELDS = ("label", "server", "ssl", "username", "password", "topic", "qos")
 
 
+def _require_terms_enforced() -> None:
+    if not terms_enforced():
+        raise NotFound("Terms are not enforced on this instance")
+
+
+class TermsView(APIView):
+    """Readable without an account, since signing up accepts these terms."""
+
+    permission_classes = [AllowAny]
+
+    @extend_schema(
+        parameters=[_query("locale", "`en` or `es`. Defaults to `en`; unknown locales fall back to it.")],
+        responses=TermsSerializer,
+    )
+    def get(self, request):
+        """Return the account terms, which signing up accepts.
+
+        They cover the account only (Terms of Use and Privacy Policy): signing up
+        stores no mesh data. Creating a mesh on the default broker accepts the
+        mesh terms instead. Every statement must be accepted. Send the returned
+        `version` back as `terms_version` when signing up. They never lapse.
+        Answers `404` on an instance that does not enforce terms.
+
+        Args:
+            locale: `en` or `es`. Defaults to `en`, which is also used for any
+                other value.
+        """
+        _require_terms_enforced()
+        return Response(TermsSerializer(current_terms(TermsKind.ACCOUNT, request.query_params.get("locale"))).data)
+
+
+class OwnerTermsAcceptanceView(APIView):
+    permission_classes = [IsAuthenticated]
+
+    @extend_schema(request=AccountTermsAcceptanceSerializer, responses={201: OwnerReadSerializer})
+    def post(self, request):
+        """Accept the current account terms, when they have changed since signing up.
+
+        Account terms never lapse, so this pauses and resumes nothing. Answers
+        `404` on an instance that does not enforce terms.
+
+        Args:
+            terms_version: The `version` of the account terms accepted. Required.
+            terms_locale: Locale the terms were shown in, `en` or `es`. Defaults
+                to `en`.
+        """
+        _require_terms_enforced()
+        serializer = AccountTermsAcceptanceSerializer(data=request.data)
+        serializer.is_valid(raise_exception=True)
+        record_acceptance(TermsKind.ACCOUNT, request.user, serializer.validated_data["terms_locale"])
+        return Response(OwnerReadSerializer(request.user).data, status=status.HTTP_201_CREATED)
+
+
+class MeshTermsView(APIView):
+    permission_classes = [IsVerifiedOwner]
+
+    @extend_schema(
+        parameters=[_query("locale", "`en` or `es`. Defaults to `en`; unknown locales fall back to it.")],
+        responses=TermsSerializer,
+    )
+    def get(self, request):
+        """Return the terms an owner accepts to create a mesh on the default broker.
+
+        Every statement must be accepted. Send the returned `version` back as
+        `terms_version` when creating the mesh, or when moving a mesh from a
+        source onto the default broker. The footnote states how long the mesh's
+        data is kept. Answers `404` on an instance that does not enforce terms.
+
+        Args:
+            locale: `en` or `es`. Defaults to `en`, which is also used for any
+                other value.
+        """
+        _require_terms_enforced()
+        return Response(TermsSerializer(current_terms(TermsKind.MESH, request.query_params.get("locale"))).data)
+
+
+class MeshTermsAcceptanceView(APIView):
+    permission_classes = [IsVerifiedOwner]
+
+    @extend_schema(request=MeshTermsAcceptanceSerializer, responses={201: MeshSerializer})
+    def post(self, request, mesh_id):
+        """Accept the current mesh terms again, renewing the mesh. Its owner only.
+
+        With a retention period configured, an acceptance lapses after that
+        period and the mesh is paused: its gateways are deregistered and its
+        readings are scheduled for deletion. Renewing resumes it and cancels the
+        deletion, as long as the grace period has not ended. A mesh on a source
+        is covered by the source's terms and answers `409`. Answers `404` on an
+        instance that does not enforce terms.
+
+        Args:
+            terms_version: The `version` of the mesh terms accepted. Required.
+            terms_locale: Locale the terms were shown in, `en` or `es`. Defaults
+                to `en`.
+        """
+        _require_terms_enforced()
+        mesh = _get_mesh_or_404(mesh_id)
+        if mesh.owner_id != request.user.id:
+            _require_mesh_visible(mesh, request.user)
+            raise PermissionDenied("Only the mesh's owner can accept its terms")
+        if mesh.source_id is not None:
+            raise Conflict("This mesh is covered by its source's terms")
+        serializer = MeshTermsAcceptanceSerializer(data=request.data)
+        serializer.is_valid(raise_exception=True)
+        try:
+            resume_mesh(mesh)
+        except Exception as e:
+            raise BadGateway(f"Failed to resume the mesh's gateways, terms NOT renewed: {e}")
+        record_acceptance(TermsKind.MESH, request.user, serializer.validated_data["terms_locale"], mesh=mesh)
+        return Response(MeshSerializer(mesh, context=_mesh_context(request)).data, status=status.HTTP_201_CREATED)
+
+
+class SourceTermsView(APIView):
+    permission_classes = [IsVerifiedOwner]
+
+    @extend_schema(
+        parameters=[_query("locale", "`en` or `es`. Defaults to `en`; unknown locales fall back to it.")],
+        responses=TermsSerializer,
+    )
+    def get(self, request):
+        """Return the terms an operator must accept to add a source. Operators only.
+
+        Every statement must be accepted. Send the returned `version` back as
+        `terms_version` when creating the source. The footnote states how long
+        the source's data is kept. Answers `404` on an instance that does not
+        enforce terms.
+
+        Args:
+            locale: `en` or `es`. Defaults to `en`, which is also used for any
+                other value.
+        """
+        _require_operator(request)
+        _require_terms_enforced()
+        return Response(TermsSerializer(current_terms(TermsKind.SOURCE, request.query_params.get("locale"))).data)
+
+
 class SourceListCreateView(APIView):
     permission_classes = [IsVerifiedOwner]
 
-    @extend_schema(responses=SourceSerializer(many=True))
+    @extend_schema(responses=SourceReadSerializer(many=True))
     def get(self, request):
-        """List every source a mesh can be attached to.
+        """List the sources the caller created, or every source for a superuser. Operators only.
 
-        Remote passwords are never included.
+        Each carries its bridge's status, `unknown` for all of them when the
+        broker cannot be asked. Remote passwords are never included.
         """
-        return Response(SourceSerializer(Source.objects.order_by("created_at"), many=True).data)
+        _require_operator(request)
+        sources_qs = list(request.user.visible_sources.order_by("created_at"))
+        try:
+            statuses = get_emqx_client().source_statuses()
+        except Exception as e:
+            log.warning("source_statuses_unavailable", error=str(e))
+            statuses = None
+        for source in sources_qs:
+            if source.paused_at is not None:
+                source.status = "paused"
+            elif statuses is None:
+                source.status = "unknown"
+            else:
+                source.status = statuses.get(str(source.id), "missing")
+        return Response(SourceReadSerializer(sources_qs, many=True).data)
 
-    @extend_schema(request=SourceSerializer, responses={201: SourceReadSerializer})
+    @extend_schema(request=SourceCreateSerializer, responses={201: SourceReadSerializer})
     def post(self, request):
         """Create a source and start bridging its remote topic into this instance. Operators only.
 
-        Nothing is kept if the bridge cannot be set up.
+        The caller must first accept the current source terms. The acceptance
+        is recorded with the source. Nothing is kept if the bridge cannot be set
+        up.
 
         Args:
             server: Remote broker as `host:port`. Cannot be this instance's own
@@ -1416,15 +1803,23 @@ class SourceListCreateView(APIView):
                 `$share`, `$SYS` and filters the server has blocked, such as `#`,
                 are rejected.
             qos: 0 or 1. Defaults to 1.
+            terms_version: The `version` of the source terms the caller accepted.
+                Required, and refused once the terms have changed, unless the
+                instance does not enforce terms.
+            terms_locale: Locale the terms were shown in, `en` or `es`. Defaults
+                to `en`.
         """
         _require_operator(request)
-        serializer = SourceSerializer(data=request.data)
+        serializer = SourceCreateSerializer(data=request.data)
         serializer.is_valid(raise_exception=True)
-        source = serializer.save(created_by=request.user)
+        locale = serializer.validated_data["terms_locale"]
         try:
-            get_emqx_client().apply_source(source)
+            with transaction.atomic():
+                source = serializer.save(created_by=request.user)
+                get_emqx_client().apply_source(source)
+                # Only once the bridge exists, since a failed bridge rolls the source back.
+                record_acceptance(TermsKind.SOURCE, request.user, locale, source=source)
         except Exception as e:
-            source.delete()
             raise BadGateway(f"Failed to create the bridge, source NOT created: {e}")
         return Response(_source_read_data(source), status=status.HTTP_201_CREATED)
 
@@ -1434,24 +1829,31 @@ class SourceDetailView(APIView):
 
     @extend_schema(responses=SourceReadSerializer)
     def get(self, request, source_id):
-        """Return one source and the live status of its bridge.
+        """Return one source and the live status of its bridge. Operators only.
 
-        The status is `unknown` when the broker cannot be reached to check it.
-        """
-        return Response(_source_read_data(_get_source_or_404(source_id)))
-
-    @extend_schema(request=SourceSerializer, responses=SourceReadSerializer)
-    def put(self, request, source_id):
-        """Update a source and reconfigure its bridge. Operators only.
-
-        The update is rolled back if the bridge cannot be reconfigured.
+        An operator can read only the sources they created; a superuser can read
+        any. The status is `unknown` when the broker cannot be reached to check
+        it, and `paused` once its terms have lapsed.
         """
         _require_operator(request)
-        source = _get_source_or_404(source_id)
+        return Response(_source_read_data(_get_source_or_404(request, source_id)))
+
+    @extend_schema(request=SourceUpdateSerializer, responses=SourceReadSerializer)
+    def put(self, request, source_id):
+        """Update a source and reconfigure its bridge. Operators only, on the sources they created.
+
+        Any subset of the create fields may be sent. The update is rolled back
+        if the bridge cannot be reconfigured. A paused source is updated
+        without touching the broker. Send an empty `password` to remove it.
+        """
+        _require_operator(request)
+        source = _get_source_or_404(request, source_id)
         previous = {field: getattr(source, field) for field in _SOURCE_FIELDS}
-        serializer = SourceSerializer(source, data=request.data, partial=True)
+        serializer = SourceUpdateSerializer(source, data=request.data, partial=True)
         serializer.is_valid(raise_exception=True)
         updated = serializer.save()
+        if updated.paused_at is not None:
+            return Response(_source_read_data(updated))
         client = get_emqx_client()
         try:
             client.apply_source(updated)
@@ -1468,13 +1870,13 @@ class SourceDetailView(APIView):
 
     @extend_schema(responses={204: NO_CONTENT})
     def delete(self, request, source_id):
-        """Delete a source and stop bridging it. Operators only.
+        """Delete a source and stop bridging it. Operators only, on the sources they created.
 
         A source with meshes attached cannot be deleted. Nothing is removed if
-        the bridge cannot be torn down.
+        the bridge cannot be torn down. Its terms acceptances are kept.
         """
         _require_operator(request)
-        source = _get_source_or_404(source_id)
+        source = _get_source_or_404(request, source_id)
         if source.meshes.exists():
             raise Conflict("Source has meshes attached; move or delete them first")
         try:
@@ -1483,3 +1885,74 @@ class SourceDetailView(APIView):
             raise BadGateway(f"Failed to remove the bridge, source NOT deleted: {e}")
         source.delete()
         return Response(status=status.HTTP_204_NO_CONTENT)
+
+
+class SourceTermsAcceptanceView(APIView):
+    permission_classes = [IsVerifiedOwner]
+
+    @extend_schema(request=SourceTermsAcceptanceSerializer, responses={201: SourceReadSerializer})
+    def post(self, request, source_id):
+        """Accept the current source terms again, renewing the source. Only the operator who created it.
+
+        With a retention period configured, an acceptance lapses after that
+        period and the source is paused. Renewing a paused source restarts its
+        bridge and cancels the deletion of its meshes' data, as long as the
+        grace period has not ended. Answers `404` on an instance that does not
+        enforce terms.
+
+        Args:
+            terms_version: The `version` of the source terms accepted. Required.
+            terms_locale: Locale the terms were shown in, `en` or `es`. Defaults
+                to `en`.
+        """
+        _require_terms_enforced()
+        _require_operator(request)
+        source = _get_source_or_404(request, source_id)
+        if source.created_by_id != request.user.id:
+            raise PermissionDenied("Only the operator who created this source can accept its terms")
+        serializer = SourceTermsAcceptanceSerializer(data=request.data)
+        serializer.is_valid(raise_exception=True)
+        try:
+            resume_source(source)
+        except Exception as e:
+            raise BadGateway(f"Failed to restart the bridge, terms NOT renewed: {e}")
+        record_acceptance(TermsKind.SOURCE, request.user, serializer.validated_data["terms_locale"], source=source)
+        return Response(_source_read_data(source), status=status.HTTP_201_CREATED)
+
+
+class DataDeletionListView(APIView):
+    permission_classes = [IsVerifiedOwner]
+
+    @extend_schema(
+        parameters=[
+            _query("status", "`pending` (the default), `cancelled`, `done`, or `all`."),
+            _query("mesh_id", "Restrict to one mesh.", OpenApiTypes.UUID),
+        ],
+        responses=DataDeletionSerializer(many=True),
+    )
+    def get(self, request):
+        """List scheduled deletions of stored readings, newest first. Superusers only.
+
+        A mesh's readings are scheduled for deletion when the mesh is deleted,
+        moved off its source, or its source's terms lapse. They stay in place
+        until `delete_after`, then are deleted from both the time-series store
+        and the archive.
+
+        Args:
+            status: `pending`, the default, `cancelled`, `done`, or `all`.
+            mesh_id: Restrict to one mesh.
+        """
+        _require_superuser(request)
+        wanted = request.query_params.get("status", DataDeletionStatus.PENDING)
+        qs = DataDeletion.objects.order_by("-requested_at")
+        if wanted != "all":
+            if wanted not in DataDeletionStatus.values:
+                raise ValidationError({"status": "Must be pending, cancelled, done or all."})
+            qs = qs.filter(status=wanted)
+        mesh_id = request.query_params.get("mesh_id")
+        if mesh_id:
+            try:
+                qs = qs.filter(mesh_id=mesh_id)
+            except (ValueError, DjangoValidationError):
+                raise ValidationError({"mesh_id": "Must be a UUID."})
+        return Response(DataDeletionSerializer(qs, many=True).data)

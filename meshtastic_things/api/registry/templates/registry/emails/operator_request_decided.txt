@@ -1,0 +1,11 @@
+Hi {{ name }},
+
+{% if approved %}Your request to become an operator on Mesh Things has been approved.
+You can now create sources at:
+
+{{ sources_link }}{% else %}Your request to become an operator on Mesh Things has been rejected.{% endif %}
+{% if note %}
+Note from the reviewer:
+
+{{ note }}
+{% endif %}

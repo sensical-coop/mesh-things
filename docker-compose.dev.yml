@@ -90,6 +90,10 @@ services:
     environment:
       DJANGO_SETTINGS_MODULE: api_project.settings.dev
 
+  registry_data_lifecycle:
+    environment:
+      DJANGO_SETTINGS_MODULE: api_project.settings.dev
+
   # Local dev SMTP
   mailhog:
     mem_limit: 128m
