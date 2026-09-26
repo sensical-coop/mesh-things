@@ -5,6 +5,8 @@ from influxdb_client import Point
 
 from common.channels import (
     ALARMS,
+    DERIVED,
+    DERIVED_KIND,
     DEVICE,
     NODEINFO,
     NODEINFO_KIND,
@@ -109,6 +111,26 @@ def build_generic_points(event: dict) -> list[Point]:
     return [Point.from_dict(point_dict)]
 
 
+def build_derived_points(event: dict) -> list[Point]:
+    """Channels computed by postprocessing, one point per event.
+
+    Tagged with the postprocessing that produced them. There is no packet_id:
+    a derived event can combine samples from several packets.
+    """
+    tags = {"node_id": event["node_id"], "postprocessing_id": event["postprocessing_id"]}
+    if event.get("mesh_id"):
+        tags["mesh_id"] = event["mesh_id"]
+    fields = {
+        field: float(value)
+        for field, value in ((event.get("payload") or {}).get(DERIVED) or {}).items()
+        if isinstance(value, (int, float)) and not isinstance(value, bool)
+    }
+    if not fields:
+        return []
+    point_dict = {"measurement": DERIVED, "tags": tags, "fields": fields, "time": _convert_date(event["rx_time"])}
+    return [Point.from_dict(point_dict)]
+
+
 def build_alarm_points(event: dict) -> list[Point]:
     """Quality alarm events have a different shape from decoded messages - no
     packet_id/rx_time/payload_kind - so they don't go through _base_point_dict
@@ -158,6 +180,8 @@ def get_points(event: dict) -> list[Point]:
         return []
     if payload_kind.startswith(TELEMETRY):
         return build_telemetry_points(event)
+    if payload_kind == DERIVED_KIND:
+        return build_derived_points(event)
     if payload_kind == POSITION_KIND:
         return build_position_points(event)
     if payload_kind == NODEINFO_KIND:

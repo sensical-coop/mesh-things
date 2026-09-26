@@ -35,6 +35,9 @@ class RegistryClient:
     def device_measurements(self, device_uuid: str) -> list[dict]:
         return self._get(f"/devices/{device_uuid}/measurements")
 
+    def device_postprocessings(self, device_uuid: str) -> list[dict]:
+        return self._get(f"/devices/{device_uuid}/postprocessings")
+
     def measurement_types(self) -> list[dict]:
         return self._get("/measurements")
 

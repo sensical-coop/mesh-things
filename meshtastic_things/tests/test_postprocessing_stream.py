@@ -7,6 +7,7 @@ from common.channels import DERIVED_KIND, channels_in
 from common.postprocessing import Calibration, Observation, ResolvedPlan, ResolvedStep, apply
 from common.postprocessing.stream import derived_events, device_key, observations_from_event, plans_from_config
 from common.timestamps import MIN_FEASIBLE_TIME
+from writer.point_builders import get_points
 
 MESH_ID = "11111111-2222-3333-4444-555555555555"
 NODE_ID = 431637602
@@ -133,3 +134,13 @@ class TestDerivedEvents:
         channels = [channel for channel, _ in channels_in(event["payload_kind"], event["payload"])]
 
         assert channels == ["derived.temperature_calibrated"]
+
+    def test_the_influx_writer_stores_the_derived_shape(self):
+        [event] = self._run({"environment_metrics": {"temperature": 21.5}})
+
+        [point] = get_points(event)
+
+        line = point.to_line_protocol()
+        assert line.startswith("derived,")
+        assert "postprocessing_id=pp-1" in line
+        assert "temperature_calibrated=21" in line

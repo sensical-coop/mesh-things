@@ -2,7 +2,14 @@ from datetime import datetime, timedelta, timezone
 
 import pytest
 
-from quality_worker.executor import align_series, analyse_completeness, resolve_output_units, run_steps
+from quality_worker.executor import (
+    align_series,
+    analyse_completeness,
+    completeness_applies,
+    derived_reading_interval,
+    resolve_output_units,
+    run_steps,
+)
 
 START = datetime(2026, 9, 1, tzinfo=timezone.utc)
 
@@ -289,3 +296,42 @@ def test_steps_are_resolved_in_execution_order_not_list_order():
     ]
 
     assert resolve_output_units(steps, {})["dew_point_corrected"] == "degC"
+
+
+@pytest.mark.parametrize(
+    "measurement_type, applies",
+    [
+        ({"origin": "measured", "payload_kind": "telemetry:environment_metrics"}, True),
+        ({"origin": "computed", "payload_kind": "computed:derived"}, True),
+        ({"origin": "computed", "payload_kind": "computed:quality"}, False),
+        ({"origin": "device", "payload_kind": "device:position"}, False),
+    ],
+)
+def test_completeness_covers_sensor_and_derived_channels(measurement_type, applies):
+    assert completeness_applies(measurement_type) is applies
+
+
+class TestDerivedReadingInterval:
+    ROWS = {
+        "temp": {"id": "temp", "produced_by": None, "measurement_type": {"payload_kind": "telemetry:environment_metrics"}},
+        "adc": {"id": "adc", "produced_by": None, "measurement_type": {"payload_kind": "telemetry:ads1115"}},
+        "ppb": {"id": "ppb", "produced_by": "pp-no2", "measurement_type": {"payload_kind": "computed:derived"}},
+    }
+    INTERVALS = {"telemetry:environment_metrics": 300, "telemetry:ads1115": 60}
+
+    def _interval(self, produced_by, bindings):
+        return derived_reading_interval(produced_by, self.ROWS, bindings, self.INTERVALS.get)
+
+    def test_the_slowest_input_sets_the_pace(self):
+        assert self._interval("pp-no2", {"pp-no2": {"working": "adc", "temperature": "temp"}}) == 300
+
+    def test_chained_postprocessings_are_followed(self):
+        bindings = {"pp-no2": {"working": "adc"}, "pp-cal": {"value": "ppb"}}
+        assert self._interval("pp-cal", bindings) == 60
+
+    def test_unknown_intervals_give_none(self):
+        assert self._interval("pp-no2", {"pp-no2": {"value": "missing"}}) is None
+
+    def test_a_cycle_does_not_recurse_forever(self):
+        rows = {"x": {"id": "x", "produced_by": "pp-a", "measurement_type": {"payload_kind": "computed:derived"}}}
+        assert derived_reading_interval("pp-a", rows, {"pp-a": {"v": "x"}}, self.INTERVALS.get) is None

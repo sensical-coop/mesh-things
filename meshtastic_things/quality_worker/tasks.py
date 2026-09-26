@@ -4,13 +4,20 @@ import os
 import structlog
 from celery import shared_task
 
-from common.channels import DERIVED_KIND, ORIGIN_MEASURED, QUALITY_KIND
+from common.channels import DERIVED_KIND, QUALITY_KIND
 from common.detectors import COMPLETENESS
 from common.units import QUALITY_CHANNELS
 from common.influx_query import duration_seconds, split_channel
 
 from .alarms import build_alarm, get_alarm_publisher
-from .executor import align_series, analyse_completeness, resolve_output_units, run_steps
+from .executor import (
+    align_series,
+    analyse_completeness,
+    completeness_applies,
+    derived_reading_interval,
+    resolve_output_units,
+    run_steps,
+)
 from .influx_io import get_influx_io
 from .registry_client import get_registry_client
 
@@ -173,12 +180,23 @@ def check_completeness(device_uuid: str, lookback: str | None = None) -> dict:
     publisher = get_alarm_publisher()
     results = []
 
-    for row in registry.device_measurements(device_uuid):
+    rows = registry.device_measurements(device_uuid)
+    rows_by_id = {row["id"]: row for row in rows}
+    bindings = {}
+    if any(row.get("produced_by") for row in rows):
+        bindings = {pp["id"]: pp["input_bindings"] for pp in registry.device_postprocessings(device_uuid)}
+
+    def interval_for_kind(payload_kind):
+        return _reading_interval_for(device, payload_kind, variant_intervals)
+
+    for row in rows:
         measurement_type = row["measurement_type"]
-        if measurement_type["origin"] != ORIGIN_MEASURED:
+        if not completeness_applies(measurement_type):
             continue
         channel = measurement_type["channel"]
-        interval = _reading_interval_for(device, measurement_type["payload_kind"], variant_intervals)
+        interval = interval_for_kind(measurement_type["payload_kind"])
+        if not interval and row.get("produced_by"):
+            interval = derived_reading_interval(row["produced_by"], rows_by_id, bindings, interval_for_kind)
         if not interval:
             continue
         # Resolved server-side, so this worker cannot drift from the stream job.

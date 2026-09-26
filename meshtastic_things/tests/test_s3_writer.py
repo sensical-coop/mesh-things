@@ -180,3 +180,22 @@ def test_archive_reads_back_through_pyarrow_and_pandas(tmp_path):
 
     one_device = pd.read_parquet(root, filters=[("node_id", "==", 1)])
     assert sorted(one_device["packet_id"]) == [1, 3]
+
+
+def _derived_record(postprocessing_id, rx_time=1757000000):
+    return {"node_id": 1, "mesh_id": MESH_A, "rx_time": rx_time, "payload_kind": "computed:derived",
+            "payload": {"derived": {"x": 1.0}}, "postprocessing_id": postprocessing_id}
+
+
+def test_derived_rows_of_two_postprocessings_at_the_same_time_are_both_kept():
+    # Neither has a packet_id, so the postprocessing is what tells them apart.
+    writer = _make_s3_writer()
+
+    writer.flush([_derived_record("pp-1"), _derived_record("pp-2")])
+
+    key = next(iter(writer.s3_client.objects))
+    assert sorted(r["postprocessing_id"] for r in writer.s3_client.rows(key)) == ["pp-1", "pp-2"]
+
+
+def test_decoded_rows_have_no_postprocessing_id():
+    assert _flatten(_record(1, MESH_A))["postprocessing_id"] is None

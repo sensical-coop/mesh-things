@@ -30,11 +30,13 @@ SCHEMA = pa.schema(
         ("gateway_id", pa.int64()),
         ("payload_kind", pa.string()),
         ("payload_json", pa.string()),
+        # Set on derived rows only, which have no packet_id of their own.
+        ("postprocessing_id", pa.string()),
     ]
 )
 
 # Identifies a row within its partition to avoid duplication
-_ROW_KEY = ("node_id", "packet_id", "rx_time", "payload_kind")
+_ROW_KEY = ("node_id", "packet_id", "rx_time", "payload_kind", "postprocessing_id")
 
 def _flatten(event: dict) -> dict:
     """Flatten a decoded message to SCHEMA.
@@ -52,6 +54,7 @@ def _flatten(event: dict) -> dict:
         "gateway_id": event.get("gateway_id"),
         "payload_kind": event.get("payload_kind"),
         "payload_json": json.dumps(event.get("payload")),
+        "postprocessing_id": event.get("postprocessing_id"),
     }
 
 
@@ -78,8 +81,12 @@ class S3Writer(object):
             enable_auto_commit=False,
             auto_offset_reset="earliest",
         )
-        log.debug(f"Subscribing to kafka topics {[os.environ['PROTO_DECODE__KAFKA_TOPIC']]}")
-        self.kafka_consumer.subscribe(topics=[os.environ["PROTO_DECODE__KAFKA_TOPIC"]])
+        topics = [
+            os.environ["PROTO_DECODE__KAFKA_TOPIC"],
+            os.environ.get("POSTPROCESSING__DERIVED_KAFKA_TOPIC", "mesh.telemetry.derived.v1"),
+        ]
+        log.debug(f"Subscribing to kafka topics {topics}")
+        self.kafka_consumer.subscribe(topics=topics)
         self.health_state = HealthState()
         self.consumer_health = KafkaConsumerHealth(
             consumer=self.kafka_consumer, topic=os.environ["PROTO_DECODE__KAFKA_TOPIC"]

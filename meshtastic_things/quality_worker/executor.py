@@ -17,6 +17,7 @@ from datetime import timedelta
 import structlog
 
 from common.algorithms import POINTWISE, get as get_algorithm
+from common.channels import DERIVED_KIND, ORIGIN_MEASURED
 
 log = structlog.get_logger()
 
@@ -138,6 +139,46 @@ def resolve_output_units(steps: list[dict], channel_units: dict[str, str | None]
             if unit:
                 known[channel] = unit
     return resolved
+
+
+def completeness_applies(measurement_type: dict) -> bool:
+    """Sensor channels and derived ones, which are held to their inputs'
+    reading interval. Device diagnostics and quality metrics are not."""
+    return measurement_type["origin"] == ORIGIN_MEASURED or measurement_type["payload_kind"] == DERIVED_KIND
+
+
+def derived_reading_interval(
+    produced_by: str,
+    rows_by_id: dict[str, dict],
+    bindings_by_postprocessing: dict[str, dict[str, str]],
+    interval_for_kind,
+    seen: frozenset = frozenset(),
+) -> int | None:
+    """Expected interval of a derived channel: its slowest input's, since a
+    derived sample needs every input at once. Follows chained postprocessings.
+
+    Args:
+        produced_by: The postprocessing producing the channel.
+        rows_by_id: The device's measurement rows by id.
+        bindings_by_postprocessing: {postprocessing id: {slot: measurement id}}.
+        interval_for_kind: Reading interval of a sensor channel's payload_kind.
+    """
+    if produced_by in seen:
+        return None
+    intervals = []
+    for measurement_id in bindings_by_postprocessing.get(produced_by, {}).values():
+        row = rows_by_id.get(measurement_id)
+        if row is None:
+            continue
+        if row.get("produced_by"):
+            interval = derived_reading_interval(
+                row["produced_by"], rows_by_id, bindings_by_postprocessing, interval_for_kind, seen | {produced_by}
+            )
+        else:
+            interval = interval_for_kind(row["measurement_type"]["payload_kind"])
+        if interval:
+            intervals.append(interval)
+    return max(intervals) if intervals else None
 
 
 def analyse_completeness(
