@@ -81,6 +81,9 @@ class ExplodeFields(FlatMapFunction):
         except Exception:
             _udf_log_exception("Bad message, skipping")
             return
+        if event.get("backfill"):
+            # Recomputed history: alarming on it now would report long-past faults as new.
+            return
         device_id = event.get("node_id")
         mesh_id = event.get("mesh_id")
         rx_time = event.get("rx_time")

@@ -54,6 +54,13 @@ urlpatterns = [
         "devices/<uuid:device_uuid>/postprocessings/<uuid:postprocessing_id>/calibrations/<uuid:calibration_id>",
         views.DevicePostprocessingCalibrationDetailView.as_view(),
     ),
+    path(
+        "devices/<uuid:device_uuid>/postprocessings/<uuid:postprocessing_id>/backfills",
+        views.DevicePostprocessingBackfillsView.as_view(),
+    ),
+    path("postprocessing-backfills", views.PostprocessingBackfillListView.as_view()),
+    path("postprocessing-backfills/<uuid:backfill_id>", views.PostprocessingBackfillDetailView.as_view()),
+    path("postprocessing-backfills/<uuid:backfill_id>/claim", views.PostprocessingBackfillClaimView.as_view()),
     path("measurements", views.MeasurementTypeListCreateView.as_view()),
     path("measurements/<uuid:measurement_id>", views.MeasurementTypeDetailView.as_view()),
     path("telemetry-variants", views.TelemetryVariantListCreateView.as_view()),

@@ -40,6 +40,7 @@ from common.algorithms import REGISTRY, discover
 from common.detectors import DETECTOR_SPECS
 
 from .models import (
+    BackfillStatus,
     BlueprintVersion,
     DataDeletion,
     DataDeletionReason,
@@ -53,6 +54,7 @@ from .models import (
     OperatorRequestStatus,
     Owner,
     OwnerRole,
+    PostprocessingBackfill,
     PostprocessingBlueprint,
     Source,
     TermsKind,
@@ -62,6 +64,8 @@ from .models import (
 from .permissions import IsOperator, IsSuperuser, IsVerifiedOwner
 from .serializers import (
     AlgorithmSerializer,
+    BackfillClaimSerializer,
+    BackfillResultSerializer,
     BlueprintVersionSerializer,
     DetailSerializer,
     DeviceCreateSerializer,
@@ -91,6 +95,7 @@ from .serializers import (
     OwnerRoleSerializer,
     OwnerUpdateSerializer,
     OwnerWithApiKeySerializer,
+    PostprocessingBackfillSerializer,
     PostprocessingBlueprintCreateSerializer,
     PostprocessingBlueprintSerializer,
     PostprocessingBlueprintUpdateSerializer,
@@ -1966,6 +1971,122 @@ class DevicePostprocessingCalibrationDetailView(APIView):
                     raise Conflict(found)
                 _publish_postprocessing(device)
         return Response(status=status.HTTP_204_NO_CONTENT)
+
+
+class DevicePostprocessingBackfillsView(APIView):
+    permission_classes = [IsVerifiedOwner]
+
+    @extend_schema(responses=PostprocessingBackfillSerializer(many=True))
+    def get(self, request, device_uuid, postprocessing_id):
+        """List the backfills requested for a postprocessing and how they went, oldest first."""
+        device = _get_device_or_404(device_uuid)
+        _require_mesh_visible(device.mesh, request.user)
+        dp = _get_device_postprocessing_or_404(device, postprocessing_id)
+        return Response(PostprocessingBackfillSerializer(dp.backfills.all(), many=True).data)
+
+    @extend_schema(request=PostprocessingBackfillSerializer, responses={202: PostprocessingBackfillSerializer})
+    def post(self, request, device_uuid, postprocessing_id):
+        """Recompute a postprocessing's derived channels over stored history.
+
+        Readings already stored between `start` and `stop` are run through the
+        postprocessing with the calibration in force when each was taken, and
+        the results replace any derived values stored for the same times.
+        Backfilled values are stored and archived but never raise alarms. The
+        request is queued and runs within about a minute; its progress is
+        reported in `status`. The postprocessing must be runnable, although it
+        does not need to be enabled.
+
+        Args:
+            start: Start of the range to recompute.
+            stop: End of the range. Defaults to now. At most 90 days after `start`.
+            include_dependants: Also recompute every enabled postprocessing that reads this one's outputs. Defaults
+                to false.
+        """
+        device = _get_device_or_404(device_uuid)
+        _require_mesh_ownership(device.mesh, request.user)
+        dp = _get_device_postprocessing_or_404(device, postprocessing_id)
+        if found := postprocessing.problems(dp):
+            raise ValidationError({"postprocessing": found})
+        serializer = PostprocessingBackfillSerializer(data=request.data)
+        serializer.is_valid(raise_exception=True)
+        backfill = serializer.save(device_postprocessing=dp, requested_by=request.user)
+        return Response(PostprocessingBackfillSerializer(backfill).data, status=status.HTTP_202_ACCEPTED)
+
+
+class PostprocessingBackfillListView(APIView):
+    permission_classes = [IsSuperuser]
+
+    @extend_schema(
+        parameters=[_query("status", "Restrict to one status.", enum=[s.value for s in BackfillStatus])],
+        responses=PostprocessingBackfillSerializer(many=True),
+    )
+    def get(self, request):
+        """List backfills across every device, oldest first. Superusers only.
+
+        Args:
+            status: Restrict to one status, such as `pending`.
+        """
+        qs = PostprocessingBackfill.objects.all()
+        if status_filter := request.query_params.get("status"):
+            qs = qs.filter(status=status_filter)
+        return Response(PostprocessingBackfillSerializer(qs, many=True).data)
+
+
+def _get_backfill_or_404(backfill_id, lock: bool = False) -> PostprocessingBackfill:
+    qs = PostprocessingBackfill.objects.select_for_update() if lock else PostprocessingBackfill.objects
+    try:
+        return qs.get(pk=backfill_id)
+    except (PostprocessingBackfill.DoesNotExist, ValueError, TypeError):
+        raise NotFound("Backfill not found")
+
+
+class PostprocessingBackfillClaimView(APIView):
+    permission_classes = [IsSuperuser]
+
+    @extend_schema(request=None, responses=BackfillClaimSerializer)
+    def post(self, request, backfill_id):
+        """Claim a pending backfill for processing and return everything needed to run it. Superusers only.
+
+        Only one caller can claim a backfill. A backfill left running for over
+        an hour is presumed abandoned and can be claimed again.
+        """
+        with transaction.atomic():
+            backfill = _get_backfill_or_404(backfill_id, lock=True)
+            stale_before = timezone.now() - postprocessing.BACKFILL_CLAIM_TIMEOUT
+            abandoned = backfill.status == BackfillStatus.RUNNING and backfill.started_at < stale_before
+            if backfill.status != BackfillStatus.PENDING and not abandoned:
+                raise Conflict(f"Backfill is {backfill.status}")
+            backfill.status = BackfillStatus.RUNNING
+            backfill.started_at = timezone.now()
+            backfill.error = None
+            backfill.save(update_fields=["status", "started_at", "error"])
+        return Response(BackfillClaimSerializer(backfill).data)
+
+
+class PostprocessingBackfillDetailView(APIView):
+    permission_classes = [IsSuperuser]
+
+    @extend_schema(request=BackfillResultSerializer, responses=PostprocessingBackfillSerializer)
+    def put(self, request, backfill_id):
+        """Record how a claimed backfill finished. Superusers only.
+
+        Args:
+            status: `done` or `failed`.
+            points_published: Derived values published.
+            error: Why it failed.
+        """
+        serializer = BackfillResultSerializer(data=request.data)
+        serializer.is_valid(raise_exception=True)
+        with transaction.atomic():
+            backfill = _get_backfill_or_404(backfill_id, lock=True)
+            if backfill.status != BackfillStatus.RUNNING:
+                raise Conflict(f"Backfill is {backfill.status}, not running")
+            backfill.status = serializer.validated_data["status"]
+            backfill.points_published = serializer.validated_data["points_published"]
+            backfill.error = serializer.validated_data.get("error")
+            backfill.finished_at = timezone.now()
+            backfill.save(update_fields=["status", "points_published", "error", "finished_at"])
+        return Response(PostprocessingBackfillSerializer(backfill).data)
 
 
 def _get_source_or_404(request, source_id) -> Source:

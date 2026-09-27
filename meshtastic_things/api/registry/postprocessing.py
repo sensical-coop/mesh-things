@@ -7,6 +7,7 @@ land in. What the stream job receives is the resolved form, one message per
 device with every enabled plan in dependency order.
 """
 import re
+from datetime import timedelta
 
 import structlog
 from django.db.models import Prefetch, RestrictedError
@@ -33,6 +34,10 @@ log = structlog.get_logger()
 
 # Used when neither the postprocessing nor the device sets an interval.
 DEFAULT_TOLERANCE_SECONDS = 30
+# Longest history one backfill may cover, which bounds what a worker holds in memory.
+MAX_BACKFILL_SPAN = timedelta(days=90)
+# A backfill still running after this long is presumed abandoned by a crashed worker.
+BACKFILL_CLAIM_TIMEOUT = timedelta(hours=1)
 NAME_PATTERN = re.compile(r"^[a-z][a-z0-9_]*$")
 PREFIX_PATTERN = re.compile(r"^[a-z0-9_]*$")
 SLOT_REF = "slot:"
@@ -377,6 +382,20 @@ def device_plans(device: Device) -> list[ResolvedPlan]:
     for dp in sorted(enabled, key=lambda d: d.created_at):
         visit(dp)
     return [build_plan(dp) for dp in ordered]
+
+
+def backfill_plans(dp: DevicePostprocessing, include_dependants: bool) -> list[ResolvedPlan]:
+    """The plans a backfill runs: this one, then optionally every enabled plan
+    reading its outputs, directly or through another, in dependency order."""
+    dp = with_relations(DevicePostprocessing.objects.filter(pk=dp.pk)).get()
+    plans = [build_plan(dp)]
+    if include_dependants:
+        produced = set(plans[0].output_channels)
+        for plan in device_plans(dp.device):
+            if plan.id != plans[0].id and plan.input_channels & produced:
+                plans.append(plan)
+                produced |= plan.output_channels
+    return plans
 
 
 def publish_device(device: Device) -> None:

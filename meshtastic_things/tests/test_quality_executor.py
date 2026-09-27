@@ -2,13 +2,13 @@ from datetime import datetime, timedelta, timezone
 
 import pytest
 
+from common.postprocessing import Calibration, ResolvedPlan, ResolvedStep
 from quality_worker.executor import (
-    align_series,
     analyse_completeness,
+    backfill_batches,
+    backfill_channels,
     completeness_applies,
     derived_reading_interval,
-    resolve_output_units,
-    run_steps,
 )
 
 START = datetime(2026, 9, 1, tzinfo=timezone.utc)
@@ -17,154 +17,6 @@ def _series(values, interval_seconds=60, offset_seconds=0):
     return [
         (START + timedelta(seconds=offset_seconds + i * interval_seconds), v) for i, v in enumerate(values)
     ]
-
-
-class TestAlignSeries:
-    def test_single_channel_passes_through(self):
-        rows = align_series({"a.x": _series([1.0, 2.0])}, 60)
-        assert [r["a.x"] for r in rows] == [1.0, 2.0]
-
-    def test_aligns_channels_sampled_at_slightly_different_instants(self):
-        # Sensors in one device share a clock but not an exact sampling
-        # instant, so an exact-timestamp join would drop everything.
-        rows = align_series(
-            {"a.x": _series([1.0, 2.0, 3.0]), "b.y": _series([10.0, 20.0, 30.0], offset_seconds=5)}, 60
-        )
-        assert len(rows) == 3
-        assert [r["b.y"] for r in rows] == [10.0, 20.0, 30.0]
-
-    def test_drops_rows_where_a_channel_has_no_nearby_sample(self):
-        # A stale temperature would silently produce a wrong answer, which is
-        # worse than producing nothing.
-        rows = align_series(
-            {"a.x": _series([1.0, 2.0, 3.0]), "b.y": [(START, 10.0), (START + timedelta(seconds=120), 30.0)]},
-            60,
-        )
-        assert [r["a.x"] for r in rows] == [1.0, 3.0]
-
-    def test_picks_the_nearest_sample_not_the_first(self):
-        rows = align_series(
-            {
-                "a.x": [(START + timedelta(seconds=100), 1.0)],
-                "b.y": [(START + timedelta(seconds=80), 10.0), (START + timedelta(seconds=105), 20.0)],
-            },
-            60,
-        )
-        assert rows[0]["b.y"] == 20.0
-
-    def test_empty_inputs(self):
-        assert align_series({}, 60) == []
-        assert align_series({"a.x": []}, 60) == []
-
-
-class TestRunSteps:
-    def test_single_step_writes_its_declared_output_channel(self):
-        rows = [{"time": START, "env.temperature": 20.0, "env.relative_humidity": 50.0}]
-        steps = [
-            {
-                "order": 0,
-                "function_name": "dew_point",
-                "inputs": {"temperature": "env.temperature", "relative_humidity": "env.relative_humidity"},
-                "params": {},
-                "outputs": {"dew_point": "env.dew_point"},
-            }
-        ]
-
-        outputs = run_steps(steps, rows)
-
-        assert set(outputs) == {"env.dew_point"}
-        assert outputs["env.dew_point"][0][1] == pytest.approx(9.25, abs=0.1)
-
-    def test_later_step_consumes_an_earlier_steps_output(self):
-        # The chaining case: ADC -> ppb -> ug/m3 as two steps.
-        rows = [{"time": START, "ads.w": 300.0, "ads.a": 100.0, "env.temperature": 0.0}]
-        steps = [
-            {
-                "order": 0,
-                "function_name": "ec_sensor_ppb",
-                "inputs": {"working": "ads.w", "auxiliary": "ads.a", "temperature": "env.temperature"},
-                "params": {"sensitivity": 2.0},
-                "outputs": {"concentration_ppb": "no2_ppb"},
-            },
-            {
-                "order": 1,
-                "function_name": "ppb_to_ugm3",
-                "inputs": {"concentration_ppb": "no2_ppb", "temperature": "env.temperature"},
-                "params": {"molecular_weight": 46.01},
-                "outputs": {"concentration_ugm3": "no2_ugm3"},
-            },
-        ]
-
-        outputs = run_steps(steps, rows)
-
-        assert set(outputs) == {"no2_ppb", "no2_ugm3"}
-        # temperature_coefficient defaults to 0, so aux is subtracted unscaled.
-        assert outputs["no2_ppb"][0][1] == pytest.approx(100.0)
-        assert outputs["no2_ugm3"][0][1] == pytest.approx(100.0 * 46.01 / 22.414)
-
-    def test_steps_run_in_order_regardless_of_list_order(self):
-        rows = [{"time": START, "ads.w": 300.0, "ads.a": 100.0, "env.temperature": 0.0}]
-        steps = [
-            {
-                "order": 1,
-                "function_name": "ppb_to_ugm3",
-                "inputs": {"concentration_ppb": "no2_ppb", "temperature": "env.temperature"},
-                "params": {"molecular_weight": 46.01},
-                "outputs": {"concentration_ugm3": "no2_ugm3"},
-            },
-            {
-                "order": 0,
-                "function_name": "ec_sensor_ppb",
-                "inputs": {"working": "ads.w", "auxiliary": "ads.a", "temperature": "env.temperature"},
-                "params": {"sensitivity": 2.0},
-                "outputs": {"concentration_ppb": "no2_ppb"},
-            },
-        ]
-
-        outputs = run_steps(steps, rows)
-
-        assert "no2_ugm3" in outputs
-
-    def test_a_failing_row_is_skipped_not_fatal(self):
-        rows = [
-            {"time": START, "env.temperature": 20.0, "env.relative_humidity": 50.0},
-            {"time": START + timedelta(seconds=60), "env.temperature": 20.0, "env.relative_humidity": 0.0},
-        ]
-        steps = [
-            {
-                "order": 0,
-                "function_name": "dew_point",
-                "inputs": {"temperature": "env.temperature", "relative_humidity": "env.relative_humidity"},
-                "params": {},
-                "outputs": {"dew_point": "env.dew_point"},
-            }
-        ]
-
-        outputs = run_steps(steps, rows)
-
-        assert len(outputs["env.dew_point"]) == 1
-
-    def test_unknown_algorithm_is_skipped(self):
-        rows = [{"time": START, "a.x": 1.0}]
-        steps = [
-            {"order": 0, "function_name": "gone_missing", "inputs": {"v": "a.x"}, "params": {}, "outputs": {"o": "y"}}
-        ]
-
-        assert run_steps(steps, rows) == {}
-
-    def test_row_missing_an_upstream_channel_is_skipped(self):
-        rows = [{"time": START}]
-        steps = [
-            {
-                "order": 0,
-                "function_name": "dew_point",
-                "inputs": {"temperature": "env.temperature", "relative_humidity": "env.relative_humidity"},
-                "params": {},
-                "outputs": {"dew_point": "env.dew_point"},
-            }
-        ]
-
-        assert run_steps(steps, rows) == {}
 
 
 class TestAnalyseCompleteness:
@@ -205,99 +57,6 @@ class TestAnalyseCompleteness:
         assert stats["ratio"] == 1.0
 
 
-def _step(order, function_name, inputs, outputs, params=None):
-    return {
-        "order": order,
-        "function_name": function_name,
-        "inputs": inputs,
-        "outputs": outputs,
-        "params": params or {},
-    }
-
-def test_resolve_output_units_reads_the_algorithms_declaration():
-    steps = [
-        _step(0, "dew_point",
-              {"temperature": "environment_metrics.temperature",
-               "relative_humidity": "environment_metrics.relative_humidity"},
-              {"dew_point": "dew_point"})
-    ]
-
-    assert resolve_output_units(steps, {}) == {"dew_point": "degC"}
-
-def test_units_chain_through_steps_the_same_way_values_do():
-    """A correction step reading an earlier step's output inherits its unit -
-    the catalog has no row for a channel that didn't exist until this run."""
-    steps = [
-        _step(0, "ec_sensor_ppb",
-              {"working": "adc.working", "auxiliary": "adc.auxiliary",
-               "temperature": "environment_metrics.temperature"},
-              {"concentration_ppb": "no2_ppb"},
-              {"sensitivity": 0.3}),
-        _step(1, "linear_temperature_correction",
-              {"value": "no2_ppb", "temperature": "environment_metrics.temperature"},
-              {"corrected": "no2_ppb_corrected"},
-              {"coefficient": 0.01}),
-        _step(2, "ppb_to_ugm3",
-              {"concentration_ppb": "no2_ppb_corrected", "temperature": "environment_metrics.temperature"},
-              {"concentration_ugm3": "no2_ugm3"},
-              {"molecular_weight": 46.01}),
-    ]
-
-    assert resolve_output_units(steps, {}) == {
-        "no2_ppb": "ppb",
-        "no2_ppb_corrected": "ppb",  # inherited through the correction
-        "no2_ugm3": "ug/m3",
-    }
-
-def test_inherited_unit_comes_from_the_existing_catalog_when_the_input_is_raw():
-    steps = [
-        _step(0, "linear_temperature_correction",
-              {"value": "environment_metrics.temperature", "temperature": "environment_metrics.temperature"},
-              {"corrected": "temperature_corrected"},
-              {"coefficient": 0.01}),
-    ]
-
-    catalog = {"environment_metrics.temperature": "degC"}
-    assert resolve_output_units(steps, catalog) == {"temperature_corrected": "degC"}
-
-def test_unknown_upstream_unit_resolves_to_none_rather_than_being_guessed():
-    steps = [
-        _step(0, "linear_temperature_correction",
-              {"value": "adc.raw", "temperature": "environment_metrics.temperature"},
-              {"corrected": "raw_corrected"},
-              {"coefficient": 0.01}),
-    ]
-
-    assert resolve_output_units(steps, {}) == {"raw_corrected": None}
-
-def test_unknown_algorithm_is_skipped_not_fatal():
-    # Same fail-soft convention as run_steps: a step naming a since-removed
-    # algorithm shouldn't stop the others' units being resolved.
-    steps = [
-        _step(0, "no_such_algorithm", {"a": "x.y"}, {"b": "gone"}),
-        _step(1, "dew_point",
-              {"temperature": "environment_metrics.temperature",
-               "relative_humidity": "environment_metrics.relative_humidity"},
-              {"dew_point": "dew_point"}),
-    ]
-
-    assert resolve_output_units(steps, {}) == {"dew_point": "degC"}
-
-def test_steps_are_resolved_in_execution_order_not_list_order():
-    steps = [
-        _step(1, "linear_temperature_correction",
-              {"value": "dew_point", "temperature": "environment_metrics.temperature"},
-              {"corrected": "dew_point_corrected"},
-              {"coefficient": 0.01}),
-        _step(0, "dew_point",
-              {"temperature": "environment_metrics.temperature",
-               "relative_humidity": "environment_metrics.relative_humidity"},
-              {"dew_point": "dew_point"}),
-    ]
-
-    assert resolve_output_units(steps, {})["dew_point_corrected"] == "degC"
-
-
 @pytest.mark.parametrize(
     "measurement_type, applies",
     [
@@ -335,3 +94,98 @@ class TestDerivedReadingInterval:
     def test_a_cycle_does_not_recurse_forever(self):
         rows = {"x": {"id": "x", "produced_by": "pp-a", "measurement_type": {"payload_kind": "computed:derived"}}}
         assert derived_reading_interval("pp-a", rows, {"pp-a": {"v": "x"}}, self.INTERVALS.get) is None
+
+
+TEMPERATURE = "environment_metrics.temperature"
+HUMIDITY = "environment_metrics.relative_humidity"
+
+
+def _dew_plan() -> ResolvedPlan:
+    return ResolvedPlan(
+        id="pp-dew",
+        blueprint_id="bp",
+        blueprint_version=1,
+        tolerance_seconds=30.0,
+        steps=(
+            ResolvedStep(
+                key="dew",
+                function_name="dew_point",
+                inputs={"temperature": TEMPERATURE, "relative_humidity": HUMIDITY},
+                outputs={"dew_point": "derived.dew_point"},
+            ),
+        ),
+    )
+
+
+def _offset_plan() -> ResolvedPlan:
+    """Reads the dew plan's output, and was recalibrated one hour in."""
+    return ResolvedPlan(
+        id="pp-offset",
+        blueprint_id="bp",
+        blueprint_version=1,
+        tolerance_seconds=30.0,
+        steps=(
+            ResolvedStep(
+                key="cal",
+                function_name="offset_scale",
+                inputs={"value": "derived.dew_point"},
+                outputs={"calibrated": "derived.dew_point_offset"},
+                calibrations=(
+                    Calibration(START.timestamp(), {"offset": 1.0}),
+                    Calibration(START.timestamp() + 3600, {"offset": 2.0}),
+                ),
+            ),
+        ),
+    )
+
+
+class TestBackfill:
+    def _run(self, plans, series, batch_size=5000):
+        events, failures = [], {}
+        for batch, batch_failures in backfill_batches(plans, series, "mesh", 7, batch_size=batch_size):
+            events.extend(batch)
+            failures.update(batch_failures)
+        return events, failures
+
+    def test_reads_only_what_the_plans_do_not_produce(self):
+        assert backfill_channels([_dew_plan(), _offset_plan()]) == {TEMPERATURE, HUMIDITY}
+        assert backfill_channels([_offset_plan()]) == {"derived.dew_point"}
+
+    def test_history_is_joined_across_channels_and_marked_as_backfill(self):
+        series = {
+            TEMPERATURE: _series([20.0, 21.0, 22.0], interval_seconds=600),
+            HUMIDITY: _series([50.0, 50.0, 50.0], interval_seconds=600, offset_seconds=5),
+        }
+
+        events, failures = self._run([_dew_plan()], series)
+
+        assert failures == {}
+        assert [e["rx_time"] for e in events] == [int(START.timestamp()) + i * 600 for i in range(3)]
+        assert all(e["backfill"] is True for e in events)
+        assert all(e["postprocessing_id"] == "pp-dew" for e in events)
+
+    def test_dependants_run_on_the_backfilled_output_with_the_calibration_of_the_time(self):
+        series = {
+            TEMPERATURE: _series([20.0, 20.0], interval_seconds=7200),
+            HUMIDITY: _series([50.0, 50.0], interval_seconds=7200),
+        }
+
+        events, _ = self._run([_dew_plan(), _offset_plan()], series)
+
+        dew = [e["payload"]["derived"]["dew_point"] for e in events if e["postprocessing_id"] == "pp-dew"]
+        offset = [e["payload"]["derived"]["dew_point_offset"] for e in events if e["postprocessing_id"] == "pp-offset"]
+        assert offset == [pytest.approx(dew[0] + 1.0), pytest.approx(dew[1] + 2.0)]
+
+    def test_join_state_carries_across_batches(self):
+        # Batches of one: every temperature is paired with a humidity from the next batch.
+        series = {
+            TEMPERATURE: _series([20.0, 21.0], interval_seconds=600),
+            HUMIDITY: _series([50.0, 50.0], interval_seconds=600, offset_seconds=5),
+        }
+
+        events, _ = self._run([_dew_plan()], series, batch_size=1)
+
+        assert len(events) == 2
+
+    def test_no_history_publishes_nothing(self):
+        assert self._run([_dew_plan()], {TEMPERATURE: [], HUMIDITY: []}) == ([], {})

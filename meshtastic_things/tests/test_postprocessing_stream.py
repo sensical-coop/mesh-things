@@ -144,3 +144,13 @@ class TestDerivedEvents:
         assert line.startswith("derived,")
         assert "postprocessing_id=pp-1" in line
         assert "temperature_calibrated=21" in line
+
+    def test_only_backfilled_events_carry_the_marker_detection_skips(self):
+        derived = [Observation("derived.a", 10.0, 1.0, "pp-1")]
+        plans = [_offset_plan("pp-1")]
+
+        [live] = derived_events(MESH_ID, NODE_ID, derived, plans)
+        [backfilled] = derived_events(MESH_ID, NODE_ID, derived, plans, backfill=True)
+
+        assert "backfill" not in live
+        assert backfilled["backfill"] is True

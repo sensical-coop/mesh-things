@@ -162,6 +162,8 @@ SPECTACULAR_SETTINGS = {
         "DetectorEnum": "common.detectors.DETECTOR_CHOICES",
         "OperatorRequestStatusEnum": "registry.models.OperatorRequestStatus",
         "DataDeletionStatusEnum": "registry.models.DataDeletionStatus",
+        "BackfillStatusEnum": "registry.models.BackfillStatus",
+        "BackfillResultStatusEnum": [("done", "done"), ("failed", "failed")],
     },
 }
 

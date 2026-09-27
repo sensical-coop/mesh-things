@@ -655,3 +655,37 @@ class StepCalibration(models.Model):
 
     def __str__(self) -> str:
         return f"{self.step_key} from {self.valid_from:%Y-%m-%d %H:%M}"
+
+
+class BackfillStatus(models.TextChoices):
+    PENDING = "pending", "Pending"
+    RUNNING = "running", "Running"
+    DONE = "done", "Done"
+    FAILED = "failed", "Failed"
+
+
+class PostprocessingBackfill(models.Model):
+    """A request to run a postprocessing over stored history, picked up by the quality worker."""
+
+    id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
+    device_postprocessing = models.ForeignKey(
+        DevicePostprocessing, on_delete=models.CASCADE, related_name="backfills"
+    )
+    start = models.DateTimeField()
+    stop = models.DateTimeField()
+    # Also rerun the postprocessings reading this one's outputs, in order.
+    include_dependants = models.BooleanField(default=False)
+    status = models.CharField(max_length=16, choices=BackfillStatus.choices, default=BackfillStatus.PENDING)
+    requested_by = models.ForeignKey(Owner, on_delete=models.SET_NULL, null=True, blank=True, related_name="+")
+    points_published = models.PositiveIntegerField(default=0)
+    error = models.TextField(null=True, blank=True)
+    created_at = models.DateTimeField(auto_now_add=True)
+    started_at = models.DateTimeField(null=True, blank=True)
+    finished_at = models.DateTimeField(null=True, blank=True)
+
+    class Meta:
+        db_table = "postprocessing_backfills"
+        ordering = ["created_at"]
+
+    def __str__(self) -> str:
+        return f"{self.device_postprocessing} {self.start:%Y-%m-%d}..{self.stop:%Y-%m-%d} ({self.status})"

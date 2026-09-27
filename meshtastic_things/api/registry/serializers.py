@@ -6,6 +6,7 @@ from django.conf import settings
 
 from django.contrib.auth.password_validation import validate_password
 from django.core.exceptions import ValidationError as DjangoValidationError
+from django.utils import timezone
 from drf_spectacular.utils import extend_schema_field
 from rest_framework import serializers
 
@@ -29,6 +30,7 @@ from .models import (
     OperatorRequest,
     Owner,
     OwnerRole,
+    PostprocessingBackfill,
     PostprocessingBlueprint,
     PostprocessingStep,
     StepCalibration,
@@ -1154,3 +1156,60 @@ class StepCalibrationSerializer(serializers.ModelSerializer):
             raise serializers.ValidationError({"params": errors})
         attrs["function_name"] = step.function_name
         return attrs
+
+
+class PostprocessingBackfillSerializer(serializers.ModelSerializer):
+    postprocessing_id = serializers.UUIDField(source="device_postprocessing_id", read_only=True)
+    stop = serializers.DateTimeField(required=False, help_text="Defaults to now.")
+
+    class Meta:
+        model = PostprocessingBackfill
+        fields = [
+            "id",
+            "postprocessing_id",
+            "start",
+            "stop",
+            "include_dependants",
+            "status",
+            "points_published",
+            "error",
+            "created_at",
+            "started_at",
+            "finished_at",
+        ]
+        read_only_fields = ["id", "status", "points_published", "error", "created_at", "started_at", "finished_at"]
+
+    def validate(self, attrs):
+        stop = attrs.get("stop") or timezone.now()
+        if attrs["start"] >= stop:
+            raise serializers.ValidationError({"start": "Must be before stop"})
+        if stop - attrs["start"] > postprocessing.MAX_BACKFILL_SPAN:
+            raise serializers.ValidationError(
+                {"start": f"A backfill covers at most {postprocessing.MAX_BACKFILL_SPAN.days} days. Split it"}
+            )
+        attrs["stop"] = stop
+        return attrs
+
+
+class BackfillClaimSerializer(PostprocessingBackfillSerializer):
+    """What the quality worker needs to run a claimed backfill."""
+
+    mesh_id = serializers.UUIDField(source="device_postprocessing.device.mesh_id", read_only=True)
+    node_id = serializers.IntegerField(source="device_postprocessing.device.device_id", read_only=True)
+    plans = serializers.SerializerMethodField()
+
+    class Meta(PostprocessingBackfillSerializer.Meta):
+        fields = PostprocessingBackfillSerializer.Meta.fields + ["mesh_id", "node_id", "plans"]
+
+    def get_plans(self, obj) -> list[dict]:
+        return [
+            plan.to_dict()
+            for plan in postprocessing.backfill_plans(obj.device_postprocessing, obj.include_dependants)
+        ]
+
+
+class BackfillResultSerializer(serializers.Serializer):
+    status = serializers.ChoiceField(choices=["done", "failed"])
+    points_published = serializers.IntegerField(min_value=0, required=False, default=0)
+    error = serializers.CharField(required=False, allow_null=True, allow_blank=True)
+

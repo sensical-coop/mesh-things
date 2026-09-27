@@ -36,8 +36,13 @@ def plans_from_config(event: dict) -> list[ResolvedPlan]:
     return [ResolvedPlan.from_dict(plan) for plan in event.get("plans") or []]
 
 
-def derived_events(mesh_id: str, node_id: int, derived: list[Observation], plans: list[ResolvedPlan]) -> list[dict]:
-    """One event per postprocessing and timestamp, carrying every field it produced then."""
+def derived_events(
+    mesh_id: str, node_id: int, derived: list[Observation], plans: list[ResolvedPlan], backfill: bool = False
+) -> list[dict]:
+    """One event per postprocessing and timestamp, carrying every field it produced then.
+
+    Backfilled events are marked, so the detectors leave recomputed history alone.
+    """
     by_plan = {plan.id: plan for plan in plans}
     grouped: dict[tuple[str, float], dict[str, float]] = {}
     for obs in derived:
@@ -59,6 +64,7 @@ def derived_events(mesh_id: str, node_id: int, derived: list[Observation], plans
                 "postprocessing_id": plan_id,
                 "blueprint_id": plan.blueprint_id if plan else None,
                 "blueprint_version": plan.blueprint_version if plan else None,
+                **({"backfill": True} if backfill else {}),
             }
         )
     return events

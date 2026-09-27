@@ -4,28 +4,25 @@ import os
 import structlog
 from celery import shared_task
 
-from common.channels import DERIVED_KIND, QUALITY_KIND
+from common.channels import QUALITY_KIND
 from common.detectors import COMPLETENESS
+from common.influx_query import duration_seconds
+from common.postprocessing import ResolvedPlan
 from common.units import QUALITY_CHANNELS
-from common.influx_query import duration_seconds, split_channel
 
 from .alarms import build_alarm, get_alarm_publisher
 from .executor import (
-    align_series,
     analyse_completeness,
+    backfill_batches,
+    backfill_channels,
     completeness_applies,
     derived_reading_interval,
-    resolve_output_units,
-    run_steps,
 )
 from .influx_io import get_influx_io
 from .registry_client import get_registry_client
 
 log = structlog.get_logger()
 
-# Blueprints get the longer window because their
-# algorithms are the reason this to exist in the first place.
-BLUEPRINT_LOOKBACK = os.environ.get("QUALITY_WORKER__BLUEPRINT_LOOKBACK", "-7d")
 COMPLETENESS_LOOKBACK = os.environ.get("QUALITY_WORKER__COMPLETENESS_LOOKBACK", "-24h")
 # Below this fraction of expected samples, the history is patchy enough to alarm.
 COMPLETENESS_THRESHOLD = float(os.environ.get("QUALITY_WORKER__COMPLETENESS_THRESHOLD", "0.8"))
@@ -53,110 +50,61 @@ def _reading_interval_for(device: dict, payload_kind: str | None, variant_interv
         return variant_intervals.get(payload_kind)
     return None
 
-# TODO Here we should store last postprocessing date, so that we can recover failing jobs later
 @shared_task(name="quality_worker.tasks.scan_devices")
 def scan_devices() -> dict:
     """Enqueues per-device work"""
-    client = get_registry_client()
-    devices = client.devices(is_allowed="true")
-    blueprint_runs = completeness_runs = 0
+    devices = get_registry_client().devices(is_allowed="true")
     for device in devices:
-        if device.get("postprocessing_blueprint_id"):
-            run_blueprint.delay(device["uuid"])
-            blueprint_runs += 1
         check_completeness.delay(device["uuid"])
-        completeness_runs += 1
-    log.info("scan_complete", devices=len(devices), blueprints=blueprint_runs, completeness=completeness_runs)
-    return {"devices": len(devices), "blueprint_runs": blueprint_runs, "completeness_runs": completeness_runs}
+    log.info("scan_complete", devices=len(devices))
+    return {"devices": len(devices), "completeness_runs": len(devices)}
 
 
-@shared_task(name="quality_worker.tasks.run_blueprint")
-def run_blueprint(device_uuid: str, lookback: str | None = None) -> dict:
-    """Load the device's referenced channels, align them, run every step in
-    order, and write the derived channels back."""
-    lookback = lookback or BLUEPRINT_LOOKBACK
-    registry, influx = get_registry_client(), get_influx_io()
-
-    devices = {d["uuid"]: d for d in registry.devices()}
-    device = devices.get(device_uuid)
-    if device is None:
-        log.warning("device_not_found", device_uuid=device_uuid)
-        return {"status": "device_not_found"}
-    blueprint_id = device.get("postprocessing_blueprint_id")
-    if not blueprint_id:
-        return {"status": "no_blueprint"}
-
-    blueprint = registry.blueprint(blueprint_id)
-    steps = blueprint.get("steps") or []
-    mesh_id, device_id = device["mesh_id"], device["node_id"]
-
-    # Only load channels that no other step produces - the rest come from the
-    # namespace as the run proceeds.
-    produced = {channel for step in steps for channel in (step.get("outputs") or {}).values()}
-    required = {
-        channel
-        for step in steps
-        for channel in (step.get("inputs") or {}).values()
-        if channel not in produced
-    }
-
-    named_series = {}
-    for channel in sorted(required):
-        try:
-            series = influx.read_channel(mesh_id, device_id, channel, lookback)
-        except ValueError as e:
-            log.warning("invalid_channel_reference", channel=channel, error=str(e))
-            return {"status": "invalid_channel", "channel": channel}
-        if not series:
-            log.info("channel_has_no_data", channel=channel, device_id=device_id)
-            return {"status": "no_data", "channel": channel}
-        named_series[channel] = series
-
-    variant_intervals = _variant_intervals()
-    interval = _reading_interval_for(device, None, variant_intervals) or 60
-    rows = align_series(named_series, interval)
-    if not rows:
-        return {"status": "no_aligned_rows"}
-
-    outputs = run_steps(steps, rows)
-
-    written = 0
-    step_order_by_channel = {
-        channel: step["order"] for step in steps for channel in (step.get("outputs") or {}).values()
-    }
-    for channel, series in outputs.items():
-        written += influx.write_derived(
-            mesh_id, device_id, blueprint_id, step_order_by_channel.get(channel, 0), channel, series
-        )
-    # Register the derived channels against this device, so they show up in
-    # GET /devices/{id}/measurements
+@shared_task(name="quality_worker.tasks.dispatch_backfills")
+def dispatch_backfills() -> dict:
+    """Enqueue every pending backfill. A backfill queued twice runs once, since
+    only one run can claim it."""
+    pending = get_registry_client().pending_backfills()
+    for backfill in pending:
+        run_backfill.delay(backfill["id"])
+    return {"dispatched": len(pending)}
 
 
-    # Units come with them
-    if outputs:
-        catalog_units = {
-            row["channel"]: row.get("native_unit")
-            for row in registry.measurement_types()
-            if row.get("channel")
+@shared_task(name="quality_worker.tasks.run_backfill")
+def run_backfill(backfill_id: str) -> dict:
+    """Recompute a postprocessing over stored history and publish the results
+    to the derived topic, which stores and archives them like live values."""
+    registry = get_registry_client()
+    claimed = registry.claim_backfill(backfill_id)
+    if claimed is None:
+        return {"status": "not_claimed"}
+
+    published = 0
+    try:
+        plans = [ResolvedPlan.from_dict(plan) for plan in claimed["plans"]]
+        mesh_id, node_id = claimed["mesh_id"], claimed["node_id"]
+        influx, publisher = get_influx_io(), get_alarm_publisher()
+        series = {
+            channel: influx.read_range(mesh_id, node_id, channel, claimed["start"], claimed["stop"])
+            for channel in sorted(backfill_channels(plans))
         }
-        get_alarm_publisher().publish_discovery(
-            mesh_id, device_id, DERIVED_KIND, list(outputs), resolve_output_units(steps, catalog_units)
-        )
+        failures = {}
+        for events, batch_failures in backfill_batches(plans, series, mesh_id, node_id):
+            publisher.publish_derived(events)
+            published += sum(len(event["payload"]["derived"]) for event in events)
+            for key, (count, first) in batch_failures.items():
+                seen, earliest = failures.get(key, (0, first))
+                failures[key] = (seen + count, earliest)
+        for key, (count, first) in failures.items():
+            log.warning("backfill_rows_skipped", backfill_id=backfill_id, step=key, rows=count, error=first)
+    except Exception as e:
+        log.exception("backfill_failed", backfill_id=backfill_id)
+        registry.finish_backfill(backfill_id, "failed", published, f"{type(e).__name__}: {e}")
+        return {"status": "failed", "points_published": published}
 
-    log.info(
-        "blueprint_complete",
-        device_id=device_id,
-        blueprint=blueprint["name"],
-        rows=len(rows),
-        channels=len(outputs),
-        points=written,
-    )
-    return {
-        "status": "ok",
-        "rows": len(rows),
-        "channels": sorted(outputs),
-        "points_written": written,
-    }
+    registry.finish_backfill(backfill_id, "done", published)
+    log.info("backfill_complete", backfill_id=backfill_id, points=published)
+    return {"status": "done", "points_published": published}
 
 
 @shared_task(name="quality_worker.tasks.check_completeness")

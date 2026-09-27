@@ -698,3 +698,121 @@ class ResyncCommandTests(PostprocessingTestCase):
         self.assertIn("1 device(s)", out.getvalue())
         self.assertEqual(self.last_published_plans()[0]["id"], attached["id"])
         self.assertEqual(self.fake_publisher.publish_postprocessing_plans.call_args[0][0].id, uuid.UUID(self.node["uuid"]))
+
+
+class BackfillTests(PostprocessingTestCase):
+    def setUp(self):
+        super().setUp()
+        self.attached = self.attach(self.create_blueprint())
+        self.calibrate(self.attached)
+        self.url = f"/devices/{self.node['uuid']}/postprocessings/{self.attached['id']}/backfills"
+        self.admin = self.create_owner(name="Worker", email="backfill-worker@example.com")
+        self.promote_to_superuser(self.admin)
+
+    def request_backfill(self, expect=202, **fields):
+        resp = self.client.post(
+            self.url, {"start": "2026-09-01T00:00:00Z", **fields}, format="json", **self.auth_headers(self.owner)
+        )
+        self.assertEqual(resp.status_code, expect, resp.content)
+        return resp.json()
+
+    def claim(self, backfill, expect=200):
+        resp = self.client.post(f"/postprocessing-backfills/{backfill['id']}/claim", **self.auth_headers(self.admin))
+        self.assertEqual(resp.status_code, expect, resp.content)
+        return resp.json()
+
+    def test_request_is_queued_and_listed(self):
+        backfill = self.request_backfill(stop="2026-09-02T00:00:00Z")
+
+        self.assertEqual(backfill["status"], "pending")
+        listed = self.client.get(self.url, **self.auth_headers(self.owner)).json()
+        self.assertEqual([b["id"] for b in listed], [backfill["id"]])
+        pending = self.client.get("/postprocessing-backfills?status=pending", **self.auth_headers(self.admin)).json()
+        self.assertEqual([b["id"] for b in pending], [backfill["id"]])
+
+    def test_a_disabled_but_runnable_postprocessing_can_be_backfilled(self):
+        self.assertFalse(self.attached["is_enabled"])
+        self.request_backfill()
+
+    def test_an_unrunnable_postprocessing_is_refused(self):
+        attached = self.attach(self.create_blueprint(_no2_blueprint(name="uncalibrated")), output_prefix="u_")
+
+        resp = self.client.post(
+            f"/devices/{self.node['uuid']}/postprocessings/{attached['id']}/backfills",
+            {"start": "2026-09-01T00:00:00Z"},
+            format="json",
+            **self.auth_headers(self.owner),
+        )
+
+        self.assertEqual(resp.status_code, 400)
+        self.assertIn("needs a calibration", str(resp.json()))
+
+    def test_range_must_be_ordered_and_bounded(self):
+        self.request_backfill(stop="2026-08-01T00:00:00Z", expect=400)
+        self.request_backfill(start="2025-01-01T00:00:00Z", stop="2026-01-01T00:00:00Z", expect=400)
+
+    def test_claim_hands_over_the_resolved_plan_once(self):
+        backfill = self.request_backfill(stop="2026-09-02T00:00:00Z")
+
+        claimed = self.claim(backfill)
+
+        self.assertEqual(claimed["status"], "running")
+        self.assertEqual(claimed["node_id"], 7)
+        self.assertEqual(claimed["mesh_id"], self.mesh["id"])
+        [plan] = claimed["plans"]
+        self.assertEqual(plan["id"], self.attached["id"])
+        self.assertEqual(plan["steps"][0]["calibrations"][0]["params"], {"sensitivity": 2.0})
+        self.claim(backfill, expect=409)
+
+    def test_dependants_are_included_in_order_when_asked(self):
+        self.update(self.attached, is_enabled=True)
+        second = self.attach(self.create_blueprint(_offset_blueprint(default_channel="derived.no2_ppb")), is_enabled=True)
+        self.attach(self.create_blueprint(_offset_blueprint(name="unrelated")), output_prefix="t_", is_enabled=True)
+
+        alone = self.claim(self.request_backfill())
+        chained = self.claim(self.request_backfill(include_dependants=True))
+
+        self.assertEqual([p["id"] for p in alone["plans"]], [self.attached["id"]])
+        self.assertEqual([p["id"] for p in chained["plans"]], [self.attached["id"], second["id"]])
+
+    def test_result_is_recorded_once(self):
+        backfill = self.request_backfill()
+        self.claim(backfill)
+        url = f"/postprocessing-backfills/{backfill['id']}"
+
+        resp = self.client.put(url, {"status": "done", "points_published": 42}, format="json", **self.auth_headers(self.admin))
+
+        self.assertEqual(resp.status_code, 200, resp.content)
+        self.assertEqual(resp.json()["points_published"], 42)
+        self.assertIsNotNone(resp.json()["finished_at"])
+        again = self.client.put(url, {"status": "failed"}, format="json", **self.auth_headers(self.admin))
+        self.assertEqual(again.status_code, 409)
+
+    def test_abandoned_run_can_be_claimed_again(self):
+        from django.utils import timezone
+
+        from registry.models import PostprocessingBackfill
+        from registry.postprocessing import BACKFILL_CLAIM_TIMEOUT
+
+        backfill = self.request_backfill()
+        self.claim(backfill)
+        PostprocessingBackfill.objects.filter(pk=backfill["id"]).update(
+            started_at=timezone.now() - BACKFILL_CLAIM_TIMEOUT * 2
+        )
+
+        self.claim(backfill)
+
+    def test_worker_routes_are_superuser_only(self):
+        backfill = self.request_backfill()
+
+        self.assertEqual(self.client.get("/postprocessing-backfills", **self.auth_headers(self.owner)).status_code, 403)
+        resp = self.client.post(f"/postprocessing-backfills/{backfill['id']}/claim", **self.auth_headers(self.owner))
+        self.assertEqual(resp.status_code, 403)
+
+    def test_viewer_cannot_request_a_backfill(self):
+        other = self.create_owner(name="B", email="backfill-viewer@example.com")
+        self.client.put(f"/meshes/{self.mesh['id']}", {"is_public": True}, format="json", **self.auth_headers(self.owner))
+
+        resp = self.client.post(self.url, {"start": "2026-09-01T00:00:00Z"}, format="json", **self.auth_headers(other))
+
+        self.assertEqual(resp.status_code, 403)

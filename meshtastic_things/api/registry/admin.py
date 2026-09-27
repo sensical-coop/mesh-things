@@ -14,6 +14,7 @@ from .models import (
     Mesh,
     OperatorRequest,
     Owner,
+    PostprocessingBackfill,
     PostprocessingBlueprint,
     PostprocessingInputBinding,
     PostprocessingStep,
@@ -214,6 +215,15 @@ class DevicePostprocessingAdmin(_ReadOnlyAdmin):
     list_filter = ("is_enabled",)
     search_fields = ("device__device_id", "device__label", "blueprint_version__blueprint__name")
     inlines = [PostprocessingInputBindingInline, StepCalibrationInline]
+
+
+@admin.register(PostprocessingBackfill)
+class PostprocessingBackfillAdmin(_ReadOnlyAdmin):
+    """Read-only: requested through the API and run by the quality worker."""
+
+    list_display = ("device_postprocessing", "start", "stop", "status", "points_published", "created_at", "finished_at")
+    list_select_related = ("device_postprocessing__device", "device_postprocessing__blueprint_version__blueprint")
+    list_filter = ("status",)
 
 
 @admin.register(TelemetryVariant)

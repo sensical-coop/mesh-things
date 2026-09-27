@@ -20,12 +20,31 @@ class RegistryClient:
         resp.raise_for_status()
         return resp.json()
 
+    def _send(self, method: str, path: str, body: dict | None = None) -> requests.Response:
+        return self._session.request(method, f"{self.base_url}{path}", json=body, timeout=self._timeout)
+
     def devices(self, **filters) -> list[dict]:
         """Superuser key -> every owner's devices"""
         return self._get("/devices", **filters)
 
-    def blueprint(self, blueprint_id: str) -> dict:
-        return self._get(f"/postprocessing-blueprints/{blueprint_id}")
+    def pending_backfills(self) -> list[dict]:
+        return self._get("/postprocessing-backfills", status="pending")
+
+    def claim_backfill(self, backfill_id: str) -> dict | None:
+        """The backfill with its plans, or None when another worker holds it."""
+        resp = self._send("POST", f"/postprocessing-backfills/{backfill_id}/claim")
+        if resp.status_code == 409:
+            return None
+        resp.raise_for_status()
+        return resp.json()
+
+    def finish_backfill(self, backfill_id: str, status: str, points_published: int, error: str | None = None) -> None:
+        resp = self._send(
+            "PUT",
+            f"/postprocessing-backfills/{backfill_id}",
+            {"status": status, "points_published": points_published, "error": error},
+        )
+        resp.raise_for_status()
 
     def telemetry_variants(self) -> list[dict]:
         """Used for the default_reading_interval_seconds fallback when a device has
