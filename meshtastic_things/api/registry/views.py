@@ -1363,8 +1363,9 @@ class MeasurementTypeListCreateView(APIView):
     def get(self, request):
         """List the shared catalog of measurement types and their units.
 
-        Sensor fields are named `telemetry:<variant>` and blueprint outputs
-        `derived:<blueprint>`.
+        Sensor fields are named `telemetry:<variant>`. Blueprint outputs from
+        every postprocessing share `computed:derived`, and data quality metrics
+        use `computed:quality`.
 
         Args:
             kind: Restrict to one namespace, one of `telemetry`, `device` or
