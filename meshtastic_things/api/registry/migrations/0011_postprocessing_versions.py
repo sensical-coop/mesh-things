@@ -6,6 +6,51 @@ from django.conf import settings
 from django.db import migrations, models
 
 
+def _slot_for(channel, name, slots):
+    """Reuse the slot already reading `channel`, or declare a new one named after the input."""
+    for slot, default_channel in slots.items():
+        if default_channel == channel:
+            return slot
+    slot, suffix = name, 2
+    while slot in slots:
+        slot, suffix = f"{name}_{suffix}", suffix + 1
+    slots[slot] = channel
+    return slot
+
+
+def version_existing_blueprints(apps, schema_editor):
+    """Give every blueprint a version 1 holding the steps it had before versioning.
+
+    A step input naming an earlier step's output becomes a step reference; any
+    other channel becomes an input slot defaulting to that channel.
+    """
+    Blueprint = apps.get_model("registry", "PostprocessingBlueprint")
+    BlueprintVersion = apps.get_model("registry", "BlueprintVersion")
+    Step = apps.get_model("registry", "PostprocessingStep")
+
+    for blueprint in Blueprint.objects.filter(versions__isnull=True):
+        version = BlueprintVersion.objects.create(blueprint=blueprint, number=1)
+        slots, produced = {}, {}
+        for step in Step.objects.filter(blueprint=blueprint).order_by("order"):
+            step.key = f"step_{step.order}"
+            inputs = {}
+            for arg, channel in (step.inputs or {}).items():
+                ref = produced.get(channel) or produced.get(str(channel).removeprefix("derived."))
+                inputs[arg] = ref or f"slot:{_slot_for(channel, arg, slots)}"
+            for output, field in (step.outputs or {}).items():
+                produced[field] = f"step:{step.key}.{output}"
+            step.inputs = inputs
+            step.version = version
+            step.save(update_fields=["key", "inputs", "version"])
+        version.inputs = [{"slot": slot, "default_channel": channel} for slot, channel in slots.items()]
+        version.save(update_fields=["inputs"])
+
+    # Postgres refuses the later ALTER TABLE on postprocessing_steps while
+    # deferred foreign key checks from these writes are still pending.
+    if schema_editor.connection.vendor == "postgresql":
+        schema_editor.execute("SET CONSTRAINTS ALL IMMEDIATE")
+
+
 class Migration(migrations.Migration):
     dependencies = [
         ("registry", "0010_terms_acceptances_and_data_deletions"),
@@ -13,7 +58,7 @@ class Migration(migrations.Migration):
 
     operations = [
         migrations.RemoveField(model_name="device", name="postprocessing_blueprint"),
-        migrations.DeleteModel(name="PostprocessingStep"),
+        migrations.RemoveConstraint(model_name="postprocessingstep", name="uq_step_blueprint_order"),
         migrations.AlterField(
             model_name="postprocessingblueprint",
             name="owner",
@@ -44,6 +89,36 @@ class Migration(migrations.Migration):
                 'db_table': 'blueprint_versions',
                 'ordering': ['number'],
             },
+        ),
+        migrations.AddField(
+            model_name='postprocessingstep',
+            name='version',
+            field=models.ForeignKey(null=True, on_delete=django.db.models.deletion.CASCADE, related_name='steps', to='registry.blueprintversion'),
+        ),
+        migrations.AddField(
+            model_name='postprocessingstep',
+            name='key',
+            field=models.SlugField(default='', max_length=64),
+            preserve_default=False,
+        ),
+        migrations.RunPython(version_existing_blueprints, migrations.RunPython.noop),
+        migrations.RemoveField(model_name='postprocessingstep', name='blueprint'),
+        migrations.RemoveField(model_name='postprocessingstep', name='created_at'),
+        migrations.RemoveField(model_name='postprocessingstep', name='updated_at'),
+        migrations.AlterField(
+            model_name='postprocessingstep',
+            name='version',
+            field=models.ForeignKey(on_delete=django.db.models.deletion.CASCADE, related_name='steps', to='registry.blueprintversion'),
+        ),
+        migrations.AlterField(
+            model_name='postprocessingstep',
+            name='inputs',
+            field=models.JSONField(default=dict),
+        ),
+        migrations.AlterField(
+            model_name='postprocessingstep',
+            name='outputs',
+            field=models.JSONField(default=dict),
         ),
         migrations.CreateModel(
             name='DevicePostprocessing',
@@ -76,23 +151,6 @@ class Migration(migrations.Migration):
             ],
             options={
                 'db_table': 'postprocessing_input_bindings',
-            },
-        ),
-        migrations.CreateModel(
-            name='PostprocessingStep',
-            fields=[
-                ('id', models.UUIDField(default=uuid.uuid4, editable=False, primary_key=True, serialize=False)),
-                ('key', models.SlugField(max_length=64)),
-                ('order', models.PositiveIntegerField()),
-                ('function_name', models.CharField(max_length=128)),
-                ('inputs', models.JSONField(default=dict)),
-                ('params', models.JSONField(blank=True, default=dict)),
-                ('outputs', models.JSONField(default=dict)),
-                ('version', models.ForeignKey(on_delete=django.db.models.deletion.CASCADE, related_name='steps', to='registry.blueprintversion')),
-            ],
-            options={
-                'db_table': 'postprocessing_steps',
-                'ordering': ['order'],
             },
         ),
         migrations.CreateModel(
