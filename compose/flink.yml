@@ -12,11 +12,18 @@ x-flink-state-properties: &flink-state-properties |
   state.savepoints.dir: file:///opt/flink/savepoints
   execution.checkpointing.interval: 10s
   execution.checkpointing.mode: EXACTLY_ONCE
+  execution.checkpointing.externalized-checkpoint-retention: RETAIN_ON_CANCELLATION
 
   taskmanager.numberOfTaskSlots: 6
 
   jobmanager.memory.process.size: 1024m
   taskmanager.memory.process.size: 1280m
+
+# Shared by the cluster and the submitters, so a job resubmitted after the
+# cluster restarts resumes from its last checkpoint instead of replaying Kafka.
+x-flink-state-volumes: &flink-state-volumes
+  - flink_checkpoints:/opt/flink/checkpoints
+  - flink_savepoints:/opt/flink/savepoints
 
 x-flink-client-properties: &flink-client-properties |
   state.backend: rocksdb
@@ -24,6 +31,7 @@ x-flink-client-properties: &flink-client-properties |
   state.savepoints.dir: file:///opt/flink/savepoints
   execution.checkpointing.interval: 10s
   execution.checkpointing.mode: EXACTLY_ONCE
+  execution.checkpointing.externalized-checkpoint-retention: RETAIN_ON_CANCELLATION
   rest.address: jobmanager
 
 services:
@@ -35,6 +43,7 @@ services:
     container_name: jobmanager
     command: jobmanager
     restart: unless-stopped
+    volumes: *flink-state-volumes
     ports:
       - "127.0.0.1:8081:8081"
     environment:
@@ -54,6 +63,7 @@ services:
     container_name: taskmanager
     command: taskmanager
     restart: unless-stopped
+    volumes: *flink-state-volumes
     depends_on:
       jobmanager:
         condition: service_healthy
@@ -74,6 +84,7 @@ services:
     env_file: "../.env"
     <<: *flink-image
     restart: "no"
+    volumes: *flink-state-volumes
     command: ["./submit-job.sh", "decode_job.py", "mesh-decode-decrypt"]
     environment:
       JOB_MANAGER_RPC_ADDRESS: jobmanager
@@ -96,6 +107,7 @@ services:
     env_file: "../.env"
     <<: *flink-image
     restart: "no"
+    volumes: *flink-state-volumes
     command: ["./submit-job.sh", "postprocessing_job.py", "mesh-postprocessing"]
     environment:
       JOB_MANAGER_RPC_ADDRESS: jobmanager
@@ -117,6 +129,7 @@ services:
     env_file: "../.env"
     <<: *flink-image
     restart: "no"
+    volumes: *flink-state-volumes
     command: ["./submit-job.sh", "pattern_detection_job.py", "mesh-pattern-detection"]
     environment:
       JOB_MANAGER_RPC_ADDRESS: jobmanager
@@ -138,6 +151,7 @@ services:
     env_file: "../.env"
     <<: *flink-image
     restart: "no"
+    volumes: *flink-state-volumes
     command: ["./submit-job.sh", "absence_detection_job.py", "mesh-absence-detection"]
     environment:
       JOB_MANAGER_RPC_ADDRESS: jobmanager
@@ -151,3 +165,7 @@ services:
         condition: service_healthy
       pattern-detection-job:
         condition: service_completed_successfully
+
+volumes:
+  flink_checkpoints:
+  flink_savepoints:

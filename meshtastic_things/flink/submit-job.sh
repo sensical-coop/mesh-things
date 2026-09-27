@@ -49,5 +49,34 @@ if [ "$count" -eq 1 ]; then
 	exit 0
 fi
 
+# Per job, so the newest state of this job can be told apart from the others'.
+CHECKPOINTS_DIR="/opt/flink/checkpoints/$JOB_NAME"
+SAVEPOINTS_DIR="/opt/flink/savepoints/$JOB_NAME"
+
+# Newest complete checkpoint or savepoint. Without one the job cold-starts,
+# and a decode job replays its raw topic from the beginning.
+latest=""
+for candidate in $(ls -td "$CHECKPOINTS_DIR"/*/chk-* "$SAVEPOINTS_DIR"/savepoint-* 2>/dev/null); do
+	if [ -f "$candidate/_metadata" ]; then
+		latest="$candidate"
+		break
+	fi
+done
+
+resume=()
+if [ -n "$latest" ]; then
+	echo "submit-job: resuming '$JOB_NAME' from $latest"
+	resume=(-s "file://$latest")
+	# Checkpoints of earlier runs of this job are superseded by the one resumed from.
+	for run_dir in "$CHECKPOINTS_DIR"/*/; do
+		case "$latest" in "${run_dir%/}"/*) ;; *) rm -rf "$run_dir" ;; esac
+	done
+else
+	echo "submit-job: no checkpoint or savepoint for '$JOB_NAME', starting fresh"
+fi
+
 echo "submit-job: submitting '$JOB_NAME' from $JOB_FILE (detached)"
-exec flink run -d -py "$JOB_FILE"
+exec flink run -d \
+	-Dstate.checkpoints.dir="file://$CHECKPOINTS_DIR" \
+	-Dstate.savepoints.dir="file://$SAVEPOINTS_DIR" \
+	"${resume[@]}" -py "$JOB_FILE"
