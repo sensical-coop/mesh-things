@@ -85,7 +85,11 @@ from(bucket: "{self.bucket}")
 
     def latest_all(self, mesh_id: str, node_id: int, lookback: str = "-30d") -> list[dict]:
         """No-?payload_kind= variant of latest() - combined query across every
-        field; grouping by (_measurement, _field) avoids the schema-collision issue."""
+        field; grouping by (_measurement, _field) avoids the schema-collision issue.
+
+        last() runs before any other operator so InfluxDB can push it down to
+        storage; otherwise every point in the lookback, alarms included, is read.
+        """
         mesh_id = _validate_mesh_id(mesh_id)
         lookback = _validate_range_bound(lookback, "lookback")
 
@@ -93,8 +97,10 @@ from(bucket: "{self.bucket}")
 from(bucket: "{self.bucket}")
   |> range(start: {lookback})
   |> filter(fn: (r) => r.mesh_id == "{mesh_id}" and r.node_id == "{int(node_id)}")
+  |> last()
   |> filter(fn: (r) => not contains(value: r._field, set: {_METADATA_FIELDS_FLUX}))
   |> group(columns: ["_measurement", "_field"])
+  |> sort(columns: ["_time"])
   |> last()
 '''
         return self._records_to_readings(self._query_api.query(flux))
@@ -111,7 +117,9 @@ from(bucket: "{self.bucket}")
 from(bucket: "{self.bucket}")
   |> range(start: {start}, stop: {stop})
   |> filter(fn: (r) => r._measurement == "quality" and r.mesh_id == "{mesh_id}" and r.node_id == "{int(node_id)}")
+  |> last()
   |> group(columns: ["channel", "_field"])
+  |> sort(columns: ["_time"])
   |> last()
 '''
         channels = self._records_to_channel_quality(self._query_api.query(quality_flux))
