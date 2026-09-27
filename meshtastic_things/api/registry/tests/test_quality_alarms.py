@@ -86,6 +86,14 @@ class QualityAlarmRoutingTests(RegistryTestCase):
         self.assertIn("environment_metrics.temperature", mail.outbox[0].body)
         self.assertIn("gaps", mail.outbox[0].subject)
 
+    def test_replayed_alarm_is_neither_emailed_nor_held(self):
+        _, mesh = self._device()
+
+        AlarmCommand._handle(_alarm(mesh["id"], 1, detector="range", replay=True), now=NOW)
+
+        self.assertEqual(len(mail.outbox), 0)
+        self.assertIsNone(redis_client().zscore(WINDOWS_KEY, _window(mesh)))
+
     def test_repeat_alarm_is_held_for_the_summary(self):
         _, mesh = self._device()
 

@@ -12,6 +12,9 @@ REGISTRY__ALARM_EMAIL_COOLDOWN_SECONDS (or the owner's own
 `alarm_email_cooldown_seconds`). Every later alarm on that device, from any
 detector or channel, is held in Redis and sent as one summary when the window
 closes. A cooldown of 0 emails every alarm.
+
+Alarms marked `replay` come from history being reprocessed, not from a device
+reporting now, and are never emailed.
 """
 import json
 import os
@@ -79,6 +82,9 @@ class Command(BaseCommand):
     def _handle(event: dict, now: float | None = None) -> None:
         now = time.time() if now is None else now
         detector = event.get("detector")
+        if event.get("replay"):
+            log.debug("Skipping replayed alarm", detector=detector)
+            return
         mesh_id, device_id = event.get("mesh_id"), event.get("device_id")
         if not detector or not mesh_id or device_id is None:
             log.debug("Skipping unroutable alarm", detector=detector)

@@ -11,6 +11,11 @@ its bounds only ever come from a device's own Measurement row.
 
 Reads decoded and derived telemetry alike, so channels computed by
 postprocessing are checked exactly like the ones a device reports.
+
+Alarms carry the reading's own time, so a replayed reading rewrites the alarm
+already stored for it. Each alarm is held briefly before it is sent: if its
+channel turns out to be arriving at a rate no device reports at, the history is
+being replayed and the alarm is marked `replay`, which registry never emails.
 """
 import argparse
 import datetime
@@ -32,7 +37,7 @@ from pyflink.datastream.connectors.kafka import (
     KafkaSource,
 )
 from pyflink.datastream.functions import FlatMapFunction, KeySelector, KeyedBroadcastProcessFunction
-from pyflink.datastream.state import ListStateDescriptor, MapStateDescriptor
+from pyflink.datastream.state import ListStateDescriptor, MapStateDescriptor, ValueStateDescriptor
 from pyflink.common.serialization import SimpleStringSchema
 
 from common.flink_kafka import committed_or_latest
@@ -71,9 +76,10 @@ class ExplodeFields(FlatMapFunction):
         # Imported here, not at module level - the established convention for
         # every UDF in this codebase, since `common` resolves on the
         # taskmanager rather than the submitting client.
-        from common import channels
+        from common import channels, timestamps
 
         self._channels = channels
+        self._timestamps = timestamps
 
     def flat_map(self, value: str):
         try:
@@ -86,7 +92,7 @@ class ExplodeFields(FlatMapFunction):
             return
         device_id = event.get("node_id")
         mesh_id = event.get("mesh_id")
-        rx_time = event.get("rx_time")
+        reading_time, _ = self._timestamps.resolve_timestamp(event)
         payload_kind = event.get("payload_kind")
         for channel, val in self._channels.channels_in(payload_kind, event.get("payload") or {}):
             yield json.dumps(
@@ -95,7 +101,7 @@ class ExplodeFields(FlatMapFunction):
                     "device_id": device_id,
                     "channel": channel,
                     "value": val,
-                    "time": rx_time,
+                    "time": reading_time,
                 }
             )
 
@@ -122,6 +128,9 @@ class DetectPatterns(KeyedBroadcastProcessFunction):
         self._recent_values = runtime_context.get_list_state(
             ListStateDescriptor("recent-values", Types.DOUBLE())
         )
+        self._arrivals = runtime_context.get_list_state(ListStateDescriptor("arrivals", Types.DOUBLE()))
+        self._pending = runtime_context.get_list_state(ListStateDescriptor("pending-alarms", Types.STRING()))
+        self._release_at = runtime_context.get_state(ValueStateDescriptor("release-at", Types.LONG()))
 
     def process_element(self, value: str, ctx):
         try:
@@ -136,6 +145,13 @@ class DetectPatterns(KeyedBroadcastProcessFunction):
         obs_value = obs.get("value")
         if obs_value is None:
             return
+        reading_time = obs.get("time")
+
+        timer_service = ctx.timer_service()
+        now_ms = timer_service.current_processing_time()
+        arrivals, replay = self._detectors.track_arrival(list(self._arrivals.get() or []), now_ms / 1000)
+        self._arrivals.update(arrivals)
+        alarms = []
 
         config = self._lookup(ctx, channel)
         intervals = self._lookup(ctx, f"{mesh_id}:{device_id}")
@@ -161,18 +177,43 @@ class DetectPatterns(KeyedBroadcastProcessFunction):
             span = f"{window} consecutive readings"
             if interval:
                 span += f" (~{window * interval / 3600:.1f}h at a {interval}s reading interval)"
-            yield self._alarm(
-                mesh_id, device_id, channel, obs_value, "flat_value",
+            alarms.append(self._alarm(
+                mesh_id, device_id, channel, obs_value, reading_time, "flat_value",
                 f"Value flat at {obs_value} for {span}",
-            )
+            ))
 
         if self._detectors.RANGE in enabled:
             valid_min, valid_max = override.get("valid_min"), override.get("valid_max")
             if self._detectors.range_check_triggered(obs_value, valid_min, valid_max):
-                yield self._alarm(
-                    mesh_id, device_id, channel, obs_value, "range",
+                alarms.append(self._alarm(
+                    mesh_id, device_id, channel, obs_value, reading_time, "range",
                     f"Value {obs_value} outside the configured range [{valid_min}, {valid_max}]",
-                )
+                ))
+
+        if replay:
+            release_at = self._release_at.value()
+            if release_at is not None:
+                timer_service.delete_processing_time_timer(release_at)
+            yield from self._release(replay=True, extra=alarms)
+        elif alarms:
+            if self._release_at.value() is None:
+                release_at = now_ms + int(self._detectors.REPLAY_HOLD_SECONDS * 1000)
+                timer_service.register_processing_time_timer(release_at)
+                self._release_at.update(release_at)
+            for alarm in alarms:
+                self._pending.add(json.dumps(alarm))
+
+    def on_timer(self, timestamp: int, ctx):
+        yield from self._release(replay=False)
+
+    def _release(self, replay: bool, extra: tuple = ()):
+        """Send the held alarms and `extra`, marked as a replay when one was detected."""
+        for alarm in [json.loads(raw) for raw in self._pending.get() or []] + list(extra):
+            if replay:
+                alarm["replay"] = True
+            yield json.dumps(alarm)
+        self._pending.clear()
+        self._release_at.clear()
 
     @staticmethod
     def _lookup(ctx, key: str) -> dict:
@@ -202,22 +243,20 @@ class DetectPatterns(KeyedBroadcastProcessFunction):
         yield from ()  # this method only mutates broadcast state, never emits output
 
     @staticmethod
-    def _alarm(mesh_id, device_id, channel, value, detector, message) -> str:
+    def _alarm(mesh_id, device_id, channel, value, reading_time, detector, message) -> dict:
         """Shared shape with quality_worker's batch alarms - one consumer routes
         both to email (registry's consume_quality_alarms), one writer persists
         both (writer/point_builders.py's build_alarm_points)."""
-        return json.dumps(
-            {
-                "mesh_id": mesh_id,
-                "device_id": device_id,
-                "channel": channel,
-                "detector": detector,
-                "source": SOURCE_STREAM,
-                "value": value,
-                "message": message,
-                "triggered_at": datetime.datetime.now(datetime.timezone.utc).isoformat(),
-            }
-        )
+        return {
+            "mesh_id": mesh_id,
+            "device_id": device_id,
+            "channel": channel,
+            "detector": detector,
+            "source": SOURCE_STREAM,
+            "value": value,
+            "message": message,
+            "triggered_at": datetime.datetime.fromtimestamp(reading_time, datetime.timezone.utc).isoformat(),
+        }
 
 
 def build_pipeline(

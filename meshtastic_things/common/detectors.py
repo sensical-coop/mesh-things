@@ -82,6 +82,30 @@ def range_check_triggered(value: float, min_value: float | None, max_value: floa
     return False
 
 
+# A device never reports one channel this fast. Only a replay of stored history
+# does. Duplicates of one packet heard by several gateways stay well below it.
+REPLAY_BURST_READINGS = 10
+REPLAY_BURST_SECONDS = 10.0
+# How long an alarm waits for its channel to show a burst before it is sent.
+REPLAY_HOLD_SECONDS = 5.0
+
+
+def track_arrival(arrivals: list[float], now: float) -> tuple[list[float], bool]:
+    """Record a reading's arrival and report whether its channel is being replayed.
+
+    Args:
+        arrivals: Processing times, in seconds, of the channel's recent readings.
+        now: Processing time of this reading.
+
+    Returns:
+        The arrivals to keep, and whether they amount to a replay burst.
+    """
+    recent = [t for t in arrivals if now - t < REPLAY_BURST_SECONDS]
+    recent.append(now)
+    recent = recent[-REPLAY_BURST_READINGS:]
+    return recent, len(recent) >= REPLAY_BURST_READINGS
+
+
 DETECTORS = {
     "stuck_value": stuck_value_triggered,
     "range_check": range_check_triggered,
