@@ -179,10 +179,10 @@ if CORS_ALLOWED_ORIGINS:
     # with credentials: 'include', which now applies to readings too since it
     # recognizes registry's session cookie (SessionAuthentication above).
     CORS_ALLOW_CREDENTIALS = True
-    if not IS_READINGS:
-        # readings has no CsrfViewMiddleware (its endpoints are read-only, so
-        # CSRF enforcement never triggers). This only matters for registry.
-        CSRF_TRUSTED_ORIGINS = CORS_ALLOWED_ORIGINS
+    # readings has no CsrfViewMiddleware, but SessionAuthentication still checks
+    # CSRF on its one write, POST /readings/archive/meshes/{id}/credentials, and
+    # that check rejects cross-origin requests from origins not listed here.
+    CSRF_TRUSTED_ORIGINS = CORS_ALLOWED_ORIGINS
 
 # Only registry sets cookies (login, CSRF)
 # Needed whenever the frontend and API live on different subdomains of the

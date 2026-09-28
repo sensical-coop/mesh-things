@@ -5,8 +5,9 @@ from unittest.mock import MagicMock, patch
 
 from botocore.exceptions import EndpointConnectionError
 from django.core.cache import cache
+from django.middleware.csrf import _get_new_csrf_string
 from django.test import SimpleTestCase, override_settings
-from rest_framework.test import APITestCase
+from rest_framework.test import APIClient, APITestCase
 
 from readings import archive
 from registry.auth import hash_api_key
@@ -149,6 +150,23 @@ class ArchiveCredentialsTests(ArchiveTestCase):
             ],
         )
         self.assertEqual(sts.assume_role.call_args.kwargs["DurationSeconds"], 3600)
+
+    @override_settings(CSRF_TRUSTED_ORIGINS=["https://things.example.org"])
+    def test_a_session_needs_a_csrf_token_from_a_trusted_origin(self):
+        self.fake_sts()
+        client = APIClient(enforce_csrf_checks=True)
+        client.force_login(self.operator)
+        token = _get_new_csrf_string()
+        client.cookies["csrftoken"] = token
+
+        cases = [
+            ({"HTTP_ORIGIN": "https://things.example.org"}, 403),
+            ({"HTTP_ORIGIN": "https://evil.example.org", "HTTP_X_CSRFTOKEN": token}, 403),
+            ({"HTTP_ORIGIN": "https://things.example.org", "HTTP_X_CSRFTOKEN": token}, 201),
+        ]
+        for headers, status in cases:
+            with self.subTest(**headers):
+                self.assertEqual(client.post(self.url("credentials"), **headers).status_code, status)
 
     @override_settings(ARCHIVE_STS="")
     def test_no_credentials_where_the_storage_has_no_sts(self):
