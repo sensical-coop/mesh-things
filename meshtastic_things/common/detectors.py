@@ -86,3 +86,12 @@ DETECTORS = {
     "stuck_value": stuck_value_triggered,
     "range_check": range_check_triggered,
 }
+
+
+def alarm_due(last_raised_at: float | None, reading_time: float, repeat_seconds: float) -> bool:
+    """Whether a condition holding at `reading_time` raises an alarm, at most once per `repeat_seconds`.
+
+    Only readings after the last alarm count, so a replayed backlog raises at
+    most one alarm per `repeat_seconds` of data.
+    """
+    return last_raised_at is None or reading_time - last_raised_at >= repeat_seconds

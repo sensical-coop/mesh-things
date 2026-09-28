@@ -4,6 +4,9 @@ Two checks run here, both per (mesh_id, device_id, channel):
   - flat_value  - the channel hasn't moved for a configured span of time
   - range       - the value is outside the range configured for this device
 
+A condition raises one alarm when it starts, then at most one per
+PATTERN_DETECTION__ALARM_REPEAT_HOURS while it holds, by the readings' own time.
+
 Config comes from "registry" over mesh.quality_config.v1: flat_value's default
 enabled/disabled state and reading interval come from the catalog
 (TelemetryVariantMeasurement/TelemetryVariant); range has no catalog default -
@@ -56,6 +59,7 @@ QUALITY_CONFIG_STATE = MapStateDescriptor("quality-config", Types.STRING(), Type
 # readings* that corresponds to is derived per-channel from its reading
 # interval - see common/detectors.py's flat_window_for.
 FLAT_VALUE_HOURS = float(os.environ.get("PATTERN_DETECTION__FLAT_VALUE_HOURS", "3"))
+ALARM_REPEAT_SECONDS = float(os.environ.get("PATTERN_DETECTION__ALARM_REPEAT_HOURS", "1")) * 3600
 
 SOURCE_STREAM = "stream"
 
@@ -71,9 +75,10 @@ class ExplodeFields(FlatMapFunction):
         # Imported here, not at module level - the established convention for
         # every UDF in this codebase, since `common` resolves on the
         # taskmanager rather than the submitting client.
-        from common import channels
+        from common import channels, timestamps
 
         self._channels = channels
+        self._timestamps = timestamps
 
     def flat_map(self, value: str):
         try:
@@ -86,7 +91,10 @@ class ExplodeFields(FlatMapFunction):
             return
         device_id = event.get("node_id")
         mesh_id = event.get("mesh_id")
-        rx_time = event.get("rx_time")
+        try:
+            reading_time, _ = self._timestamps.resolve_timestamp(event)
+        except KeyError:
+            reading_time = None
         payload_kind = event.get("payload_kind")
         for channel, val in self._channels.channels_in(payload_kind, event.get("payload") or {}):
             yield json.dumps(
@@ -95,7 +103,7 @@ class ExplodeFields(FlatMapFunction):
                     "device_id": device_id,
                     "channel": channel,
                     "value": val,
-                    "time": rx_time,
+                    "time": reading_time,
                 }
             )
 
@@ -121,6 +129,10 @@ class DetectPatterns(KeyedBroadcastProcessFunction):
         self._detectors = detectors
         self._recent_values = runtime_context.get_list_state(
             ListStateDescriptor("recent-values", Types.DOUBLE())
+        )
+        # Detector -> reading time of its last alarm.
+        self._last_raised = runtime_context.get_map_state(
+            MapStateDescriptor("last-raised", Types.STRING(), Types.DOUBLE())
         )
 
     def process_element(self, value: str, ctx):
@@ -157,7 +169,13 @@ class DetectPatterns(KeyedBroadcastProcessFunction):
             config.get("default_enabled_detectors") if config else None,
         )
 
-        if self._detectors.FLAT_VALUE in enabled and self._detectors.stuck_value_triggered(recent, window=window):
+        reading_time = obs.get("time") or datetime.datetime.now(datetime.timezone.utc).timestamp()
+
+        if (
+            self._detectors.FLAT_VALUE in enabled
+            and self._detectors.stuck_value_triggered(recent, window=window)
+            and self._due(self._detectors.FLAT_VALUE, reading_time)
+        ):
             span = f"{window} consecutive readings"
             if interval:
                 span += f" (~{window * interval / 3600:.1f}h at a {interval}s reading interval)"
@@ -168,11 +186,20 @@ class DetectPatterns(KeyedBroadcastProcessFunction):
 
         if self._detectors.RANGE in enabled:
             valid_min, valid_max = override.get("valid_min"), override.get("valid_max")
-            if self._detectors.range_check_triggered(obs_value, valid_min, valid_max):
+            if self._detectors.range_check_triggered(obs_value, valid_min, valid_max) and self._due(
+                self._detectors.RANGE, reading_time
+            ):
                 yield self._alarm(
                     mesh_id, device_id, channel, obs_value, "range",
                     f"Value {obs_value} outside the configured range [{valid_min}, {valid_max}]",
                 )
+
+    def _due(self, detector: str, reading_time: float) -> bool:
+        """Record and allow an alarm unless one was raised within the repeat interval."""
+        if not self._detectors.alarm_due(self._last_raised.get(detector), reading_time, ALARM_REPEAT_SECONDS):
+            return False
+        self._last_raised.put(detector, float(reading_time))
+        return True
 
     @staticmethod
     def _lookup(ctx, key: str) -> dict:
