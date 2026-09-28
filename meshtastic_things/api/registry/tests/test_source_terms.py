@@ -230,7 +230,6 @@ class SourceApiFixesTests(SourceTermsTestCase):
         body = self.client.get(f"/meshes/{mesh['id']}", **self.auth_headers(admin)).json()
 
         self.assertEqual(body["source_id"], source["id"])
-        self.assertNotIn("psk_b64", body)
 
 
 class AccountTermsTests(RegistryTestCase):

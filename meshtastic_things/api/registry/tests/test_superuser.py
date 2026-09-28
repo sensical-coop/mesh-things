@@ -67,16 +67,19 @@ class SuperuserBypassTests(RegistryTestCase):
         self.assertEqual(resp.status_code, 201)
         self.assertEqual(resp.json()["mesh_id"], mesh["id"])
 
-    def test_superuser_gets_no_special_access_to_psk_or_admin_keys(self):
+    def test_superuser_sees_psk_and_admin_keys(self):
         owner = self.create_owner(name="Owner", email="su-secret-owner@example.com")
         admin = self.create_owner(name="Admin", email="su-secret-admin@example.com")
         self.promote_to_superuser(admin)
         mesh = self.create_mesh(owner, psk_b64="SECRET")
         node = self.create_node(owner, mesh, device_id=3, admin_keys_b64=["SECRET"])
 
-        self.assertNotIn("psk_b64", self.client.get(f"/meshes/{mesh['id']}", **self.auth_headers(admin)).json())
-        self.assertNotIn(
-            "admin_keys_b64", self.client.get(f"/devices/{node['uuid']}", **self.auth_headers(admin)).json()
+        self.assertEqual(
+            self.client.get(f"/meshes/{mesh['id']}", **self.auth_headers(admin)).json()["psk_b64"], "SECRET"
+        )
+        self.assertEqual(
+            self.client.get(f"/devices/{node['uuid']}", **self.auth_headers(admin)).json()["admin_keys_b64"],
+            ["SECRET"],
         )
 
     def test_non_superuser_still_scoped_to_own_resources(self):

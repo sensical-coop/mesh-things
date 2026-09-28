@@ -45,12 +45,11 @@ class OwnerAdmin(UserAdmin):
 
 @admin.register(Mesh)
 class MeshAdmin(admin.ModelAdmin):
-    # psk_b64 is a password field
     list_display = ("channel_id", "label", "owner", "source", "is_public", "created_at")
     list_select_related = ("owner", "source")
     list_filter = ("is_public",)
-    exclude = ("psk_b64",)
-    readonly_fields = ("id", "created_at", "updated_at")
+    # A new key here would not reach the decoder; use PUT /meshes/{id}.
+    readonly_fields = ("id", "psk_b64", "created_at", "updated_at")
     search_fields = ("channel_id", "label")
 
 
@@ -123,7 +122,6 @@ class OperatorRequestAdmin(_ReadOnlyAdmin):
 
 @admin.register(Device)
 class DeviceAdmin(admin.ModelAdmin):
-    # admin_keys_b64 is a password field
     list_display = (
         "node_id",
         "label",
@@ -141,9 +139,16 @@ class DeviceAdmin(admin.ModelAdmin):
     )
     list_filter = ("is_gateway", "is_allowed")
     list_select_related = ("mesh",)
-    exclude = ("admin_keys_b64",)
     # A write here would neither reach the pipeline nor be recorded; use PUT /devices/{uuid}.
-    readonly_fields = ("id", "created_at", "updated_at", "archive_enabled", "archive_enabled_at", "archive_enabled_by")
+    readonly_fields = (
+        "id",
+        "admin_keys_b64",
+        "created_at",
+        "updated_at",
+        "archive_enabled",
+        "archive_enabled_at",
+        "archive_enabled_by",
+    )
     search_fields = ("device_id", "label", "name", "short_name")
 
     @admin.display(description="Node ID", ordering="device_id")

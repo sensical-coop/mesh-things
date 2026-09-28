@@ -118,6 +118,14 @@ class AdminRegistrationTests(RegistryTestCase):
         self.assertNotIn("device_id", device_admin.list_display)
         self.assertEqual(device_admin.node_id.short_description, "Node ID")
 
+    def test_keys_are_shown_but_not_editable(self):
+        """A key changed here would not reach the pipeline."""
+        for model, field in ((Mesh, "psk_b64"), (Device, "admin_keys_b64")):
+            with self.subTest(model=model.__name__):
+                model_admin = admin.site._registry[model]
+                self.assertIn(field, model_admin.readonly_fields)
+                self.assertNotIn(field, model_admin.exclude or ())
+
     def test_admins_whose_str_crosses_a_foreign_key_join_it_in(self):
         """Otherwise each row in a list view costs its own query."""
         for model in (Measurement, DeviceTelemetryVariant, TelemetryVariantMeasurement):
