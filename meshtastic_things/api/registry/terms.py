@@ -23,8 +23,8 @@ VERSIONS = {
     TermsKind.SOURCE: "sources-2026-09",
 }
 
-# Account and mesh copy from the console mock (apps/api-mock/src/features/terms/terms.ts),
-# draft wording pending the legal review listed in plans/sources.md.
+# The console mock (apps/api-mock/src/features/terms/terms.ts) carries a copy of this text
+# and must be kept in step. Draft wording pending the legal review listed in plans/sources.md.
 _ACCOUNT = {
     "en": {
         "title": "Before you create your account",
@@ -74,12 +74,19 @@ _MESH = {
             (
                 "controller",
                 "I act as data controller for the traffic this mesh brings in. I authorise Sensical to "
-                "ingest, decode and store it on my behalf as a processor, under the Mesh Things Terms.",
+                "ingest, decode and store it on my behalf as a processor, under the Mesh Things Terms. "
+                "If I'm an operator, this includes keeping the devices I choose in a long-term archive "
+                "that I can download.",
             ),
             (
                 "lawfulBasis",
                 "I have a lawful basis for this processing, such as legitimate interest, and I tell the "
                 "people whose nodes appear on this mesh how their data is used.",
+            ),
+            (
+                "minimisation",
+                "I'll store only what this mesh needs: I'll register only its own gateways and, if I "
+                "archive devices, only those I need and only while I need them.",
             ),
             (
                 "sensitive",
@@ -93,12 +100,12 @@ _MESH = {
         ),
         "retention_limited": (
             "This acceptance is valid for {days} days. We'll email you before it lapses so you can "
-            "renew it. If you don't, the mesh stops storing new data, and the data it stored is "
-            "deleted {grace} days later unless you renew in the meantime."
+            "renew it. If you don't, the mesh stops storing new data, and the data it stored, "
+            "including any archive, is deleted {grace} days later unless you renew in the meantime."
         ),
         "retention_unlimited": (
-            "The mesh's data is kept while the mesh is in use. When you delete it, its data is "
-            "deleted {grace} days later."
+            "The mesh's data is kept while the mesh is in use. When you delete it, its data, "
+            "including any archive, is deleted {grace} days later."
         ),
     },
     "es": {
@@ -115,12 +122,18 @@ _MESH = {
                 "controller",
                 "Actúo como responsable del tratamiento del tráfico que trae esta malla. Autorizo a "
                 "Sensical a recibirlo, descifrarlo y almacenarlo por mi cuenta como encargado del "
-                "tratamiento, según las Condiciones de Mesh Things.",
+                "tratamiento, según las Condiciones de Mesh Things. Si soy operador, esto incluye "
+                "conservar los dispositivos que elija en un archivo a largo plazo que puedo descargar.",
             ),
             (
                 "lawfulBasis",
                 "Tengo una base jurídica para este tratamiento, como el interés legítimo, e informo a las "
                 "personas cuyos nodos aparecen en esta malla de cómo se usan sus datos.",
+            ),
+            (
+                "minimisation",
+                "Guardaré solo lo que esta malla necesite: registraré solo sus propias pasarelas y, si "
+                "archivo dispositivos, solo los que necesite y solo mientras los necesite.",
             ),
             (
                 "sensitive",
@@ -135,11 +148,12 @@ _MESH = {
         "retention_limited": (
             "Esta aceptación es válida durante {days} días. Te avisaremos por correo antes de que "
             "caduque para que puedas renovarla. Si no lo haces, la malla deja de guardar datos nuevos, "
-            "y los datos guardados se borran {grace} días después salvo que renueves antes."
+            "y los datos guardados, incluido cualquier archivo, se borran {grace} días después salvo "
+            "que renueves antes."
         ),
         "retention_unlimited": (
             "Los datos de la malla se conservan mientras la malla esté en uso. Cuando la eliminas, sus "
-            "datos se borran {grace} días después."
+            "datos, incluido cualquier archivo, se borran {grace} días después."
         ),
     },
 }
@@ -161,7 +175,8 @@ _SOURCE = {
                 "controller",
                 "I act as data controller for the traffic this source brings in. I authorise "
                 "Sensical to ingest, decode and store it on my behalf as a processor, under the "
-                "Mesh Things Terms.",
+                "Mesh Things Terms. This includes keeping the devices I choose in a long-term archive "
+                "that I can download.",
             ),
             (
                 "authority",
@@ -175,8 +190,8 @@ _SOURCE = {
             ),
             (
                 "minimisation",
-                "I'll use the narrowest topic filter that covers my mesh, and I won't bridge traffic "
-                "I don't need.",
+                "I'll use the narrowest topic filter that covers my mesh, I won't bridge traffic I "
+                "don't need, and I'll archive only the devices I need and only while I need them.",
             ),
             (
                 "sensitive",
@@ -190,12 +205,12 @@ _SOURCE = {
         ),
         "retention_limited": (
             "This acceptance is valid for {days} days. We'll email you before it lapses so you can "
-            "renew it. If you don't, the source is paused, and the data of its meshes is deleted "
-            "{grace} days later unless you renew in the meantime."
+            "renew it. If you don't, the source is paused, and the data of its meshes, including "
+            "any archive, is deleted {grace} days later unless you renew in the meantime."
         ),
         "retention_unlimited": (
             "Data from this source is kept while the source is in use. When a mesh is deleted or "
-            "moved off the source, its data is deleted {grace} days later."
+            "moved off the source, its data, including any archive, is deleted {grace} days later."
         ),
     },
     "es": {
@@ -212,7 +227,8 @@ _SOURCE = {
                 "controller",
                 "Actúo como responsable del tratamiento del tráfico que trae esta fuente. Autorizo a "
                 "Sensical a recibirlo, descifrarlo y almacenarlo por mi cuenta como encargado del "
-                "tratamiento, según las Condiciones de Mesh Things.",
+                "tratamiento, según las Condiciones de Mesh Things. Esto incluye conservar los "
+                "dispositivos que elija en un archivo a largo plazo que puedo descargar.",
             ),
             (
                 "authority",
@@ -226,8 +242,8 @@ _SOURCE = {
             ),
             (
                 "minimisation",
-                "Usaré el filtro de tema más estrecho que cubra mi malla y no traeré tráfico que no "
-                "necesite.",
+                "Usaré el filtro de tema más estrecho que cubra mi malla, no traeré tráfico que no "
+                "necesite y archivaré solo los dispositivos que necesite y solo mientras los necesite.",
             ),
             (
                 "sensitive",
@@ -242,11 +258,13 @@ _SOURCE = {
         "retention_limited": (
             "Esta aceptación es válida durante {days} días. Te avisaremos por correo antes de que "
             "caduque para que puedas renovarla. Si no lo haces, la fuente se pausa y los datos de "
-            "sus mallas se borran {grace} días después salvo que renueves antes."
+            "sus mallas, incluido cualquier archivo, se borran {grace} días después salvo que "
+            "renueves antes."
         ),
         "retention_unlimited": (
             "Los datos de esta fuente se conservan mientras la fuente esté en uso. Cuando una malla "
-            "se elimina o deja la fuente, sus datos se borran {grace} días después."
+            "se elimina o deja la fuente, sus datos, incluido cualquier archivo, se borran {grace} "
+            "días después."
         ),
     },
 }
