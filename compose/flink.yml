@@ -29,7 +29,10 @@ x-flink-state-properties: &flink-state-properties |
   taskmanager.numberOfTaskSlots: 6
 
   jobmanager.memory.process.size: 1024m
-  taskmanager.memory.process.size: 1280m
+  taskmanager.memory.process.size: 1536m
+  # PyFlink's gRPC channel to the Python workers allocates direct memory. With no
+  # task budget, restoring every job at once exceeds the limit and the taskmanager dies.
+  taskmanager.memory.task.off-heap.size: 128m
 
 x-flink-client-properties: &flink-client-properties |
   state.backend: rocksdb
@@ -176,6 +179,33 @@ services:
       jobmanager:
         condition: service_healthy
       pattern-detection-job:
+        condition: service_completed_successfully
+
+  # Resubmits any job that is no longer live, resuming from its checkpoint.
+  # Unlike the one-shot submitters above it restarts with the host, and it only
+  # starts once they have all finished, so the two never submit at once.
+  flink-watchdog:
+    profiles: ["full"]
+    mem_limit: 1024m
+    container_name: flink-watchdog
+    env_file: "../.env"
+    <<: *flink-image
+    volumes: *flink-state-volumes
+    logging: *flink-logging
+    restart: unless-stopped
+    command:
+      - ./watch-jobs.sh
+      - decode_job.py:mesh-decode-decrypt
+      - postprocessing_job.py:mesh-postprocessing
+      - pattern_detection_job.py:mesh-pattern-detection
+      - absence_detection_job.py:mesh-absence-detection
+    environment:
+      JOB_MANAGER_RPC_ADDRESS: jobmanager
+      FLINK_PROPERTIES: *flink-client-properties
+    depends_on:
+      jobmanager:
+        condition: service_healthy
+      absence-detection-job:
         condition: service_completed_successfully
 
 volumes:

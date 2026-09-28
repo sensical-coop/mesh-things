@@ -65,10 +65,10 @@ else
 	echo "submit-job: no checkpoint or savepoint for '$JOB_NAME', starting fresh"
 fi
 
-# Retained checkpoints of earlier runs are never pruned by Flink.
-for run_dir in "$CHECKPOINTS_DIR"/*/; do
+# Retained checkpoints of earlier runs and old savepoints are never pruned by Flink.
+for run_dir in "$CHECKPOINTS_DIR"/*/ "$SAVEPOINTS_DIR"/savepoint-*/; do
 	[ -d "$run_dir" ] || continue
-	case "$restore_from" in
+	case "$restore_from/" in
 		"${run_dir}"*) ;;
 		*) rm -rf "$run_dir" ;;
 	esac

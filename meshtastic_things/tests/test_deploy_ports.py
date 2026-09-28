@@ -240,6 +240,22 @@ def test_submitted_job_names_match_what_the_jobs_register():
             f"'{registered.group(1)}' - the idempotency check would never match"
         )
 
+def test_watchdog_watches_exactly_the_submitted_jobs():
+    """A job missing here is never resubmitted after a jobmanager restart or a reboot."""
+    services = _services(BASE_FILES)
+    watchdog = services["flink-watchdog"]
+    submitted = {
+        f"{services[s]['command'][1]}:{services[s]['command'][2]}" for s in FLINK_SUBMITTERS
+    }
+
+    assert watchdog["command"][0] == "./watch-jobs.sh"
+    assert set(watchdog["command"][1:]) == submitted
+    assert watchdog.get("restart") == "unless-stopped", "the watchdog must come back with the host"
+    last = (watchdog.get("depends_on") or {}).get(FLINK_SUBMITTERS[-1]) or {}
+    assert last.get("condition") == "service_completed_successfully", (
+        "the watchdog must start after the submitters, or both can submit the same job"
+    )
+
 def test_flink_jvm_sizes_are_pinned():
     """Left at the image defaults these are 1600m/1728m, ~800 MB more than this workload needs
     - the difference between an 8 GB and a 16 GB VPS."""

@@ -31,7 +31,7 @@ RUN mkdir -p /opt/flink/checkpoints /opt/flink/savepoints && chown -R flink:flin
 
 WORKDIR /opt/flink/usrlib
 COPY flink/decode_job.py flink/postprocessing_job.py flink/pattern_detection_job.py flink/absence_detection_job.py .
-# Detached submission - see the script.
-COPY --chmod=0755 flink/submit-job.sh .
+# Detached submission and the watchdog - see the scripts.
+COPY --chmod=0755 flink/submit-job.sh flink/watch-jobs.sh .
 
 USER flink
