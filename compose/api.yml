@@ -74,8 +74,13 @@ services:
     restart: unless-stopped
     mem_limit: 512m
     container_name: readings-api
+    # Threaded workers: an archive zip streams for as long as the client takes, which a
+    # sync worker would neither survive (--timeout) nor share with other requests.
     command:
-      ["gunicorn", "api_project.wsgi:application", "--bind", "0.0.0.0:${READINGS__PORT}", "--workers", "2"]
+      [
+        "gunicorn", "api_project.wsgi:application", "--bind", "0.0.0.0:${READINGS__PORT}",
+        "--workers", "2", "--worker-class", "gthread", "--threads", "8",
+      ]
     depends_on:
       influxdb:
         condition: service_healthy

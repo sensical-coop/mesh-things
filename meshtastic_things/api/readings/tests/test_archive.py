@@ -1,5 +1,7 @@
 """The archive routes: who reaches a mesh's archive, and what the storage is asked for."""
+import io
 import json
+import zipfile
 from datetime import date, datetime, timezone
 from unittest.mock import MagicMock, patch
 
@@ -205,6 +207,79 @@ class ArchivePartitionTests(ArchiveTestCase):
         for suffix in ("partitions/2026-13-01/13", "partitions/2026-09-01/24"):
             self.assertEqual(self.client.get(self.url(suffix), **self.auth(self.operator)).status_code, 404)
         s3.head_object.assert_not_called()
+
+
+class ArchiveZipTests(ArchiveTestCase):
+    HOURS = [
+        {"dt": date(2026, 9, 1), "hour": 22, "size": 3, "last_modified": datetime(2026, 9, 1, 22, 59, tzinfo=timezone.utc)},
+        {"dt": date(2026, 9, 2), "hour": 5, "size": 3, "last_modified": datetime(2026, 9, 2, 5, 59, tzinfo=timezone.utc)},
+    ]
+
+    def download(self, **query):
+        response = self.client.get(self.url("zip"), query, **self.auth(self.operator))
+        body = b"".join(response.streaming_content) if response.streaming else response.content
+        return response, body
+
+    @patch.object(archive, "read_object", side_effect=lambda key: key.encode())
+    @patch.object(archive, "list_partitions")
+    def test_zips_the_range_a_folder_per_day(self, list_partitions, _):
+        list_partitions.return_value = self.HOURS
+
+        response, body = self.download(start="2026-09-01", stop="2026-09-02")
+
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response["Content-Type"], "application/zip")
+        self.assertEqual(
+            response["Content-Disposition"], f'attachment; filename="mesh-{str(self.mesh.id)[:8]}_2026-09-01_2026-09-02.zip"'
+        )
+        self.assertEqual(list_partitions.call_args.args[1:], (date(2026, 9, 1), date(2026, 9, 2)))
+        with zipfile.ZipFile(io.BytesIO(body)) as zf:
+            self.assertEqual(zf.namelist(), ["2026-09-01/2026-09-01_22.parquet", "2026-09-02/2026-09-02_05.parquet"])
+            self.assertTrue(zf.read("2026-09-02/2026-09-02_05.parquet").endswith(b"/dt=2026-09-02/hour=05/data.parquet"))
+            self.assertEqual(zf.getinfo("2026-09-01/2026-09-01_22.parquet").date_time, (2026, 9, 1, 22, 59, 0))
+
+    @patch.object(archive, "read_object", return_value=b"x")
+    @patch.object(archive, "list_partitions")
+    def test_one_day_is_named_after_it(self, list_partitions, _):
+        list_partitions.return_value = self.HOURS[:1]
+
+        response, _ = self.download(start="2026-09-01", stop="2026-09-01")
+
+        self.assertEqual(response["Content-Disposition"], f'attachment; filename="mesh-{str(self.mesh.id)[:8]}_2026-09-01.zip"')
+
+    @patch.object(archive, "list_partitions", return_value=[])
+    def test_an_empty_range_is_not_found(self, _):
+        self.assertEqual(self.download(start="2020-01-01")[0].status_code, 404)
+
+    @patch.object(archive, "list_partitions", return_value=HOURS)
+    def test_nobody_else_downloads_it(self, _):
+        other = self.owner("other@example.com", role=OwnerRole.OPERATOR)
+
+        self.assertEqual(self.client.get(self.url("zip"), **self.auth(other)).status_code, 404)
+
+    @patch.object(archive, "read_object", return_value=b"x")
+    @patch.object(archive, "list_partitions", return_value=HOURS)
+    def test_the_db_connection_is_released_before_streaming(self, *_):
+        response = self.client.get(self.url("zip"), **self.auth(self.operator))
+
+        with patch("readings.archive_views.connection", in_atomic_block=False) as connection:
+            next(iter(response.streaming_content))
+        connection.close.assert_called_once()
+
+    def test_objects_are_read_in_order_from_the_mesh_prefix(self):
+        s3 = MagicMock()
+        s3.get_object.side_effect = lambda Bucket, Key: {"Body": io.BytesIO(Key.encode())}
+        archive._clients[("s3", "http://minio:9000")] = s3
+        hours = [dict(self.HOURS[0], hour=h) for h in range(24)]
+
+        body = b"".join(archive.zip_partitions(self.mesh.id, hours))
+
+        with zipfile.ZipFile(io.BytesIO(body)) as zf:
+            self.assertEqual([info.filename[-10:-8] for info in zf.infolist()], [f"{h:02d}" for h in range(24)])
+            self.assertEqual(
+                zf.read("2026-09-01/2026-09-01_07.parquet").decode(),
+                f"telemetry/mesh_id={self.mesh.id}/dt=2026-09-01/hour=07/data.parquet",
+            )
 
 
 @override_settings(**ARCHIVE)

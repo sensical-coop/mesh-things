@@ -3,7 +3,8 @@ from datetime import date
 
 import structlog
 from botocore.exceptions import BotoCoreError, ClientError
-from django.http import HttpResponseRedirect
+from django.db import connection
+from django.http import HttpResponseRedirect, StreamingHttpResponse
 from drf_spectacular.utils import OpenApiParameter, OpenApiResponse, OpenApiTypes, extend_schema
 from registry.exceptions import BadGateway
 from registry.models import Mesh
@@ -131,3 +132,54 @@ class ArchivePartitionView(APIView):
             if not archive.object_exists(key):
                 raise NotFound("Partition not found")
             return HttpResponseRedirect(archive.presigned_url(key))
+
+
+def _without_db(chunks):
+    """Release the request's DB connection before the first chunk, as a download can
+    outlast any query by minutes. Never inside a transaction, which it would break."""
+    if not connection.in_atomic_block:
+        connection.close()
+    yield from chunks
+
+
+def _zip_name(mesh_id, partitions) -> str:
+    """By the mesh's short id: readings may not read mesh labels (provision_read_role)."""
+    first, last = partitions[0]["dt"], partitions[-1]["dt"]
+    days = f"{first:%Y-%m-%d}" if first == last else f"{first:%Y-%m-%d}_{last:%Y-%m-%d}"
+    return f"mesh-{str(mesh_id)[:8]}_{days}.zip"
+
+
+class ArchiveZipView(APIView):
+    @extend_schema(
+        parameters=MANIFEST_PARAMS,
+        responses={
+            (200, "application/zip"): OpenApiResponse(
+                OpenApiTypes.BINARY, description="The hourly Parquet files of the range, as one zip."
+            ),
+            404: OpenApiResponse(description="No such mesh, or nothing archived in the range."),
+        },
+    )
+    def get(self, request, mesh_id):
+        """Download a range of a mesh's archive as one zip, a folder per day.
+
+        Each hour is `YYYY-MM-DD/YYYY-MM-DD_HH.parquet` (UTC), so a day or the whole
+        archive is one download. The zip streams as the files are read, and holds
+        what the file list shows at the time of the request. For querying in place,
+        issue credentials instead. Available to the mesh's owner while they are an
+        operator, and to superusers.
+
+        Args:
+            start: Earliest day to include, as `YYYY-MM-DD`. Defaults to the first archived day.
+            stop: Latest day to include, as `YYYY-MM-DD`. Defaults to the last archived day.
+        """
+        _require_archive_access(request, mesh_id)
+        start, stop = _day(request, "start"), _day(request, "stop")
+        with _storage():
+            partitions = archive.list_partitions(mesh_id, start, stop)
+        if not partitions:
+            raise NotFound("Nothing archived in that range")
+        log.info("archive_zip_download", owner_id=str(request.user.id), mesh_id=str(mesh_id), files=len(partitions))
+        chunks = _without_db(archive.zip_partitions(mesh_id, partitions))
+        response = StreamingHttpResponse(chunks, content_type="application/zip")
+        response["Content-Disposition"] = f'attachment; filename="{_zip_name(mesh_id, partitions)}"'
+        return response

@@ -13,6 +13,7 @@ urlpatterns = [
     path("meshes/<uuid:mesh_id>/nodes/<int:node_id>/quality", views.QualityView.as_view()),
     path("archive/meshes/<uuid:mesh_id>", archive_views.ArchiveManifestView.as_view()),
     path("archive/meshes/<uuid:mesh_id>/credentials", archive_views.ArchiveCredentialsView.as_view()),
+    path("archive/meshes/<uuid:mesh_id>/zip", archive_views.ArchiveZipView.as_view()),
     path(
         "archive/meshes/<uuid:mesh_id>/partitions/<str:day>/<int:hour>",
         archive_views.ArchivePartitionView.as_view(),

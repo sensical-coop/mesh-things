@@ -4,8 +4,12 @@ Works against the bundled MinIO or an external S3. The archive is laid out as
 `{prefix}/mesh_id=<id>/dt=<YYYY-MM-DD>/hour=<HH>/data.parquet`, so a mesh is one
 key prefix and a credential can be limited to it.
 """
+import io
 import json
 import re
+import zipfile
+from collections import deque
+from concurrent.futures import ThreadPoolExecutor
 from datetime import date, timezone
 
 from django.conf import settings
@@ -16,6 +20,10 @@ STS_AWS = "aws"
 # boto3 needs a region to sign; MinIO accepts its default.
 _DEFAULT_REGION = "us-east-1"
 _PARTITION = re.compile(r"/dt=(\d{4}-\d{2}-\d{2})/hour=(\d{2})/" + re.escape(PARTITION_FILENAME) + "$")
+
+# Parallel object reads while zipping: S3 answers each GET in tens of milliseconds, and
+# the whole zip has to stream well inside a gunicorn worker's timeout.
+ZIP_READERS = 8
 
 _clients: dict = {}
 
@@ -162,3 +170,58 @@ def presigned_url(key: str) -> str:
         Params={"Bucket": settings.ARCHIVE_BUCKET, "Key": key},
         ExpiresIn=settings.ARCHIVE_CREDENTIAL_TTL_S,
     )
+
+
+def read_object(key: str) -> bytes:
+    return _client("s3", settings.ARCHIVE_ENDPOINT_URL).get_object(Bucket=settings.ARCHIVE_BUCKET, Key=key)["Body"].read()
+
+
+def zip_entry_name(day: date, hour: int) -> str:
+    """One folder per day, and a name that says which hour, unlike the stored data.parquet."""
+    return f"{day:%Y-%m-%d}/{day:%Y-%m-%d}_{hour:02d}.parquet"
+
+
+class _Sink(io.RawIOBase):
+    """Where zipfile writes; drained after every entry so the zip streams. Not seekable,
+    so zipfile writes data descriptors instead of going back to fix up headers."""
+
+    def __init__(self):
+        self._chunks: list[bytes] = []
+
+    def writable(self) -> bool:
+        return True
+
+    def write(self, data) -> int:
+        self._chunks.append(bytes(data))
+        return len(data)
+
+    def drain(self) -> bytes:
+        out = b"".join(self._chunks)
+        self._chunks.clear()
+        return out
+
+
+def _read_in_order(keys: list[str]):
+    """Yield each object in order, keeping at most ZIP_READERS reads ahead of the consumer."""
+    with ThreadPoolExecutor(max_workers=ZIP_READERS) as pool:
+        pending = deque()
+        for key in keys:
+            pending.append(pool.submit(read_object, key))
+            if len(pending) >= ZIP_READERS:
+                yield pending.popleft().result()
+        while pending:
+            yield pending.popleft().result()
+
+
+def zip_partitions(mesh_id, partitions: list[dict]):
+    """The partitions as one zip, streamed entry by entry. Parquet is already compressed,
+    so entries are stored as they are. Objects are read a few at a time, in order."""
+    keys = [partition_key(mesh_id, p["dt"], p["hour"]) for p in partitions]
+    sink = _Sink()
+    with zipfile.ZipFile(sink, "w", zipfile.ZIP_STORED) as zf:
+        for partition, data in zip(partitions, _read_in_order(keys)):
+            modified = partition["last_modified"].astimezone(timezone.utc)
+            info = zipfile.ZipInfo(zip_entry_name(partition["dt"], partition["hour"]), date_time=modified.timetuple()[:6])
+            zf.writestr(info, data)
+            yield sink.drain()
+    yield sink.drain()
