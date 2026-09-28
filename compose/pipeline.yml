@@ -103,8 +103,10 @@ services:
         condition: service_healthy
       kafka-topics-init:
         condition: service_completed_successfully
+      # Absent when the archive is on an external S3.
       minio:
         condition: service_healthy
+        required: false
     env_file: "../.env"
     restart: unless-stopped
     ports:
@@ -117,8 +119,9 @@ services:
       retries: 5
       start_period: 30s
 
+  # The bundled object store; left out when the archive is on an external S3.
   minio:
-    profiles: ["full"]
+    profiles: ["minio"]
     mem_limit: 768m
     container_name: minio
     image: quay.io/minio/minio:RELEASE.2025-09-07T16-13-09Z
@@ -137,6 +140,41 @@ services:
       interval: 10s
       timeout: 5s
       retries: 5
+
+  # One-shot: the bucket, and the read-only identity readings issues archive
+  # credentials from. Idempotent, so it runs on every `up`.
+  minio_init:
+    profiles: ["minio"]
+    mem_limit: 128m
+    container_name: minio-init
+    image: quay.io/minio/minio:RELEASE.2025-09-07T16-13-09Z
+    restart: "no"
+    depends_on:
+      minio:
+        condition: service_healthy
+    env_file: "../.env"
+    entrypoint: ["/bin/sh", "-ec"]
+    command:
+      - |
+        mc alias set local http://minio:9000 "$$S3_WRITER__ACCESS_KEY" "$$S3_WRITER__SECRET_KEY" >/dev/null
+        mc mb --ignore-existing "local/$$S3_WRITER__BUCKET"
+        if [ -z "$$READINGS__ARCHIVE_ACCESS_KEY" ]; then
+          echo "READINGS__ARCHIVE_ACCESS_KEY not set - no archive reader created."
+          exit 0
+        fi
+        cat > /tmp/archive-reader.json <<EOF
+        {
+          "Version": "2012-10-17",
+          "Statement": [
+            {"Effect": "Allow", "Action": ["s3:GetObject"], "Resource": ["arn:aws:s3:::$$S3_WRITER__BUCKET/*"]},
+            {"Effect": "Allow", "Action": ["s3:ListBucket"], "Resource": ["arn:aws:s3:::$$S3_WRITER__BUCKET"]}
+          ]
+        }
+        EOF
+        mc admin policy create local archive-reader /tmp/archive-reader.json
+        mc admin user add local "$$READINGS__ARCHIVE_ACCESS_KEY" "$$READINGS__ARCHIVE_SECRET_KEY"
+        mc admin policy attach local archive-reader --user "$$READINGS__ARCHIVE_ACCESS_KEY" 2>/dev/null || true
+        echo "Archive reader ready."
 
 volumes:
   minio_data:

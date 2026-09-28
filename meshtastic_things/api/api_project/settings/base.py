@@ -148,6 +148,7 @@ REST_FRAMEWORK = {
         "resend-verification": "3/hour",
         "request-password-reset": "5/hour",
         "operator-request": "3/day",
+        "archive-credentials": "20/hour",
     },
     "DEFAULT_SCHEMA_CLASS": "drf_spectacular.openapi.AutoSchema",
 }
@@ -214,6 +215,28 @@ DATA_RETENTION_DAYS = int(_retention_days) if _retention_days else None
 DATA_DELETION_GRACE_DAYS = env_int("REGISTRY__DATA_DELETION_GRACE_DAYS", 30)
 TERMS_RENEWAL_NOTICE_DAYS = env_int("REGISTRY__TERMS_RENEWAL_NOTICE_DAYS", 30)
 DATA_LIFECYCLE_INTERVAL_SECONDS = env_int("REGISTRY__DATA_LIFECYCLE_INTERVAL_SECONDS", 3600)
+
+# The Parquet archive as readings serves it, on the bundled MinIO or an external S3.
+# A blank bucket (lite) turns the archive routes off.
+ARCHIVE_BUCKET = env_str("READINGS__ARCHIVE_BUCKET")
+ARCHIVE_PREFIX = env_str("READINGS__ARCHIVE_PREFIX", "telemetry").strip("/")
+# Blank for AWS, where boto3 picks the regional endpoint.
+ARCHIVE_ENDPOINT_URL = env_str("READINGS__ARCHIVE_ENDPOINT_URL")
+# What callers reach, and what presigned links are signed for.
+ARCHIVE_PUBLIC_ENDPOINT_URL = env_str("READINGS__ARCHIVE_PUBLIC_ENDPOINT_URL") or ARCHIVE_ENDPOINT_URL
+ARCHIVE_REGION = env_str("READINGS__ARCHIVE_REGION")
+ARCHIVE_ACCESS_KEY = env_str("READINGS__ARCHIVE_ACCESS_KEY")
+ARCHIVE_SECRET_KEY = env_str("READINGS__ARCHIVE_SECRET_KEY")
+# `minio`, `aws`, or blank for a provider without STS, which turns the credentials route off.
+ARCHIVE_STS = env_str("READINGS__ARCHIVE_STS")
+ARCHIVE_ROLE_ARN = env_str("READINGS__ARCHIVE_ROLE_ARN")
+ARCHIVE_CREDENTIAL_TTL_S = env_int("READINGS__ARCHIVE_CREDENTIAL_TTL_S", 3600)
+if ARCHIVE_STS not in ("", "minio", "aws"):
+    raise ImproperlyConfigured(f"READINGS__ARCHIVE_STS is {ARCHIVE_STS!r}; expected minio, aws or blank")
+if ARCHIVE_STS == "aws" and not ARCHIVE_ROLE_ARN:
+    raise ImproperlyConfigured("READINGS__ARCHIVE_STS=aws needs READINGS__ARCHIVE_ROLE_ARN")
+if not 900 <= ARCHIVE_CREDENTIAL_TTL_S <= 43200:
+    raise ImproperlyConfigured("READINGS__ARCHIVE_CREDENTIAL_TTL_S must be between 900 and 43200 seconds")
 
 LOGGING = {
     "version": 1,
