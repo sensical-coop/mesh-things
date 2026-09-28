@@ -35,6 +35,8 @@ if not IS_READINGS:
     EMAIL_HOST_PASSWORD = env_str("REGISTRY__EMAIL_HOST_PASSWORD", "")
     EMAIL_USE_TLS = env_bool("REGISTRY__EMAIL_USE_TLS", True)
     EMAIL_USE_SSL = env_bool("REGISTRY__EMAIL_USE_SSL", False)
+    # Without a timeout a blocked SMTP port hangs until gunicorn kills the worker.
+    EMAIL_TIMEOUT = 10
     DEFAULT_FROM_EMAIL = env_str("REGISTRY__DEFAULT_FROM_EMAIL", "noreply@example.com")
 
     _SMTP_BACKEND = "django.core.mail.backends.smtp.EmailBackend"
