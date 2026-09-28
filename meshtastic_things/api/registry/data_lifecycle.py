@@ -253,18 +253,6 @@ def purge_due_deletions(now: datetime) -> int:
     return done
 
 
-def expire_unowned_archive(now: datetime) -> bool:
-    """Delete archived readings that arrived without a mesh once older than the retention period.
-
-    They belong to no owner, so there is nobody to ask for a renewal. Skipped when terms
-    are not enforced, where the retention period means nothing.
-    """
-    if not terms_enforced() or not settings.DATA_RETENTION_DAYS:
-        return False
-    get_data_store().delete_unknown_mesh_archive_before(now - timedelta(days=settings.DATA_RETENTION_DAYS))
-    return True
-
-
 def resume_paused() -> int:
     """With terms no longer enforced, resume every mesh and source a lapse paused.
 
@@ -296,5 +284,4 @@ def run_pass(now: datetime | None = None) -> dict:
         "paused_meshes": pause_lapsed_meshes(now),
         "resumed": resume_paused(),
         "deletions_done": purge_due_deletions(now),
-        "unowned_archive_expired": expire_unowned_archive(now),
     }

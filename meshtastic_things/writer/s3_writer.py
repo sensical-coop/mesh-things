@@ -10,13 +10,15 @@ from aiohttp import web
 from botocore.exceptions import ClientError
 import structlog
 from kafka import KafkaConsumer
+from pipeline.config_state import replay_consumer, replay_to_end
 from tools.healthcheck import HealthState, KafkaConsumerHealth
 
 log = structlog.get_logger()
 
 # One object per partition
 PARTITION_FILENAME = "data.parquet"
-UNKNOWN_MESH = "unknown"
+# The name a device's entry on mesh.sink_config.v1 gives this sink.
+ARCHIVE_SINK = "archive"
 _MISSING_OBJECT_CODES = {"NoSuchKey", "404", "NotFound"}
 
 SCHEMA = pa.schema(
@@ -75,6 +77,10 @@ class S3Writer(object):
         region_name=None,
     ):
         self.kafka_bootstrap_server = kafka_bootstrap_server
+        self.sink_config_topic = os.environ.get("REGISTRY__SINK_CONFIG_KAFKA_TOPIC", "mesh.sink_config.v1")
+        # "<mesh_id>:<device_id>" of every device that opted in to the archive.
+        self.archived: set[str] = set()
+        self.config_consumer = None
         self.kafka_consumer = KafkaConsumer(
             bootstrap_servers=self.kafka_bootstrap_server,
             group_id="s3-writer-group",
@@ -118,12 +124,43 @@ class S3Writer(object):
         return "/".join(
             [
                 self.s3_prefix,
-                f"mesh_id={mesh_id or UNKNOWN_MESH}",
+                f"mesh_id={mesh_id}",
                 f"dt={now:%Y-%m-%d}",
                 f"hour={now:%H}",
                 PARTITION_FILENAME,
             ]
         )
+
+    def _apply_sink_record(self, record) -> None:
+        event = json.loads(record.value)
+        key = event.get("key")
+        if not key:
+            return
+        if event.get("op") != "delete" and ARCHIVE_SINK in (event.get("sinks") or []):
+            self.archived.add(key)
+        else:
+            self.archived.discard(key)
+
+    def load_sinks(self) -> None:
+        """Read mesh.sink_config.v1 to its current end. Runs before the first data poll,
+        so opted-in devices are not dropped while the state is still empty."""
+        self.config_consumer = replay_consumer(self.kafka_bootstrap_server, self.sink_config_topic)
+        read = replay_to_end(self.config_consumer, self._apply_sink_record)
+        log.info("Loaded archive sinks", records=read, devices=len(self.archived))
+
+    async def follow_sinks(self):
+        while True:
+            messages = await asyncio.to_thread(self.config_consumer.poll, timeout_ms=1000)
+            for records in messages.values():
+                for record in records:
+                    try:
+                        self._apply_sink_record(record)
+                    except Exception as e:
+                        log.exception("Bad sink config message skipped", exc_info=e)
+
+    def archives(self, event: dict) -> bool:
+        """Only devices that opted in are archived; readings without a mesh never are."""
+        return f"{event.get('mesh_id')}:{event.get('node_id')}" in self.archived
 
     def _read_partition(self, key: str) -> list[dict]:
         """Rows already archived under this key, empty if there are none yet"""
@@ -171,7 +208,7 @@ class S3Writer(object):
                 for record in consumer_records:
                     try:
                         event = json.loads(record.value)
-                        if event is not None:
+                        if event is not None and self.archives(event):
                             buffer.append(event)
                     except Exception as e:
                         log.exception("Bad message skipped", exc_info=e)

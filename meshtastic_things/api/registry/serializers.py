@@ -601,6 +601,10 @@ def _max_three_admin_keys(value):
 
 
 _ADMIN_KEYS_HELP = "Base64-encoded admin keys (up to 3). Warning: PUT replaces the whole list."
+_ARCHIVE_HELP = (
+    "Store this device's readings in the Parquet archive from now on. Only on a mesh owned by an "
+    "operator, and only on instances that run the archive. Turning it off keeps what was stored."
+)
 
 
 def _validate_location_pair(serializer, attrs):
@@ -681,6 +685,9 @@ class DeviceReadSerializer(serializers.ModelSerializer):
             "reading_interval_seconds",
             "publish_interval_seconds",
             "absence_detection_enabled",
+            "archive_enabled",
+            "archive_enabled_at",
+            "archive_enabled_by",
             "last_seen",
             "created_at",
             "updated_at",
@@ -692,6 +699,10 @@ class DeviceReadSerializer(serializers.ModelSerializer):
         viewer_id = self.context.get("viewer_id")
         if viewer_id is None or viewer_id != instance.mesh.owner_id:
             data.pop("admin_keys_b64", None)
+            # Like the archive itself: for the owner and superusers.
+            if not self.context.get("viewer_is_superuser"):
+                for field in ("archive_enabled", "archive_enabled_at", "archive_enabled_by"):
+                    data.pop(field, None)
         return data
 
 
@@ -767,6 +778,7 @@ class DeviceUpdateSerializer(serializers.ModelSerializer):
             "reading_interval_seconds",
             "publish_interval_seconds",
             "absence_detection_enabled",
+            "archive_enabled",
         ]
         extra_kwargs = {
             "label": {"required": False},
@@ -774,7 +786,16 @@ class DeviceUpdateSerializer(serializers.ModelSerializer):
             "reading_interval_seconds": {"required": False},
             "publish_interval_seconds": {"required": False},
             "absence_detection_enabled": {"required": False},
+            "archive_enabled": {"required": False, "help_text": _ARCHIVE_HELP},
         }
+
+    def validate_archive_enabled(self, value):
+        if value and not self.instance.archive_enabled:
+            if not self.context.get("archive_available"):
+                raise serializers.ValidationError("This instance has no archive.")
+            if not self.instance.mesh.owner.is_operator:
+                raise serializers.ValidationError("Only devices on a mesh owned by an operator can be archived.")
+        return value
 
     def validate(self, attrs):
         return _validate_location_pair(self, attrs)

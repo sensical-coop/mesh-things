@@ -32,7 +32,7 @@ from .data_lifecycle import (
     resume_source,
     schedule_mesh_deletion,
 )
-from . import postprocessing
+from . import postprocessing, sinks
 from .emqx_client import get_emqx_client
 from .exceptions import BadGateway, Conflict
 from .kafka_publisher import get_publisher, publish_gateway_state
@@ -444,9 +444,16 @@ class OperatorRequestDetailView(APIView):
             operator_request.decided_by = request.user
             operator_request.decided_at = timezone.now()
             operator_request.save(update_fields=["status", "decision_note", "decided_by", "decided_at"])
-            if approve and not operator_request.owner.is_operator:
+            promoted = approve and not operator_request.owner.is_operator
+            if promoted:
                 operator_request.owner.role = OwnerRole.OPERATOR
                 operator_request.owner.save(update_fields=["role"])
+        if promoted:
+            try:
+                sinks.publish_owner(operator_request.owner)
+            except Exception as e:
+                # Only re-enables archives the owner had before, so nothing is archived by mistake.
+                log.warning("owner_sinks_publish_failed", owner_id=str(operator_request.owner_id), error=str(e))
         try:
             send_operator_request_decided_email(operator_request)
         except Exception as e:
@@ -595,6 +602,10 @@ def _delete_owner_cascading(owner: Owner) -> None:
             publisher.publish_node_unreject(node)
         except Exception as e:
             raise BadGateway(f"Failed to publish unreject for device {node.id}, owner NOT removed: {e}")
+    try:
+        sinks.unpublish_devices(devices.filter(archive_enabled=True))
+    except Exception as e:
+        raise BadGateway(f"Failed to publish sink removal, owner NOT removed: {e}")
     processed = list(devices.filter(postprocessings__isnull=False).distinct())
     with transaction.atomic():
         meshes = list(owner.meshes.values_list("id", "source_id"))
@@ -635,13 +646,16 @@ class OwnerDetailView(APIView):
 
         Args:
             role: `member`, the default, or `operator`, which may also manage
-                sources. Granting `operator` also approves any pending operator
-                request from this owner, without emailing them.
+                sources and archive devices. Granting `operator` also approves any
+                pending operator request from this owner, without emailing them.
+                Taking it away stops archiving the owner's devices, and the role
+                is kept if the pipeline cannot be told.
         """
         _require_superuser(request)
         owner = _get_owner_or_404(owner_id)
         serializer = OwnerRoleSerializer(data=request.data)
         serializer.is_valid(raise_exception=True)
+        previous_role = owner.role
         with transaction.atomic():
             owner.role = serializer.validated_data["role"]
             owner.save(update_fields=["role"])
@@ -650,6 +664,17 @@ class OwnerDetailView(APIView):
                 owner.operator_requests.filter(status=OperatorRequestStatus.PENDING).update(
                     status=OperatorRequestStatus.APPROVED, decided_by=request.user, decided_at=timezone.now()
                 )
+        if owner.role != previous_role:
+            try:
+                sinks.publish_owner(owner)
+            except Exception as e:
+                if owner.role == OwnerRole.OPERATOR:
+                    # A grant only re-enables archives the owner had before, so it stands.
+                    log.warning("owner_sinks_publish_failed", owner_id=str(owner.id), error=str(e))
+                else:
+                    owner.role = previous_role
+                    owner.save(update_fields=["role"])
+                    raise BadGateway(f"Failed to stop archiving the owner's devices, role NOT changed: {e}")
         return Response(OwnerReadSerializer(owner).data)
 
     @extend_schema(responses={204: NO_CONTENT})
@@ -774,7 +799,7 @@ def _devices_for_owner(owner: Owner) -> list[dict]:
     return DeviceReadSerializer(
         owner.visible_devices.select_related("mesh").order_by("mesh_id", "device_id"),
         many=True,
-        context={"viewer_id": owner.id},
+        context={"viewer_id": owner.id, "viewer_is_superuser": owner.is_superuser},
     ).data
 
 
@@ -843,7 +868,7 @@ class MeshListCreateView(APIView):
                 qs = qs.filter(source_id=source_id)
             except (ValueError, DjangoValidationError):
                 raise ValidationError({"source_id": "Must be a UUID."})
-        return Response(MeshSerializer(qs, many=True, context=_mesh_context(request)).data)
+        return Response(MeshSerializer(qs, many=True, context=_viewer_context(request)).data)
 
     @extend_schema(request=MeshSerializer, responses={201: MeshSerializer})
     def post(self, request):
@@ -869,11 +894,11 @@ class MeshListCreateView(APIView):
             if serializer.accept_terms_locale:
                 record_acceptance(TermsKind.MESH, request.user, serializer.accept_terms_locale, mesh=mesh)
         return Response(
-            MeshSerializer(mesh, context=_mesh_context(request)).data, status=status.HTTP_201_CREATED
+            MeshSerializer(mesh, context=_viewer_context(request)).data, status=status.HTTP_201_CREATED
         )
 
 
-def _mesh_context(request) -> dict:
+def _viewer_context(request) -> dict:
     return {"viewer_id": request.user.id, "viewer_is_superuser": request.user.is_superuser}
 
 
@@ -909,7 +934,7 @@ class MeshDetailView(APIView):
         """Return one mesh."""
         mesh = _get_mesh_or_404(mesh_id)
         _require_mesh_visible(mesh, request.user)
-        return Response(MeshSerializer(mesh, context=_mesh_context(request)).data)
+        return Response(MeshSerializer(mesh, context=_viewer_context(request)).data)
 
     @extend_schema(request=MeshUpdateSerializer, responses=MeshSerializer)
     def put(self, request, mesh_id):
@@ -968,7 +993,7 @@ class MeshDetailView(APIView):
                 )
             if new_source is not None:
                 cancel_mesh_deletions([updated.id], DataDeletionReason.SOURCE_DETACHED, new_source)
-        return Response(MeshSerializer(updated, context=_mesh_context(request)).data)
+        return Response(MeshSerializer(updated, context=_viewer_context(request)).data)
 
     @extend_schema(responses={204: NO_CONTENT})
     def delete(self, request, mesh_id):
@@ -993,6 +1018,10 @@ class MeshDetailView(APIView):
                 publisher.publish_node_unreject(node)
             except Exception as e:
                 raise BadGateway(f"Failed to publish unreject for device {node.id}, mesh NOT removed: {e}")
+        try:
+            sinks.unpublish_devices(mesh.devices.filter(archive_enabled=True))
+        except Exception as e:
+            raise BadGateway(f"Failed to publish sink removal, mesh NOT removed: {e}")
         processed = list(mesh.devices.filter(postprocessings__isnull=False).distinct())
         with transaction.atomic():
             mesh_id, source_id = mesh.id, mesh.source_id
@@ -1017,7 +1046,7 @@ class MeshDevicesView(APIView):
         if not request.user.can_edit_mesh(mesh):
             devices = devices.filter(is_allowed=True)
         return Response(
-            DeviceReadSerializer(devices, many=True, context={"viewer_id": request.user.id}).data
+            DeviceReadSerializer(devices, many=True, context=_viewer_context(request)).data
         )
 
 
@@ -1053,7 +1082,7 @@ class DeviceListCreateView(APIView):
         if has_postprocessing is not None:
             with_any = DevicePostprocessing.objects.values("device_id")
             qs = qs.filter(id__in=with_any) if has_postprocessing.lower() in ("true", "1") else qs.exclude(id__in=with_any)
-        return Response(DeviceReadSerializer(qs, many=True, context={"viewer_id": request.user.id}).data)
+        return Response(DeviceReadSerializer(qs, many=True, context=_viewer_context(request)).data)
 
     @extend_schema(request=DeviceCreateSerializer, responses={201: DeviceReadSerializer})
     def post(self, request):
@@ -1095,7 +1124,7 @@ class DeviceListCreateView(APIView):
                 device.delete()
                 raise BadGateway(f"Failed to publish gateway registration, rolled back: {e}")
         return Response(
-            DeviceReadSerializer(device, context={"viewer_id": request.user.id}).data,
+            DeviceReadSerializer(device, context=_viewer_context(request)).data,
             status=status.HTTP_201_CREATED,
         )
 
@@ -1113,7 +1142,7 @@ class DeviceDetailView(APIView):
         _require_mesh_visible(device.mesh, request.user)
         if not device.is_allowed and not request.user.can_edit_mesh(device.mesh):
             raise NotFound("Device not found")
-        return Response(DeviceReadSerializer(device, context={"viewer_id": request.user.id}).data)
+        return Response(DeviceReadSerializer(device, context=_viewer_context(request)).data)
 
     @extend_schema(request=DeviceUpdateSerializer, responses=DeviceReadSerializer)
     def put(self, request, device_uuid):
@@ -1122,17 +1151,26 @@ class DeviceDetailView(APIView):
         Position and identity fields are filled in from what the device reports
         until they are set here, after which the values given take precedence.
         Disallowing a gateway stops its traffic being decoded.
+
+        `archive_enabled` stores the device's readings in the Parquet archive from
+        then on. It is accepted only on a mesh owned by an operator and on
+        instances that run the archive. Turning it off stops storing new readings
+        and keeps those already stored. The setting is rolled back if the
+        pipeline cannot be told about it.
         """
         device = _get_device_or_404(device_uuid)
         _require_mesh_ownership(device.mesh, request.user)
         changing_allowed = "is_allowed" in request.data
         previous_allowed = device.is_allowed
+        previous_archive = device.archive_enabled
         location_keys_present = "latitude" in request.data and "longitude" in request.data
         nodeinfo_fields = ("name", "short_name", "hardware_type", "role")
         nodeinfo_keys_present = any(k in request.data for k in nodeinfo_fields)
         nodeinfo_keys_all_present = all(k in request.data for k in nodeinfo_fields)
 
-        serializer = DeviceUpdateSerializer(device, data=request.data, partial=True)
+        serializer = DeviceUpdateSerializer(
+            device, data=request.data, partial=True, context={"archive_available": sinks.archive_available()}
+        )
         serializer.is_valid(raise_exception=True)
         try:
             updated = serializer.save()
@@ -1173,6 +1211,15 @@ class DeviceDetailView(APIView):
             except Exception as e:
                 log.warning("postprocessing_publish_failed", device_id=str(updated.id), error=str(e))
 
+        if updated.archive_enabled != previous_archive:
+            try:
+                sinks.publish_device(updated)
+            except Exception as e:
+                updated.archive_enabled = previous_archive
+                updated.save(update_fields=["archive_enabled"])
+                raise BadGateway(f"Failed to publish the archive setting, rolled back: {e}")
+            sinks.record_archive_instruction(updated, request.user)
+
         if changing_allowed and updated.is_allowed != previous_allowed:
             attempted_allowed = updated.is_allowed
             publisher = get_publisher()
@@ -1192,7 +1239,13 @@ class DeviceDetailView(APIView):
                 updated.save(update_fields=["is_allowed"])
                 action = "allow" if attempted_allowed else "reject"
                 raise BadGateway(f"Failed to publish device {action}, rolled back: {e}")
-        return Response(DeviceReadSerializer(updated, context={"viewer_id": request.user.id}).data)
+            if updated.archive_enabled:
+                # Only an allowed registration is archived.
+                try:
+                    sinks.publish_device(updated)
+                except Exception as e:
+                    log.warning("device_sinks_publish_failed", device_id=str(updated.id), error=str(e))
+        return Response(DeviceReadSerializer(updated, context=_viewer_context(request)).data)
 
     @extend_schema(responses={204: NO_CONTENT})
     def delete(self, request, device_uuid):
@@ -1209,6 +1262,7 @@ class DeviceDetailView(APIView):
                 publisher.publish_gateway_delete(device)
             elif not device.is_gateway and not device.is_allowed:
                 publisher.publish_node_unreject(device)
+            sinks.unpublish_devices([device])
         except Exception as e:
             raise BadGateway(f"Failed to publish device deletion, device NOT removed: {e}")
         had_postprocessing = device.postprocessings.exists()
@@ -2225,7 +2279,7 @@ class MeshTermsAcceptanceView(APIView):
         except Exception as e:
             raise BadGateway(f"Failed to resume the mesh's gateways, terms NOT renewed: {e}")
         record_acceptance(TermsKind.MESH, request.user, serializer.validated_data["terms_locale"], mesh=mesh)
-        return Response(MeshSerializer(mesh, context=_mesh_context(request)).data, status=status.HTTP_201_CREATED)
+        return Response(MeshSerializer(mesh, context=_viewer_context(request)).data, status=status.HTTP_201_CREATED)
 
 
 class SourceTermsView(APIView):

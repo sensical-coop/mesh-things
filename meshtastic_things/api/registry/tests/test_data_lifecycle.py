@@ -189,8 +189,6 @@ class NoRetentionTests(LifecycleTestCase):
         self.assertEqual(data_lifecycle.pause_lapsed_sources(far_future), 0)
         self.assertEqual(data_lifecycle.pause_lapsed_meshes(far_future), 0)
         self.assertEqual(data_lifecycle.send_renewal_notices(far_future), 0)
-        self.assertFalse(data_lifecycle.expire_unowned_archive(far_future))
-        self.fake_store.delete_unknown_mesh_archive_before.assert_not_called()
 
     def test_the_command_runs_one_pass(self):
         out = StringIO()
@@ -316,16 +314,6 @@ class MeshLapseTests(LifecycleTestCase):
         self.assertIsNone(TermsAcceptance.objects.get(owner_id=self.member["id"], kind="account").expires_at)
 
 
-@override_settings(DATA_RETENTION_DAYS=365)
-class UnownedArchiveTests(LifecycleTestCase):
-    def test_only_readings_without_a_mesh_roll(self):
-        now = timezone.now()
-
-        self.assertTrue(data_lifecycle.expire_unowned_archive(now))
-
-        self.fake_store.delete_unknown_mesh_archive_before.assert_called_once_with(now - timedelta(days=365))
-
-
 class DataDeletionListTests(LifecycleTestCase):
     def test_superusers_list_pending_deletions(self):
         mesh = self.create_mesh(self.operator)
@@ -375,12 +363,6 @@ class DataStoreTests(SimpleTestCase):
         self.assertEqual(self.deleted_keys(), [_key("2026-01-01", 9), _key("2026-01-01", 10)])
         kwargs = self.delete_api.delete.call_args.kwargs
         self.assertEqual((kwargs["stop"], kwargs["predicate"]), (until, f'mesh_id="{MESH}"'))
-
-    def test_the_unowned_archive_keeps_the_straddling_hour(self):
-        self.store.delete_unknown_mesh_archive_before(datetime(2026, 1, 1, 10, 30, tzinfo=dt_timezone.utc))
-
-        self.assertEqual(self.deleted_keys(), [_key("2026-01-01", 9)])
-        self.delete_api.delete.assert_not_called()
 
     def test_a_malformed_mesh_id_never_reaches_the_predicate(self):
         with self.assertRaises(ValueError):

@@ -51,6 +51,7 @@ services:
           "$${REGISTRY__NODE_REJECTIONS_KAFKA_TOPIC:-mesh.node_rejections.v1}" \
           "$${REGISTRY__QUALITY_CONFIG_KAFKA_TOPIC:-mesh.quality_config.v1}" \
           "$${REGISTRY__POSTPROCESSING_CONFIG_KAFKA_TOPIC:-mesh.postprocessing_config.v1}" \
+          "$${REGISTRY__SINK_CONFIG_KAFKA_TOPIC:-mesh.sink_config.v1}" \
         ; do
           /opt/kafka/bin/kafka-topics.sh --bootstrap-server kafka:29092 \
             --create --if-not-exists --topic "$$topic" \

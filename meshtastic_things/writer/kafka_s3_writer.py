@@ -12,8 +12,10 @@ log = structlog.get_logger()
 async def create_tasks(s3_writer):
 
     log.info('Creating s3 writer tasks...')
+    await asyncio.to_thread(s3_writer.load_sinks)
 
     async with asyncio.TaskGroup() as tg:
+        tg.create_task(s3_writer.follow_sinks())
         tg.create_task(s3_writer.start_health_server())
         tg.create_task(s3_writer.consumer_health.monitor())
         tg.create_task(s3_writer.write_kafka_s3())

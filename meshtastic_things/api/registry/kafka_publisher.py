@@ -38,9 +38,13 @@ def postprocessing_kafka_key(device: Device) -> str:
     return f"{device.mesh_id}:{device.device_id}"
 
 
+def sink_config_kafka_key(mesh_id, device_id: int) -> str:
+    return f"{mesh_id}:{device_id}"
+
+
 class KeyEventPublisher:
-    """Publishes to mesh.keys.v1, mesh.node_rejections.v1,
-    mesh.quality_config.v1 and mesh.postprocessing_config.v1."""
+    """Publishes to mesh.keys.v1, mesh.node_rejections.v1, mesh.quality_config.v1,
+    mesh.postprocessing_config.v1 and mesh.sink_config.v1."""
 
     def __init__(
         self,
@@ -49,11 +53,13 @@ class KeyEventPublisher:
         node_rejections_topic: str,
         quality_config_topic: str,
         postprocessing_config_topic: str,
+        sink_config_topic: str,
     ):
         self._keys_topic = keys_topic
         self._node_rejections_topic = node_rejections_topic
         self._quality_config_topic = quality_config_topic
         self._postprocessing_config_topic = postprocessing_config_topic
+        self._sink_config_topic = sink_config_topic
         self._producer = KafkaProducer(
             bootstrap_servers=bootstrap_servers,
             value_serializer=lambda v: json.dumps(v).encode("utf-8"),
@@ -209,6 +215,22 @@ class KeyEventPublisher:
         future.get(timeout=10)
         log.info("Published postprocessing plans", key=key, plans=len(plans))
 
+    def publish_device_sinks(self, mesh_id, device_id: int, sinks: list[str]) -> None:
+        """Replace the sinks a device's readings are sent to. An empty list sends them nowhere."""
+        key = sink_config_kafka_key(mesh_id, device_id)
+        event = {
+            "kind": "device_sinks",
+            "key": key,
+            "mesh_id": str(mesh_id),
+            "device_id": device_id,
+            "sinks": sinks,
+            "op": "upsert" if sinks else "delete",
+            "updated_at": datetime.now(timezone.utc).isoformat(),
+        }
+        future = self._producer.send(self._sink_config_topic, key=key, value=event)
+        future.get(timeout=10)
+        log.info("Published device sinks", key=key, sinks=sinks)
+
     def close(self) -> None:
         self._producer.flush()
         self._producer.close()
@@ -231,6 +253,7 @@ def get_publisher() -> KeyEventPublisher:
             postprocessing_config_topic=os.environ.get(
                 "REGISTRY__POSTPROCESSING_CONFIG_KAFKA_TOPIC", "mesh.postprocessing_config.v1"
             ),
+            sink_config_topic=os.environ.get("REGISTRY__SINK_CONFIG_KAFKA_TOPIC", "mesh.sink_config.v1"),
         )
     return _publisher
 
