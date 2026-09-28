@@ -58,6 +58,11 @@ services:
             --partitions 1 --replication-factor 1 \
             --config cleanup.policy=compact
         done
+        # Alarms are persisted to InfluxDB, so this topic is only a transport buffer.
+        # Altered rather than set at creation so existing topics pick it up too.
+        /opt/kafka/bin/kafka-configs.sh --bootstrap-server kafka:29092 --alter \
+          --entity-type topics --entity-name "$$PATTERN_DETECTION__ALARMS_TOPIC" \
+          --add-config retention.ms=259200000,retention.bytes=536870912
 
   influxdb:
     mem_limit: 1024m
