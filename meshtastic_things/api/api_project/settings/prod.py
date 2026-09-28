@@ -5,7 +5,7 @@ from django.core.exceptions import ImproperlyConfigured
 from common.env import env_bool, env_int, env_list, env_str
 
 from .base import *  # noqa: F401,F403
-from .base import ENV_PREFIX, IS_READINGS, REST_FRAMEWORK
+from .base import ENV_PREFIX, INTERNAL_HOST, IS_READINGS, REST_FRAMEWORK
 
 # DEBUG in production leaks settings and stack traces.
 DEBUG = False
@@ -26,6 +26,7 @@ if "*" in ALLOWED_HOSTS:
         f"{ENV_PREFIX}__ALLOWED_HOSTS is '*', which accepts any Host header. Name the "
         "real hostnames"
     )
+ALLOWED_HOSTS.append(INTERNAL_HOST)
 
 if not IS_READINGS:
     EMAIL_BACKEND = env_str("REGISTRY__EMAIL_BACKEND", "django.core.mail.backends.console.EmailBackend")
