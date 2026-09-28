@@ -20,6 +20,8 @@ if APP_ROLE not in (REGISTRY_ROLE, READINGS_ROLE):
 IS_READINGS = APP_ROLE == READINGS_ROLE
 
 ENV_PREFIX = APP_ROLE.upper()
+# Compose service name other containers use to reach this API directly.
+INTERNAL_HOST = f"{APP_ROLE}-api"
 
 SECRET_KEY = env_str(f"{ENV_PREFIX}__SECRET_KEY")
 if not SECRET_KEY:
@@ -40,7 +42,7 @@ INSTALLED_APPS = [
     "drf_spectacular",
 ]
 MIDDLEWARE = [
-    "django.middleware.security.SecurityMiddleware",
+    "api_project.middleware.InternalHostSecurityMiddleware",
     "django.contrib.sessions.middleware.SessionMiddleware",
     "django.middleware.common.CommonMiddleware",
     "django.contrib.auth.middleware.AuthenticationMiddleware",
@@ -53,7 +55,7 @@ if not IS_READINGS:
         "django.contrib.staticfiles",
     ]
     MIDDLEWARE = [
-        "django.middleware.security.SecurityMiddleware",
+        "api_project.middleware.InternalHostSecurityMiddleware",
         "whitenoise.middleware.WhiteNoiseMiddleware",
         "django.contrib.sessions.middleware.SessionMiddleware",
         "django.middleware.common.CommonMiddleware",
