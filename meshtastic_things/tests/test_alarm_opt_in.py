@@ -36,15 +36,15 @@ class TestResolution:
 class TestFlatValueGate:
     """The one detector that fired unconditionally before."""
 
-    FLAT = [1.0] * 10
+    FLAT = {"value": 1.0, "since": 0, "last": 12 * 3600, "count": 10}
 
     def test_it_still_triggers_on_its_own_terms(self):
-        assert detectors.stuck_value_triggered(self.FLAT, window=5)
+        assert detectors.flat_value_triggered(self.FLAT, hours=12)
 
     @pytest.mark.parametrize("enabled,fires", [(None, False), ([], False),
                                                ([RANGE], False), ([FLAT_VALUE], True)])
     def test_only_an_enabled_measurement_alarms(self, enabled, fires):
-        triggered = detectors.stuck_value_triggered(self.FLAT, window=5)
+        triggered = detectors.flat_value_triggered(self.FLAT, hours=12)
         assert (FLAT_VALUE in enabled_detectors_for(enabled, None) and triggered) is fires
 
 

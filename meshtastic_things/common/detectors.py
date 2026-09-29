@@ -54,23 +54,40 @@ def enabled_detectors_for(override: list[str] | None, catalog_default: list[str]
     return set(chosen or ())
 
 
-# Used when a channel has no reading interval
-DEFAULT_FLAT_WINDOW = 5
-MIN_FLAT_WINDOW = 3
-MAX_FLAT_WINDOW = 240
+# A flat stretch needs this many readings as well as its duration, so two
+# readings a day apart are not a flat channel.
+MIN_FLAT_READINGS = 3
 
 
-def stuck_value_triggered(recent_values: list[float], window: int = 5) -> bool:
-    """Triggers when a sensor reports the same value N times in a row."""
-    if len(recent_values) < window:
-        return False
-    return len(set(recent_values[-window:])) == 1
+def track_flat(state: dict | None, value: float, reading_time: float) -> dict:
+    """Update a channel's flat stretch: its value, since when, and how many readings it spans."""
+    if state and state["value"] == value:
+        return {
+            "value": value,
+            "since": min(state["since"], reading_time),
+            "last": max(state["last"], reading_time),
+            "count": state["count"] + 1,
+        }
+    return {"value": value, "since": reading_time, "last": reading_time, "count": 1}
 
 
-def flat_window_for(interval_seconds: float | None, hours: float = 3.0) -> int:
-    if not interval_seconds:
-        return DEFAULT_FLAT_WINDOW
-    return max(MIN_FLAT_WINDOW, min(MAX_FLAT_WINDOW, int(hours * 3600 / interval_seconds)))
+def flat_value_triggered(state: dict, hours: float) -> bool:
+    """Fires when a channel has reported the same value for at least `hours`."""
+    return state["count"] >= MIN_FLAT_READINGS and state["last"] - state["since"] >= hours * 3600
+
+
+# Consecutive out-of-range readings before `range` fires. Slow devices need
+# fewer, or the alarm would wait hours for its readings.
+RANGE_READINGS = 3
+RANGE_READINGS_SLOW = 2
+SLOW_READING_INTERVAL_SECONDS = 1800
+
+
+def range_readings_for(interval_seconds: float | None) -> int:
+    """How many readings in a row must fall outside the range before it alarms."""
+    if interval_seconds and interval_seconds >= SLOW_READING_INTERVAL_SECONDS:
+        return RANGE_READINGS_SLOW
+    return RANGE_READINGS
 
 
 def range_check_triggered(value: float, min_value: float | None, max_value: float | None) -> bool:
@@ -82,10 +99,28 @@ def range_check_triggered(value: float, min_value: float | None, max_value: floa
     return False
 
 
-DETECTORS = {
-    "stuck_value": stuck_value_triggered,
-    "range_check": range_check_triggered,
-}
+# A device never reports one channel this fast. Only a replay of stored history
+# does. Duplicates of one packet heard by several gateways stay well below it.
+REPLAY_BURST_READINGS = 10
+REPLAY_BURST_SECONDS = 10.0
+# How long an alarm waits for its channel to show a burst before it is sent.
+REPLAY_HOLD_SECONDS = 5.0
+
+
+def track_arrival(arrivals: list[float], now: float) -> tuple[list[float], bool]:
+    """Record a reading's arrival and report whether its channel is being replayed.
+
+    Args:
+        arrivals: Processing times, in seconds, of the channel's recent readings.
+        now: Processing time of this reading.
+
+    Returns:
+        The arrivals to keep, and whether they amount to a replay burst.
+    """
+    recent = [t for t in arrivals if now - t < REPLAY_BURST_SECONDS]
+    recent.append(now)
+    recent = recent[-REPLAY_BURST_READINGS:]
+    return recent, len(recent) >= REPLAY_BURST_READINGS
 
 
 def alarm_due(last_raised_at: float | None, reading_time: float, repeat_seconds: float) -> bool:
@@ -95,3 +130,43 @@ def alarm_due(last_raised_at: float | None, reading_time: float, repeat_seconds:
     most one alarm per `repeat_seconds` of data.
     """
     return last_raised_at is None or reading_time - last_raised_at >= repeat_seconds
+
+
+# A condition with no reading at all for this long is treated as new when it shows again.
+STALE_CONDITION_SECONDS = 24 * 3600
+
+
+def track_condition(state: dict | None, holds: bool, reading_time: float, repeat_seconds: float) -> tuple[dict, bool]:
+    """Follow one detector's condition across a channel's readings.
+
+    Returns the new state and, when the condition holds, whether it continues
+    one already raised. A condition that cleared, by a reading where it did not
+    hold, for less than `repeat_seconds` is the same one, so values hovering at
+    a bound do not count as new conditions.
+    """
+    state = dict(state or {"last_active": None, "cleared_at": None})
+    if not holds:
+        if state["last_active"] is not None and state["cleared_at"] is None:
+            state["cleared_at"] = reading_time
+        return state, False
+    last_active, cleared_at = state["last_active"], state["cleared_at"]
+    if last_active is None:
+        repeat = False
+    elif cleared_at is None:
+        repeat = reading_time - last_active < STALE_CONDITION_SECONDS
+    else:
+        repeat = reading_time - cleared_at < repeat_seconds
+    return {"last_active": reading_time, "cleared_at": None}, repeat
+
+
+def absence_on_timer(last_alarm_at: float | None, now: float, repeat_seconds: float) -> float | None:
+    """What a device's silence timer firing at `now` does.
+
+    Returns None to alarm now, or the time to check again: a silence within
+    `repeat_seconds` of the previous alarm is held until that much has passed.
+    The timer only runs again after the device publishes, so a device that
+    stays silent alarms once.
+    """
+    if alarm_due(last_alarm_at, now, repeat_seconds):
+        return None
+    return last_alarm_at + repeat_seconds
