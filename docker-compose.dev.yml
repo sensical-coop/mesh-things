@@ -78,6 +78,11 @@ services:
     ports: !override
       - ${DECODE_CONSUMER__HEALTHCHECK_PORT}:${DECODE_CONSUMER__HEALTHCHECK_PORT}
 
+  sink_dispatcher:
+    <<: *bridge-dev
+    ports: !override
+      - ${SINK_DISPATCHER__HEALTHCHECK_PORT}:${SINK_DISPATCHER__HEALTHCHECK_PORT}
+
   registry_device_consumer:
     environment:
       DJANGO_SETTINGS_MODULE: api_project.settings.dev

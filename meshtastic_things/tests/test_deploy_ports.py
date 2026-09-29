@@ -413,7 +413,7 @@ def test_services_sharing_a_dockerfile_share_one_image():
 # runtimes, one per tier, so a typo'd or missing profile tag can silently
 # drop decode from both, or run it twice.
 
-KNOWN_PROFILES = {"full", "lite", "quality", "bridge-pool", "minio"}
+KNOWN_PROFILES = {"full", "lite", "quality", "bridge-pool", "minio", "sinks"}
 
 def test_profiles_are_known_values():
     """A typo'd profile name silently drops a service from every real invocation - Compose
@@ -432,6 +432,10 @@ def test_decode_runtimes_are_mutually_exclusive_per_tier():
     assert not (flink_profiles & consumer_profiles), (
         "flink-job and decode_consumer share a profile - double decode"
     )
+
+def test_sinks_are_opt_in_on_lite():
+    """A plain lite install must not gain a service publishing readings for third parties."""
+    assert set(BASE_SERVICES["sink_dispatcher"]["profiles"]) == {"full", "sinks"}
 
 def test_ci_publishes_every_image_compose_builds():
     """A Dockerfile that compose builds but CI never pushes means a registry deployment
@@ -499,11 +503,11 @@ def test_the_dev_overlay_separates_every_bridge_member_from_prod():
         f"$share group and consume prod's messages"
     )
 
-def test_the_dev_overlay_keeps_dev_sources_apart_from_prod():
-    """registry_api names the EMQX bridges and the bridges read what they republish. On a
-    shared EMQX, a dev stack in prod's namespace would reconcile away prod's bridges and
-    read prod's source traffic."""
-    services = [*_bridge_services(), "registry_api"]
+def test_the_dev_overlay_keeps_dev_connectors_apart_from_prod():
+    """registry_api names the EMQX bridges and sinks, the bridges read what sources
+    republish, and sink_dispatcher publishes sink topics. On a shared EMQX, a dev stack in
+    prod's namespace would reconcile away prod's bridges and sinks and read prod's traffic."""
+    services = [*_bridge_services(), "registry_api", "sink_dispatcher"]
     namespaces = {
         name: ((DEV_SERVICES.get(name) or {}).get("environment") or {}).get("MQTT_CONNECTORS__NAMESPACE")
         for name in services

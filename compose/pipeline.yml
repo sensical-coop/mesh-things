@@ -94,6 +94,30 @@ services:
       retries: 5
       start_period: 30s
 
+  # full, or opt-in for lite: MQTT sinks
+  # `--profile lite --profile sinks`
+  sink_dispatcher:
+    profiles: ["full", "sinks"]
+    mem_limit: 256m
+    container_name: sink-dispatcher
+    <<: *pipeline-image
+    depends_on:
+      kafka:
+        condition: service_healthy
+      kafka-topics-init:
+        condition: service_completed_successfully
+    env_file: "../.env"
+    restart: unless-stopped
+    ports:
+      - 127.0.0.1:${SINK_DISPATCHER__HEALTHCHECK_PORT}:${SINK_DISPATCHER__HEALTHCHECK_PORT}
+    command: ["sink_dispatcher"]
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:${SINK_DISPATCHER__HEALTHCHECK_PORT}/health"]
+      interval: 1m30s
+      timeout: 30s
+      retries: 5
+      start_period: 30s
+
   # full-only: the S3/Parquet archive
   s3_writer:
     profiles: ["full"]
