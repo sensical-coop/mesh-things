@@ -7,7 +7,7 @@ Per-point checks and live postprocessing belong in Flink instead.
 import os
 
 from celery import Celery
-from celery.schedules import crontab  # noqa: F401  (available for custom schedules)
+from celery.schedules import crontab
 
 BROKER_URL = os.environ.get("QUALITY_WORKER__REDIS_URL", "redis://redis:6379/2")
 SCAN_INTERVAL_SECONDS = float(os.environ.get("QUALITY_WORKER__SCAN_INTERVAL_SECONDS", 3600))
@@ -33,6 +33,11 @@ app.conf.update(
         "dispatch-backfills": {
             "task": "quality_worker.tasks.dispatch_backfills",
             "schedule": BACKFILL_POLL_SECONDS,
+        },
+        # Yesterday's alarm counts, once the day's last alarms have been written.
+        "count-alarms": {
+            "task": "quality_worker.tasks.count_alarms",
+            "schedule": crontab(hour=0, minute=30),
         },
     },
 )

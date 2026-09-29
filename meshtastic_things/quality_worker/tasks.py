@@ -5,8 +5,9 @@ from datetime import datetime, timedelta, timezone
 import structlog
 from celery import shared_task
 
+from common.alarm_counts import ALARM_COUNTS_BUCKET, ALARMS_BUCKET, ALARMS_RETENTION_DAYS, DAY, daily_counts
 from common.channels import QUALITY_KIND
-from common.detectors import COMPLETENESS
+from common.detectors import ABSENCE, COMPLETENESS
 from common.influx_query import duration_seconds
 from common.postprocessing import ResolvedPlan
 from common.units import QUALITY_CHANNELS
@@ -250,3 +251,36 @@ def check_completeness(device_uuid: str, lookback: str | None = None) -> dict:
         publisher.publish_discovery(mesh_id, device_id, QUALITY_KIND, list(QUALITY_FIELDS), QUALITY_FIELD_UNITS)
 
     return {"status": "ok", "channels": results}
+
+
+def _day_start(day: str | None) -> datetime:
+    """Midnight UTC of `day` (YYYY-MM-DD), or of yesterday."""
+    if day:
+        return datetime.strptime(day, "%Y-%m-%d").replace(tzinfo=timezone.utc)
+    return _utcnow().replace(hour=0, minute=0, second=0, microsecond=0) - DAY
+
+
+def absence_silences(influx, day_start: datetime) -> dict[tuple[str, str], list[tuple[datetime, datetime]]]:
+    """Per device, the intervals from each absence alarm to its next reading that reach into the day.
+
+    A device still silent at the end of the day is silent until then.
+    """
+    day_end = day_start + DAY
+    silences: dict[tuple[str, str], list[tuple[datetime, datetime]]] = {}
+    for alarm in influx.read_alarms(ALARMS_BUCKET, day_end - ALARMS_RETENTION_DAYS * DAY, day_end, detector=ABSENCE):
+        back = influx.first_reading_after(alarm["mesh_id"], alarm["node_id"], alarm["time"], day_end) or day_end
+        if back > day_start:
+            silences.setdefault((alarm["mesh_id"], alarm["node_id"]), []).append((alarm["time"], back))
+    return silences
+
+
+@shared_task(name="quality_worker.tasks.count_alarms")
+def count_alarms(day: str | None = None) -> dict:
+    """Write one UTC day's alarm counts, yesterday's by default. Rerunning a day replaces its counts."""
+    day_start = _day_start(day)
+    influx = get_influx_io()
+    alarms = influx.read_alarms(ALARMS_BUCKET, day_start, day_start + DAY)
+    rows = daily_counts(alarms, day_start, absence_silences(influx, day_start))
+    influx.write_alarm_counts(ALARM_COUNTS_BUCKET, day_start, rows)
+    log.info("alarm_counts_written", day=day_start.date().isoformat(), rows=len(rows), alarms=len(alarms))
+    return {"day": day_start.date().isoformat(), "rows": len(rows)}

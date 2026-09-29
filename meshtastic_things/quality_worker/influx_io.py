@@ -6,8 +6,9 @@ import structlog
 from influxdb_client import InfluxDBClient, Point, WritePrecision
 from influxdb_client.client.write_api import SYNCHRONOUS
 
-from common.channels import QUALITY
-from common.influx_query import split_channel, validate_mesh_id, validate_range_bound
+from common.alarm_counts import ALARM_COUNTS
+from common.channels import ALARMS, QUALITY
+from common.influx_query import split_channel, validate_ident, validate_mesh_id, validate_range_bound
 
 log = structlog.get_logger()
 
@@ -86,6 +87,104 @@ from(bucket: "{self.bucket}")
             if value is not None:
                 point = point.field(name, float(value))
         self._write_api.write(bucket=self.bucket, record=point)
+
+    def read_alarms(self, bucket: str, start: datetime, stop: datetime, detector: str | None = None) -> list[dict]:
+        """Alarms stored in `bucket` between two instants, oldest first."""
+        detector_filter = f' and r.detector == "{validate_ident(detector, "detector")}"' if detector else ""
+        flux = f'''
+from(bucket: "{bucket}")
+  |> range(start: {_rfc3339(start)}, stop: {_rfc3339(stop)})
+  |> filter(fn: (r) => r._measurement == "{ALARMS}" and r._field == "message"{detector_filter})
+  |> group()
+  |> sort(columns: ["_time"])
+'''
+        return [
+            {
+                "time": record.get_time(),
+                "mesh_id": record.values.get("mesh_id"),
+                "node_id": record.values.get("node_id"),
+                "channel": record.values.get("channel"),
+                "detector": record.values.get("detector"),
+                "repeat": record.values.get("repeat") == "true",
+            }
+            for table in self._query_api.query(flux)
+            for record in table.records
+        ]
+
+    def first_reading_after(self, mesh_id: str, node_id: str, start: datetime, stop: datetime) -> datetime | None:
+        """When a device next reported anything between two instants, if it did."""
+        mesh_id = validate_mesh_id(mesh_id)
+        flux = f'''
+from(bucket: "{self.bucket}")
+  |> range(start: {_rfc3339(start)}, stop: {_rfc3339(stop)})
+  |> filter(fn: (r) => r.mesh_id == "{mesh_id}" and r.node_id == "{int(node_id)}"
+       and r._measurement != "{QUALITY}" and r._measurement != "{ALARMS}")
+  |> keep(columns: ["_time"])
+  |> group()
+  |> sort(columns: ["_time"])
+  |> limit(n: 1)
+'''
+        for table in self._query_api.query(flux):
+            for record in table.records:
+                return record.get_time()
+        return None
+
+    def write_alarm_counts(self, bucket: str, day_start: datetime, rows: list[dict]) -> None:
+        """One point per row, at midnight of its day. Rewriting a day replaces it."""
+        points = []
+        for row in rows:
+            point = (
+                Point(ALARM_COUNTS)
+                .tag("mesh_id", row["mesh_id"])
+                .tag("node_id", str(row["node_id"]))
+                .tag("detector", row["detector"])
+                .time(day_start, WritePrecision.S)
+            )
+            if row.get("channel"):
+                point = point.tag("channel", row["channel"])
+            for field in ("alarms", "new_conditions", "hours_active"):
+                if row.get(field) is not None:
+                    point = point.field(field, float(row[field]))
+            points.append(point)
+        if points:
+            self._write_api.write(bucket=bucket, record=points)
+
+    def first_alarm_time(self) -> datetime | None:
+        """The oldest alarm still stored among the readings, from before alarms had their own bucket."""
+        flux = f'''
+from(bucket: "{self.bucket}")
+  |> range(start: 0)
+  |> filter(fn: (r) => r._measurement == "{ALARMS}" and r._field == "message")
+  |> group()
+  |> min(column: "_time")
+'''
+        for table in self._query_api.query(flux):
+            for record in table.records:
+                return record.get_time()
+        return None
+
+    def copy_alarms(self, bucket: str, start: datetime) -> None:
+        """Copy the alarms stored among the readings since `start` into `bucket`, inside InfluxDB."""
+        flux = f'''
+from(bucket: "{self.bucket}")
+  |> range(start: {_rfc3339(start)})
+  |> filter(fn: (r) => r._measurement == "{ALARMS}")
+  |> to(bucket: "{bucket}")
+'''
+        self._query_api.query(flux)
+
+    def delete_alarms(self) -> None:
+        """Remove every alarm stored among the readings."""
+        self._client.delete_api().delete(
+            start=datetime(1970, 1, 1, tzinfo=timezone.utc),
+            stop=datetime.now(timezone.utc),
+            predicate=f'_measurement="{ALARMS}"',
+            bucket=self.bucket,
+        )
+
+
+def _rfc3339(moment: datetime) -> str:
+    return moment.astimezone(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
 
 
 _io: InfluxIO | None = None
