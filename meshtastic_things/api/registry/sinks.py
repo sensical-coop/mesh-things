@@ -11,6 +11,7 @@ from django.utils import timezone
 from common import sinks as sink_names
 
 from .data_store import get_data_store
+from .emqx_client import get_emqx_client
 from .kafka_publisher import get_publisher
 from .models import Device, DeviceSink, Mesh, MeshSink, Owner, Sink, SinkInstruction
 
@@ -117,3 +118,28 @@ def publish_owner(owner: Owner) -> None:
         publish_device(device)
     for mesh in Mesh.objects.filter(owner=owner, sink_links__isnull=False).distinct().select_related("owner"):
         publish_mesh(mesh)
+
+
+def revoke_owner_sinks(owner: Owner) -> tuple[list[Mesh], list[Device]]:
+    """Revoke the credentials of every sink the owner created and stop sending to them. Raises on failure.
+
+    Returns:
+        Other owners' meshes and devices attached to those sinks, to republish once the
+        sinks are deleted.
+    """
+    owned = list(Sink.objects.filter(created_by=owner))
+    client, publisher = get_emqx_client(), get_publisher()
+    for sink in owned:
+        client.delete_sink(str(sink.id))
+        publisher.publish_sink(sink.id, None)
+    meshes = Mesh.objects.filter(sink_links__sink__in=owned).exclude(owner=owner).distinct().select_related("owner")
+    devices = Device.objects.filter(sink_links__sink__in=owned).exclude(mesh__owner=owner).distinct()
+    return list(meshes), list(devices.select_related("mesh__owner"))
+
+
+def republish(meshes, devices) -> None:
+    """Send the current sinks of each mesh and device. Raises on failure."""
+    for mesh in meshes:
+        publish_mesh(mesh)
+    for device in devices:
+        publish_device(device)

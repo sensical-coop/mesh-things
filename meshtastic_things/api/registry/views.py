@@ -592,11 +592,11 @@ def _get_owner_or_404(owner_id) -> Owner:
 
 
 def _delete_owner_cascading(owner: Owner) -> None:
-    """Delete an owner along with their meshes, devices and blueprints.
+    """Delete an owner along with their meshes, devices, blueprints and sinks.
 
-    Their gateways are deregistered from the decoder first, and nothing is
-    removed if that fails. Blueprints other owners' devices still use are kept
-    without an owner.
+    Their gateways are deregistered from the decoder and their sinks' credentials
+    revoked first, and nothing is removed if that fails. Blueprints other owners'
+    devices still use are kept without an owner.
     """
     blueprint_ids = list(owner.blueprints.values_list("id", flat=True))
     devices = Device.objects.filter(mesh__owner=owner)
@@ -618,9 +618,16 @@ def _delete_owner_cascading(owner: Owner) -> None:
         sinks.unpublish_meshes(owner.meshes.all())
     except Exception as e:
         raise BadGateway(f"Failed to publish sink removal, owner NOT removed: {e}")
+    try:
+        # Last, since the broker cannot give a revoked password back.
+        other_meshes, other_devices = sinks.revoke_owner_sinks(owner)
+    except Exception as e:
+        raise BadGateway(f"Failed to revoke the owner's sinks, owner NOT removed: {e}")
     processed = list(devices.filter(postprocessings__isnull=False).distinct())
+    owner_id = str(owner.id)
     with transaction.atomic():
         meshes = list(owner.meshes.values_list("id", "source_id"))
+        Sink.objects.filter(created_by=owner).delete()
         owner.delete()
         PostprocessingBlueprint.objects.filter(pk__in=blueprint_ids).exclude(
             versions__attachments__isnull=False
@@ -628,6 +635,11 @@ def _delete_owner_cascading(owner: Owner) -> None:
         for mesh_id, source_id in meshes:
             schedule_mesh_deletion(mesh_id, DataDeletionReason.MESH_DELETED, source_id=source_id)
     postprocessing.unpublish_devices(processed)
+    try:
+        # Harmless if lost: the dispatcher sends nothing for a sink it no longer has.
+        sinks.republish(other_meshes, other_devices)
+    except Exception as e:
+        log.warning("sink_detach_publish_failed", owner_id=owner_id, error=str(e))
 
 
 class OwnerDetailView(APIView):
@@ -691,11 +703,12 @@ class OwnerDetailView(APIView):
 
     @extend_schema(responses={204: NO_CONTENT})
     def delete(self, request, owner_id):
-        """Remove an owner, along with their meshes, devices and blueprints. Superusers only.
+        """Remove an owner, along with their meshes, devices, blueprints and sinks. Superusers only.
 
-        Their gateways are deregistered from the decoder first, and nothing is
-        removed if that fails. Blueprints other owners' devices still use are
-        kept without an owner, editable by superusers only.
+        Their gateways are deregistered from the decoder and the credentials of
+        their sinks revoked first, and nothing is removed if that fails.
+        Blueprints other owners' devices still use are kept without an owner,
+        editable by superusers only.
         """
         _require_superuser(request)
         owner = _get_owner_or_404(owner_id)
@@ -758,11 +771,12 @@ class OwnerMeView(APIView):
 
     @extend_schema(responses={204: NO_CONTENT})
     def delete(self, request):
-        """Delete the authenticated owner, along with their meshes, devices and blueprints.
+        """Delete the authenticated owner, along with their meshes, devices, blueprints and sinks.
 
-        Their gateways are deregistered from the decoder first, and nothing is
-        removed if that fails. Blueprints other owners' devices still use are
-        kept without an owner, editable by superusers only.
+        Their gateways are deregistered from the decoder and the credentials of
+        their sinks revoked first, and nothing is removed if that fails.
+        Blueprints other owners' devices still use are kept without an owner,
+        editable by superusers only.
         """
         _delete_owner_cascading(request.user)
         return Response(status=status.HTTP_204_NO_CONTENT)

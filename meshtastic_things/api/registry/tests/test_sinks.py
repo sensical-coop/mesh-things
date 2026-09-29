@@ -1,4 +1,5 @@
 import os
+import uuid
 from datetime import timedelta
 from io import StringIO
 from unittest.mock import call, patch
@@ -429,3 +430,48 @@ class SyncTests(SinkTestCase):
         self.fake_emqx.apply_sink_namespace.assert_called_once()
         self.fake_emqx.apply_sink.assert_called_once_with(sink["id"])
         self.fake_emqx.delete_sink.assert_called_once_with("orphan")
+
+
+class OwnerDeletionTests(SinkTestCase):
+    def setUp(self):
+        super().setUp()
+        self.admin = self.create_owner(name="Admin", email="sink-admin4@example.com")
+        self.promote_to_superuser(self.admin)
+        self.other = self.create_owner(name="Other", email="sink-other2@example.com")
+        self.promote_to_operator(self.other)
+
+    def delete_operator(self):
+        return self.client.delete(f"/owners/{self.operator['id']}", **self.auth_headers(self.admin))
+
+    def test_deleting_an_owner_deletes_their_sinks_and_revokes_them(self):
+        sink = self.create_sink(self.operator, mesh_ids=[self.create_mesh(self.operator)["id"]])
+        kept = self.create_sink(self.other)
+
+        resp = self.delete_operator()
+
+        self.assertEqual(resp.status_code, 204, resp.content)
+        self.assertEqual([str(s.id) for s in Sink.objects.all()], [kept["id"]])
+        self.fake_emqx.delete_sink.assert_called_once_with(sink["id"])
+        self.assertIn(call(uuid.UUID(sink["id"]), None), self.fake_publisher.publish_sink.call_args_list)
+
+    def test_another_owners_mesh_on_a_deleted_sink_is_republished_without_it(self):
+        other_mesh = self.create_mesh(self.other, channel_id="O")
+        # A superuser may attach any operator's mesh to a sink.
+        sink = self.create_sink(self.admin, mesh_ids=[other_mesh["id"]])
+        self.fake_publisher.reset_mock()
+
+        resp = self.client.delete(f"/owners/{self.admin['id']}", **self.auth_headers(self.admin))
+
+        self.assertEqual(resp.status_code, 204, resp.content)
+        self.assertFalse(Sink.objects.filter(pk=sink["id"]).exists())
+        self.assertIn((Mesh.objects.get(pk=other_mesh["id"]).id, []), self.mesh_sink_events())
+
+    def test_a_failed_revocation_keeps_the_owner_and_their_sinks(self):
+        self.create_sink(self.operator)
+        self.fake_emqx.delete_sink.side_effect = RuntimeError("emqx down")
+
+        resp = self.delete_operator()
+
+        self.assertEqual(resp.status_code, 502)
+        self.assertTrue(Owner.objects.filter(pk=self.operator["id"]).exists())
+        self.assertTrue(Sink.objects.exists())
