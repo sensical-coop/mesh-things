@@ -11,7 +11,7 @@ DEFAULT_NAMESPACE = "mt-sources"
 
 def namespace() -> str:
     """Separates a dev stack from production on a shared EMQX; the dev overlay sets it."""
-    return env_str("MQTT_SOURCES__NAMESPACE", DEFAULT_NAMESPACE)
+    return env_str("MQTT_CONNECTORS__NAMESPACE", DEFAULT_NAMESPACE)
 
 
 def local_topic_prefix(source_id: str) -> str:

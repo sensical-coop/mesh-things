@@ -13,7 +13,7 @@ REMOTE = "msh/EU_868/2/e/LongFast/!aabbccdd"
 
 @pytest.fixture(autouse=True)
 def _production_namespace(monkeypatch):
-    monkeypatch.delenv("MQTT_SOURCES__NAMESPACE", raising=False)
+    monkeypatch.delenv("MQTT_CONNECTORS__NAMESPACE", raising=False)
 
 
 class _Record:
@@ -40,7 +40,7 @@ def test_the_own_topic_has_no_source():
 
 
 def test_the_namespace_separates_dev_from_production(monkeypatch):
-    monkeypatch.setenv("MQTT_SOURCES__NAMESPACE", "mt-sources-dev")
+    monkeypatch.setenv("MQTT_CONNECTORS__NAMESPACE", "mt-sources-dev")
 
     assert sources.source_id_from_topic(f"mt-sources/{SOURCE}/{REMOTE}") is None
     assert sources.source_id_from_topic(f"mt-sources-dev/{SOURCE}/{REMOTE}") == SOURCE

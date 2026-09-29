@@ -26,7 +26,7 @@ def _source(**fields):
     return types.SimpleNamespace(**{**defaults, **fields})
 
 
-@patch.dict("os.environ", {"MQTT_SOURCES__NAMESPACE": ""})
+@patch.dict("os.environ", {"MQTT_CONNECTORS__NAMESPACE": ""})
 class EmqxClientTests(SimpleTestCase):
     def setUp(self):
         self.client = EmqxClient("https://emqx.example.org:18084/api/v5/", "key", "secret")

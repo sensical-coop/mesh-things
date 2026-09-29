@@ -505,7 +505,7 @@ def test_the_dev_overlay_keeps_dev_sources_apart_from_prod():
     read prod's source traffic."""
     services = [*_bridge_services(), "registry_api"]
     namespaces = {
-        name: ((DEV_SERVICES.get(name) or {}).get("environment") or {}).get("MQTT_SOURCES__NAMESPACE")
+        name: ((DEV_SERVICES.get(name) or {}).get("environment") or {}).get("MQTT_CONNECTORS__NAMESPACE")
         for name in services
     }
 
