@@ -155,6 +155,9 @@ def build_alarm_points(event: dict) -> list[Point]:
     if event.get("source"):
         # "stream" or "batch" detection.
         tags["source"] = event["source"]
+    if event.get("repeat"):
+        # Continues a condition already alarmed; the daily counts tell new ones apart.
+        tags["repeat"] = "true"
 
     fields = {"message": str(event.get("message", ""))}
     value = event.get("value")

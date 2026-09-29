@@ -7,6 +7,7 @@ from django.core.management import call_command
 from django.test import SimpleTestCase, override_settings
 from django.utils import timezone
 
+from common.alarm_counts import ALARM_COUNTS_BUCKET, ALARMS_BUCKET
 from registry import data_lifecycle
 from registry.data_store import DataStore, partition_start
 from registry.models import DataDeletion, Source, TermsAcceptance, TermsKind
@@ -374,5 +375,11 @@ class DataStoreTests(SimpleTestCase):
 
         self.store.delete_mesh_readings(MESH, datetime.now(dt_timezone.utc))
 
-        self.delete_api.delete.assert_called_once()
+        self.assertEqual(self.delete_api.delete.call_count, 3)
         self.s3.delete_objects.assert_not_called()
+
+    def test_the_mesh_alarms_and_their_counts_go_too(self):
+        self.store.delete_mesh_readings(MESH, datetime.now(dt_timezone.utc))
+
+        buckets = [c.kwargs["bucket"] for c in self.delete_api.delete.call_args_list]
+        self.assertEqual(buckets, ["telemetry", ALARMS_BUCKET, ALARM_COUNTS_BUCKET])

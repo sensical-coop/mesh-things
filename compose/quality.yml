@@ -21,6 +21,8 @@ services:
         condition: service_completed_successfully
       influxdb:
         condition: service_healthy
+      influx_init:
+        condition: service_completed_successfully
       redis:
         condition: service_healthy
       registry_api:
