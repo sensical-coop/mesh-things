@@ -217,6 +217,10 @@ DATA_RETENTION_DAYS = int(_retention_days) if _retention_days else None
 DATA_DELETION_GRACE_DAYS = env_int("REGISTRY__DATA_DELETION_GRACE_DAYS", 30)
 TERMS_RENEWAL_NOTICE_DAYS = env_int("REGISTRY__TERMS_RENEWAL_NOTICE_DAYS", 30)
 DATA_LIFECYCLE_INTERVAL_SECONDS = env_int("REGISTRY__DATA_LIFECYCLE_INTERVAL_SECONDS", 3600)
+# Superusers are emailed, at most once a day, when the disk holding Docker's data is fuller
+# than this. 0 turns the check off. A full disk is what stops Postgres writing.
+DISK_ALERT_PERCENT = env_int("REGISTRY__DISK_ALERT_PERCENT", 80)
+DISK_ALERT_PATH = env_str("REGISTRY__DISK_ALERT_PATH", "/")
 
 # The Parquet archive as readings serves it, on the bundled MinIO or an external S3.
 # A blank bucket (lite) turns the archive routes off.
