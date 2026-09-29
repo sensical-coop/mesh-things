@@ -2,7 +2,8 @@
 MQTT bridge, which reads what they republish.
 
 A source's traffic is republished locally under `{namespace}/{source_id}/{remote topic}`,
-so the last segment is still the gateway id the Kafka key is taken from.
+so the last segment is still the gateway id the Kafka key is taken from. Sinks share the
+namespace (common/sinks.py).
 """
 from common.env import env_str
 
@@ -10,7 +11,7 @@ DEFAULT_NAMESPACE = "mt-sources"
 
 
 def namespace() -> str:
-    """Separates a dev stack from production on a shared EMQX; the dev overlay sets it."""
+    """Prefixes every source and sink on the EMQX, separating a dev stack from production; the dev overlay sets it."""
     return env_str("MQTT_CONNECTORS__NAMESPACE", DEFAULT_NAMESPACE)
 
 

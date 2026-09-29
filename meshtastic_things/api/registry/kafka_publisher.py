@@ -42,6 +42,10 @@ def sink_config_kafka_key(mesh_id, device_id: int) -> str:
     return f"{mesh_id}:{device_id}"
 
 
+def mesh_sink_config_kafka_key(mesh_id) -> str:
+    return f"mesh:{mesh_id}"
+
+
 class KeyEventPublisher:
     """Publishes to mesh.keys.v1, mesh.node_rejections.v1, mesh.quality_config.v1,
     mesh.postprocessing_config.v1 and mesh.sink_config.v1."""
@@ -230,6 +234,36 @@ class KeyEventPublisher:
         future = self._producer.send(self._sink_config_topic, key=key, value=event)
         future.get(timeout=10)
         log.info("Published device sinks", key=key, sinks=sinks)
+
+    def publish_mesh_sinks(self, mesh_id, sinks: list[str]) -> None:
+        """Replace the sinks every node of a mesh is sent to, on top of each device's own."""
+        key = mesh_sink_config_kafka_key(mesh_id)
+        event = {
+            "kind": "mesh_sinks",
+            "key": key,
+            "mesh_id": str(mesh_id),
+            "sinks": sinks,
+            "op": "upsert" if sinks else "delete",
+            "updated_at": datetime.now(timezone.utc).isoformat(),
+        }
+        future = self._producer.send(self._sink_config_topic, key=key, value=event)
+        future.get(timeout=10)
+        log.info("Published mesh sinks", key=key, sinks=sinks)
+
+    def publish_sink(self, sink_id, streams: list[str] | None) -> None:
+        """Replace which streams an MQTT sink carries. None removes the sink."""
+        key = f"sink:{sink_id}"
+        event = {
+            "kind": "sink",
+            "key": key,
+            "sink_id": str(sink_id),
+            "streams": streams or [],
+            "op": "delete" if streams is None else "upsert",
+            "updated_at": datetime.now(timezone.utc).isoformat(),
+        }
+        future = self._producer.send(self._sink_config_topic, key=key, value=event)
+        future.get(timeout=10)
+        log.info("Published sink", key=key, streams=streams)
 
     def close(self) -> None:
         self._producer.flush()

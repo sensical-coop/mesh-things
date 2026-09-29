@@ -101,6 +101,16 @@ class Owner(AbstractBaseUser, PermissionsMixin):
             return Source.objects.filter(created_by_id=self.id)
         return Source.objects.none()
 
+    @property
+    def visible_sinks(self):
+        """Sinks this owner may see: every one for a superuser, their own for an
+        operator, none otherwise."""
+        if self.is_superuser:
+            return Sink.objects.all()
+        if self.role == OwnerRole.OPERATOR:
+            return Sink.objects.filter(created_by_id=self.id)
+        return Sink.objects.none()
+
     def can_view_mesh(self, mesh) -> bool:
         """Reads."""
         return self.is_superuser or mesh.owner_id == self.id or mesh.is_public
@@ -196,6 +206,8 @@ class TermsKind(models.TextChoices):
     MESH = "mesh", "Mesh"
     # Accepted per source by the operator, as controller of the bridged traffic.
     SOURCE = "source", "Source"
+    # Accepted per sink by the operator, as controller of the readings it sends to a third party.
+    SINK = "sink", "Sink"
 
 
 class TermsAcceptance(models.Model):
@@ -209,12 +221,15 @@ class TermsAcceptance(models.Model):
     owner = models.ForeignKey(
         Owner, on_delete=models.SET_NULL, null=True, blank=True, related_name="terms_acceptances"
     )
-    # Set for mesh and source terms respectively.
+    # Set for mesh, source and sink terms respectively.
     mesh = models.ForeignKey(
         "Mesh", on_delete=models.SET_NULL, null=True, blank=True, related_name="terms_acceptances"
     )
     source = models.ForeignKey(
         Source, on_delete=models.SET_NULL, null=True, blank=True, related_name="terms_acceptances"
+    )
+    sink = models.ForeignKey(
+        "Sink", on_delete=models.SET_NULL, null=True, blank=True, related_name="terms_acceptances"
     )
     acceptor_name = models.CharField(max_length=255)
     acceptor_email = models.EmailField()
@@ -462,6 +477,63 @@ class Device(models.Model):
         return f"{'gateway' if self.is_gateway else 'node'} {node_ids.to_hex(self.device_id)}"
 
 
+def _default_streams() -> list[str]:
+    return ["decoded"]
+
+
+class Sink(models.Model):
+    """Readings an operator's consumer subscribes to on this instance's EMQX.
+
+    The consumer's password lives only in EMQX, hashed; it is shown once when set.
+    """
+
+    id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
+    label = models.CharField(max_length=255, null=True, blank=True)
+    # A non-empty subset of common.sinks.STREAMS.
+    streams = models.JSONField(default=_default_streams)
+    created_by = models.ForeignKey(
+        Owner, on_delete=models.SET_NULL, null=True, blank=True, related_name="created_sinks"
+    )
+    # Set when its terms acceptance lapsed: nothing is sent and its consumer is refused until renewed.
+    paused_at = models.DateTimeField(null=True, blank=True)
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        db_table = "sinks"
+
+    def __str__(self) -> str:
+        return self.label or str(self.id)
+
+    @property
+    def current_terms_acceptance(self):
+        return self.terms_acceptances.order_by("-accepted_at").first()
+
+
+class MeshSink(models.Model):
+    """Every node of a mesh, including those that appear later, goes to the sink."""
+
+    mesh = models.ForeignKey(Mesh, on_delete=models.CASCADE, related_name="sink_links")
+    sink = models.ForeignKey(Sink, on_delete=models.CASCADE, related_name="mesh_links")
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        db_table = "mesh_sinks"
+        constraints = [models.UniqueConstraint(fields=["mesh", "sink"], name="uq_mesh_sink")]
+
+
+class DeviceSink(models.Model):
+    """One node's readings go to the sink."""
+
+    device = models.ForeignKey(Device, on_delete=models.CASCADE, related_name="sink_links")
+    sink = models.ForeignKey(Sink, on_delete=models.CASCADE, related_name="device_links")
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        db_table = "device_sinks"
+        constraints = [models.UniqueConstraint(fields=["device", "sink"], name="uq_device_sink")]
+
+
 class SinkInstruction(models.Model):
     """Append-only record of the controller's instruction to send a device's readings to a
     sink or to stop (GDPR Art. 28(3)(a), Art. 5(2)).
@@ -470,12 +542,13 @@ class SinkInstruction(models.Model):
     """
 
     id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
-    # "archive"; later "sink:<uuid>" for MQTT and Kafka sinks.
+    # "archive", or "sink:<uuid>" for an MQTT sink.
     sink = models.CharField(max_length=64)
     enabled = models.BooleanField()
     device = models.ForeignKey(Device, on_delete=models.SET_NULL, null=True, blank=True, related_name="+")
     mesh_id = models.UUIDField()
-    node_id = models.BigIntegerField()
+    # Null when the instruction covers the whole mesh.
+    node_id = models.BigIntegerField(null=True, blank=True)
     given_by = models.ForeignKey(Owner, on_delete=models.SET_NULL, null=True, blank=True, related_name="+")
     given_by_name = models.CharField(max_length=255)
     given_by_email = models.EmailField()
@@ -487,7 +560,8 @@ class SinkInstruction(models.Model):
 
     def __str__(self) -> str:
         state = "on" if self.enabled else "off"
-        return f"{self.sink} {state} for {node_ids.to_hex(self.node_id)} by {self.given_by_email} ({self.given_at:%Y-%m-%d})"
+        target = f"mesh {self.mesh_id}" if self.node_id is None else node_ids.to_hex(self.node_id)
+        return f"{self.sink} {state} for {target} by {self.given_by_email} ({self.given_at:%Y-%m-%d})"
 
 
 class MeasurementType(models.Model):

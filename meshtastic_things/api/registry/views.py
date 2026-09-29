@@ -1,3 +1,4 @@
+import secrets
 from datetime import timedelta
 
 import structlog
@@ -29,6 +30,7 @@ from .data_lifecycle import (
     cancel_mesh_deletions,
     record_acceptance,
     resume_mesh,
+    resume_sink,
     resume_source,
     schedule_mesh_deletion,
 )
@@ -37,6 +39,7 @@ from .emqx_client import get_emqx_client
 from .exceptions import BadGateway, Conflict
 from .kafka_publisher import get_publisher, publish_gateway_state
 from common.algorithms import REGISTRY, discover
+from common.env import env_str
 from common.detectors import DETECTOR_SPECS
 
 from .models import (
@@ -46,16 +49,19 @@ from .models import (
     DataDeletionReason,
     DataDeletionStatus,
     Device,
+    DeviceSink,
     DevicePostprocessing,
     Measurement,
     MeasurementType,
     Mesh,
+    MeshSink,
     OperatorRequest,
     OperatorRequestStatus,
     Owner,
     OwnerRole,
     PostprocessingBackfill,
     PostprocessingBlueprint,
+    Sink,
     Source,
     TermsKind,
     TelemetryVariant,
@@ -101,6 +107,11 @@ from .serializers import (
     PostprocessingBlueprintUpdateSerializer,
     StepCalibrationSerializer,
     DataDeletionSerializer,
+    SinkCreateSerializer,
+    SinkCredentialsSerializer,
+    SinkReadSerializer,
+    SinkTermsAcceptanceSerializer,
+    SinkWriteSerializer,
     SourceCreateSerializer,
     SourceReadSerializer,
     AccountTermsAcceptanceSerializer,
@@ -603,7 +614,8 @@ def _delete_owner_cascading(owner: Owner) -> None:
         except Exception as e:
             raise BadGateway(f"Failed to publish unreject for device {node.id}, owner NOT removed: {e}")
     try:
-        sinks.unpublish_devices(devices.filter(archive_enabled=True))
+        sinks.unpublish_devices(devices)
+        sinks.unpublish_meshes(owner.meshes.all())
     except Exception as e:
         raise BadGateway(f"Failed to publish sink removal, owner NOT removed: {e}")
     processed = list(devices.filter(postprocessings__isnull=False).distinct())
@@ -1019,7 +1031,8 @@ class MeshDetailView(APIView):
             except Exception as e:
                 raise BadGateway(f"Failed to publish unreject for device {node.id}, mesh NOT removed: {e}")
         try:
-            sinks.unpublish_devices(mesh.devices.filter(archive_enabled=True))
+            sinks.unpublish_devices(mesh.devices.all())
+            sinks.unpublish_meshes([mesh])
         except Exception as e:
             raise BadGateway(f"Failed to publish sink removal, mesh NOT removed: {e}")
         processed = list(mesh.devices.filter(postprocessings__isnull=False).distinct())
@@ -1239,8 +1252,8 @@ class DeviceDetailView(APIView):
                 updated.save(update_fields=["is_allowed"])
                 action = "allow" if attempted_allowed else "reject"
                 raise BadGateway(f"Failed to publish device {action}, rolled back: {e}")
-            if updated.archive_enabled:
-                # Only an allowed registration is archived.
+            if updated.archive_enabled or updated.sink_links.exists():
+                # Only an allowed registration is sent to a sink.
                 try:
                     sinks.publish_device(updated)
                 except Exception as e:
@@ -1368,11 +1381,11 @@ def _publish_measurement_alarms(device, measurement) -> None:
         log.warning("measurement_alarms_publish_failed", measurement_id=str(measurement.id), error=str(e))
 
 
-def _require_operator(request) -> None:
+def _require_operator(request, what: str = "sources") -> None:
     if not request.user.is_authenticated:
         raise AuthenticationFailed()
     if not IsOperator().has_permission(request, None):
-        raise PermissionDenied("Only an operator may access sources")
+        raise PermissionDenied(f"Only an operator may access {what}")
 
 
 def _require_superuser(request) -> None:
@@ -2465,6 +2478,324 @@ class SourceTermsAcceptanceView(APIView):
             raise BadGateway(f"Failed to restart the bridge, terms NOT renewed: {e}")
         record_acceptance(TermsKind.SOURCE, request.user, serializer.validated_data["terms_locale"], source=source)
         return Response(_source_read_data(source), status=status.HTTP_201_CREATED)
+
+
+def _require_sinks_available() -> None:
+    if not env_str("REGISTRY__EMQX_API_URL"):
+        raise NotFound("Sinks are not available on this instance")
+
+
+def _get_sink_or_404(request, sink_id) -> Sink:
+    """A sink outside the caller's reach is reported as missing, not forbidden."""
+    try:
+        return request.user.visible_sinks.get(pk=sink_id)
+    except (Sink.DoesNotExist, ValueError, TypeError):
+        raise NotFound("Sink not found")
+
+
+def _sink_connections() -> dict[str, int] | None:
+    try:
+        return get_emqx_client().sink_connections()
+    except Exception as e:
+        log.warning("sink_connections_unavailable", error=str(e))
+        return None
+
+
+def _sink_read_data(sink: Sink, connections: dict[str, int] | None = None, password: str | None = None) -> dict:
+    if connections is None:
+        connections = _sink_connections()
+    sink.connections = None if connections is None else connections.get(str(sink.id), 0)
+    if password is None:
+        return SinkReadSerializer(sink).data
+    sink.password = password
+    return SinkCredentialsSerializer(sink).data
+
+
+def _require_sink_authorization(client) -> None:
+    """Refuse while the broker would let other clients read or write sink topics."""
+    try:
+        problem = client.sink_authorization_problem()
+    except Exception as e:
+        raise BadGateway(f"Failed to check the broker's authorization: {e}")
+    if problem:
+        raise BadGateway(f"The broker does not protect sinks yet: {problem}")
+
+
+def _link_sink(sink: Sink, mesh_ids, device_ids) -> None:
+    with transaction.atomic():
+        sink.mesh_links.exclude(mesh_id__in=list(mesh_ids)).delete()
+        sink.device_links.exclude(device_id__in=list(device_ids)).delete()
+        MeshSink.objects.bulk_create([MeshSink(sink=sink, mesh_id=i) for i in mesh_ids], ignore_conflicts=True)
+        DeviceSink.objects.bulk_create([DeviceSink(sink=sink, device_id=i) for i in device_ids], ignore_conflicts=True)
+
+
+def _publish_sink_targets(meshes, devices) -> None:
+    for mesh in meshes:
+        sinks.publish_mesh(mesh)
+    for device in devices:
+        sinks.publish_device(device)
+
+
+def _set_sink_targets(sink: Sink, owner: Owner, meshes=None, devices=None) -> None:
+    """Replace the sink's meshes and devices and publish each one that changed.
+
+    None keeps the current list. The previous attachments are restored, and
+    BadGateway raised, when the pipeline cannot be told.
+    """
+    old_meshes = {link.mesh_id: link.mesh for link in sink.mesh_links.select_related("mesh__owner")}
+    old_devices = {link.device_id: link.device for link in sink.device_links.select_related("device__mesh__owner")}
+    new_meshes = old_meshes if meshes is None else {mesh.id: mesh for mesh in meshes}
+    new_devices = old_devices if devices is None else {device.id: device for device in devices}
+    changed_meshes = {m: m.id in new_meshes for m in {**old_meshes, **new_meshes}.values() if (m.id in old_meshes) != (m.id in new_meshes)}
+    changed_devices = {
+        d: d.id in new_devices for d in {**old_devices, **new_devices}.values() if (d.id in old_devices) != (d.id in new_devices)
+    }
+    if not changed_meshes and not changed_devices:
+        return
+    _link_sink(sink, new_meshes, new_devices)
+    try:
+        _publish_sink_targets(changed_meshes, changed_devices)
+    except Exception as e:
+        _link_sink(sink, old_meshes, old_devices)
+        try:
+            _publish_sink_targets(changed_meshes, changed_devices)
+        except Exception as restore_error:
+            log.error("sink_targets_restore_failed", sink_id=str(sink.id), error=str(restore_error))
+        raise BadGateway(f"Failed to publish the sink's meshes and devices, rolled back: {e}")
+    sinks.record_sink_instructions(sink, owner, changed_meshes, changed_devices)
+
+
+def _discard_sink(sink: Sink) -> None:
+    """Undo a sink whose setup failed, as far as the broker and the pipeline allow."""
+    try:
+        get_emqx_client().delete_sink(str(sink.id))
+    except Exception as e:
+        log.error("sink_discard_failed", sink_id=str(sink.id), error=str(e))
+    try:
+        get_publisher().publish_sink(sink.id, None)
+    except Exception as e:
+        log.error("sink_discard_failed", sink_id=str(sink.id), error=str(e))
+    sink.delete()
+
+
+class SinkTermsView(APIView):
+    permission_classes = [IsVerifiedOwner]
+
+    @extend_schema(
+        parameters=[_query("locale", "`en` or `es`. Defaults to `en`; unknown locales fall back to it.")],
+        responses=TermsSerializer,
+    )
+    def get(self, request):
+        """Return the terms an operator must accept to create a sink. Operators only.
+
+        Every statement must be accepted. Send the returned `version` back as
+        `terms_version` when creating the sink. Answers `404` on an instance that
+        does not enforce terms or has no sinks.
+
+        Args:
+            locale: `en` or `es`. Defaults to `en`, which is also used for any
+                other value.
+        """
+        _require_sinks_available()
+        _require_operator(request, "sinks")
+        _require_terms_enforced()
+        return Response(TermsSerializer(current_terms(TermsKind.SINK, request.query_params.get("locale"))).data)
+
+
+class SinkListCreateView(APIView):
+    permission_classes = [IsVerifiedOwner]
+
+    @extend_schema(responses=SinkReadSerializer(many=True))
+    def get(self, request):
+        """List the sinks the caller created, or every sink for a superuser. Operators only.
+
+        Each carries how many consumers are connected, null for all of them when
+        the broker cannot be asked. Passwords are never included.
+        """
+        _require_sinks_available()
+        _require_operator(request, "sinks")
+        sinks_qs = list(request.user.visible_sinks.order_by("created_at"))
+        connections = _sink_connections()
+        for sink in sinks_qs:
+            sink.connections = None if connections is None else connections.get(str(sink.id), 0)
+        return Response(SinkReadSerializer(sinks_qs, many=True).data)
+
+    @extend_schema(request=SinkCreateSerializer, responses={201: SinkCredentialsSerializer})
+    def post(self, request):
+        """Create a sink and return the credentials its consumer subscribes with. Operators only.
+
+        The consumer connects to `broker` over TLS as `username` with the returned
+        password and subscribes under `topic_filter`, where each message is one
+        reading or alarm as JSON. The password is shown in this response only.
+        The caller must first accept the current sink terms. Nothing is kept if
+        the broker or the pipeline cannot be set up, or if the broker does not
+        yet keep sink topics private.
+
+        Args:
+            label: Name for the sink.
+            streams: Which readings are sent: `decoded`, `derived` and `alarms`.
+                Defaults to `decoded`. Derived readings are sent only by
+                instances that run postprocessing, and alarms only by those that
+                run quality checks.
+            mesh_ids: Meshes whose every node is sent, including nodes that
+                appear later. Each must be one the caller may edit, owned by an
+                operator.
+            device_ids: Registrations of single devices to send, under the same
+                conditions.
+            terms_version: The `version` of the sink terms the caller accepted.
+                Required unless the instance does not enforce terms.
+            terms_locale: Locale the terms were shown in, `en` or `es`. Defaults
+                to `en`.
+        """
+        _require_sinks_available()
+        _require_operator(request, "sinks")
+        serializer = SinkCreateSerializer(data=request.data, context={"owner": request.user})
+        serializer.is_valid(raise_exception=True)
+        data = serializer.validated_data
+        client = get_emqx_client()
+        _require_sink_authorization(client)
+        password = secrets.token_urlsafe(24)
+        sink = Sink.objects.create(
+            label=data.get("label") or None, streams=data.get("streams") or ["decoded"], created_by=request.user
+        )
+        try:
+            client.apply_sink_namespace()
+            client.apply_sink(str(sink.id), password)
+            get_publisher().publish_sink(sink.id, sink.streams)
+            _set_sink_targets(sink, request.user, data.get("mesh_ids", []), data.get("device_ids", []))
+            record_acceptance(TermsKind.SINK, request.user, data["terms_locale"], sink=sink)
+        except Exception as e:
+            _discard_sink(sink)
+            raise BadGateway(f"Failed to set up the sink, sink NOT created: {e}")
+        return Response(_sink_read_data(sink, password=password), status=status.HTTP_201_CREATED)
+
+
+class SinkDetailView(APIView):
+    permission_classes = [IsVerifiedOwner]
+
+    @extend_schema(responses=SinkReadSerializer)
+    def get(self, request, sink_id):
+        """Return one sink and how many consumers are connected to it. Operators only.
+
+        An operator can read only the sinks they created; a superuser can read
+        any. The password is never included.
+        """
+        _require_sinks_available()
+        _require_operator(request, "sinks")
+        return Response(_sink_read_data(_get_sink_or_404(request, sink_id)))
+
+    @extend_schema(request=SinkWriteSerializer, responses=SinkReadSerializer)
+    def put(self, request, sink_id):
+        """Update a sink. Operators only, on the sinks they created.
+
+        Any subset of the create fields may be sent, except the terms. A list
+        sent replaces the current one, so an empty `mesh_ids` detaches every
+        mesh. Changes the pipeline cannot be told about are rolled back.
+        """
+        _require_sinks_available()
+        _require_operator(request, "sinks")
+        sink = _get_sink_or_404(request, sink_id)
+        serializer = SinkWriteSerializer(data=request.data, context={"owner": request.user})
+        serializer.is_valid(raise_exception=True)
+        data = serializer.validated_data
+        previous_streams = sink.streams
+        if "label" in data:
+            sink.label = data["label"] or None
+        if "streams" in data:
+            sink.streams = data["streams"]
+        sink.save()
+        if sink.streams != previous_streams and sink.paused_at is None:
+            try:
+                get_publisher().publish_sink(sink.id, sink.streams)
+            except Exception as e:
+                sink.streams = previous_streams
+                sink.save(update_fields=["streams"])
+                raise BadGateway(f"Failed to publish the sink's streams, rolled back: {e}")
+        _set_sink_targets(sink, request.user, data.get("mesh_ids"), data.get("device_ids"))
+        return Response(_sink_read_data(sink))
+
+    @extend_schema(responses={204: NO_CONTENT})
+    def delete(self, request, sink_id):
+        """Delete a sink, revoke its credentials and disconnect its consumers. Operators only.
+
+        A sink with meshes or devices attached cannot be deleted. Nothing is
+        removed if the broker cannot be told. Its terms acceptances are kept.
+        """
+        _require_sinks_available()
+        _require_operator(request, "sinks")
+        sink = _get_sink_or_404(request, sink_id)
+        if sink.mesh_links.exists() or sink.device_links.exists():
+            raise Conflict("Sink has meshes or devices attached; detach them first")
+        try:
+            get_emqx_client().delete_sink(str(sink.id))
+        except Exception as e:
+            raise BadGateway(f"Failed to revoke the sink's credentials, sink NOT deleted: {e}")
+        try:
+            get_publisher().publish_sink(sink.id, None)
+        except Exception as e:
+            # Harmless: with nothing attached the dispatcher sends nothing for it.
+            log.warning("sink_unpublish_failed", sink_id=str(sink.id), error=str(e))
+        sink.delete()
+        return Response(status=status.HTTP_204_NO_CONTENT)
+
+
+class SinkCredentialsView(APIView):
+    permission_classes = [IsVerifiedOwner]
+
+    @extend_schema(request=None, responses=SinkCredentialsSerializer)
+    def post(self, request, sink_id):
+        """Replace a sink's password and disconnect its consumers. Operators only, on the sinks they created.
+
+        The new password is shown in this response only. The old one is kept if
+        the broker cannot be told.
+        """
+        _require_sinks_available()
+        _require_operator(request, "sinks")
+        sink = _get_sink_or_404(request, sink_id)
+        client = get_emqx_client()
+        password = secrets.token_urlsafe(24)
+        try:
+            client.set_sink_password(str(sink.id), password)
+        except Exception as e:
+            raise BadGateway(f"Failed to change the password, credentials NOT changed: {e}")
+        try:
+            client.kick_sink_clients(str(sink.id))
+        except Exception as e:
+            log.warning("sink_kick_failed", sink_id=str(sink.id), error=str(e))
+        return Response(_sink_read_data(sink, password=password))
+
+
+class SinkTermsAcceptanceView(APIView):
+    permission_classes = [IsVerifiedOwner]
+
+    @extend_schema(request=SinkTermsAcceptanceSerializer, responses={201: SinkReadSerializer})
+    def post(self, request, sink_id):
+        """Accept the current sink terms again, renewing the sink. Only the operator who created it.
+
+        With a retention period configured, an acceptance lapses after that
+        period and the sink is paused: nothing is sent and its consumers are
+        refused. Renewing a paused sink resumes it with the same credentials.
+        Answers `404` on an instance that does not enforce terms.
+
+        Args:
+            terms_version: The `version` of the sink terms accepted. Required.
+            terms_locale: Locale the terms were shown in, `en` or `es`. Defaults
+                to `en`.
+        """
+        _require_sinks_available()
+        _require_terms_enforced()
+        _require_operator(request, "sinks")
+        sink = _get_sink_or_404(request, sink_id)
+        if sink.created_by_id != request.user.id:
+            raise PermissionDenied("Only the operator who created this sink can accept its terms")
+        serializer = SinkTermsAcceptanceSerializer(data=request.data)
+        serializer.is_valid(raise_exception=True)
+        try:
+            resume_sink(sink)
+        except Exception as e:
+            raise BadGateway(f"Failed to resume the sink, terms NOT renewed: {e}")
+        record_acceptance(TermsKind.SINK, request.user, serializer.validated_data["terms_locale"], sink=sink)
+        return Response(_sink_read_data(sink), status=status.HTTP_201_CREATED)
 
 
 class DataDeletionListView(APIView):

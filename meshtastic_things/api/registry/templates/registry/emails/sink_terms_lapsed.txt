@@ -1,0 +1,8 @@
+Hi {{ name }},
+
+Your acceptance of the terms for the sink "{{ sink }}" has lapsed, so the sink
+has been paused: nothing more is sent and its credentials are refused.
+
+Renew the terms to resume it. Its credentials stay the same:
+
+{{ sink_link }}

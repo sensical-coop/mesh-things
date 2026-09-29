@@ -125,3 +125,126 @@ class EmqxClientTests(SimpleTestCase):
 
         self.assertEqual(self.client.source_statuses(), {str(SOURCE_ID): "connected"})
         self.assertEqual(len(self.calls), 1)
+
+
+SINK_ID = "0c9d8e7f-6a5b-4c3d-2e1f-0a9b8c7d6e5f"
+SINK_USER = f"mt-sources-sink-{SINK_ID}"
+AUTHN_USERS = "/authentication/password_based%3Abuilt_in_database/users"
+AUTHZ_USERS = "/authorization/sources/built_in_database/rules/users"
+AUTHZ_ALL = "/authorization/sources/built_in_database/rules/all"
+
+
+@patch.dict("os.environ", {"MQTT_CONNECTORS__NAMESPACE": "", "MQTT_SINKS__USER": "dispatcher"})
+class EmqxSinkTests(SimpleTestCase):
+    """The EMQX REST calls behind a sink. The shapes are EMQX 5.8's."""
+
+    setUp = EmqxClientTests.setUp
+
+    def test_a_new_sink_gets_a_user_and_rules_limited_to_its_topics(self):
+        self.responses[("PUT", f"{AUTHZ_USERS}/{SINK_USER}")] = _response(404)
+
+        self.client.apply_sink(SINK_ID, "pw")
+
+        self.assertEqual(
+            [(m, p) for m, p, _ in self.calls],
+            [("POST", AUTHN_USERS), ("PUT", f"{AUTHZ_USERS}/{SINK_USER}"), ("POST", AUTHZ_USERS)],
+        )
+        self.assertEqual(self.calls[0][2], {"user_id": SINK_USER, "password": "pw"})
+        rules = self.calls[2][2][0]["rules"]
+        self.assertEqual(
+            rules,
+            [
+                {"topic": f"mt-sources-sinks/{SINK_ID}/#", "permission": "allow", "action": "subscribe"},
+                {"topic": "#", "permission": "deny", "action": "all"},
+            ],
+        )
+
+    def test_an_existing_user_gets_its_password_replaced(self):
+        self.responses[("POST", AUTHN_USERS)] = _response(409)
+
+        self.client.apply_sink(SINK_ID, "pw")
+
+        self.assertIn(("PUT", f"{AUTHN_USERS}/{SINK_USER}", {"password": "pw"}), self.calls)
+
+    def test_reapplying_without_a_password_leaves_the_user_alone(self):
+        self.client.apply_sink(SINK_ID)
+
+        self.assertEqual([p for _, p, _ in self.calls], [f"{AUTHZ_USERS}/{SINK_USER}"])
+
+    def test_deleting_removes_user_and_rules_then_kicks_only_that_user(self):
+        self.responses[("GET", f"/clients?like_username={SINK_USER}&limit=10000")] = _response(
+            body={"data": [{"clientid": "c/1", "username": SINK_USER}, {"clientid": "c2", "username": f"{SINK_USER}x"}]}
+        )
+
+        self.client.delete_sink(SINK_ID)
+
+        self.assertEqual(
+            [(m, p) for m, p, _ in self.calls if m == "DELETE"],
+            [("DELETE", f"{AUTHN_USERS}/{SINK_USER}"), ("DELETE", f"{AUTHZ_USERS}/{SINK_USER}"), ("DELETE", "/clients/c%2F1")],
+        )
+
+    def test_pausing_denies_everything_and_kicks(self):
+        self.client.pause_sink(SINK_ID)
+
+        self.assertEqual(
+            self.calls[0][2], {"username": SINK_USER, "rules": [{"topic": "#", "permission": "deny", "action": "all"}]}
+        )
+        self.assertEqual(self.calls[1][0:2], ("GET", f"/clients?like_username={SINK_USER}&limit=10000"))
+
+    def test_the_namespace_rules_are_added_to_shared_ones_once(self):
+        dev_publish = {"topic": "mt-sources-dev-sinks/#", "permission": "allow", "action": "publish"}
+        dev_deny = {"topic": "mt-sources-dev-sinks/#", "permission": "deny", "action": "all"}
+        self.responses[("GET", f"{AUTHZ_USERS}/dispatcher")] = _response(body={"rules": [dev_publish]})
+        self.responses[("GET", AUTHZ_ALL)] = _response(body={"rules": [dev_deny]})
+
+        self.client.apply_sink_namespace()
+
+        publish = {"topic": "mt-sources-sinks/#", "permission": "allow", "action": "publish"}
+        deny = {"topic": "mt-sources-sinks/#", "permission": "deny", "action": "all"}
+        self.assertIn(("PUT", f"{AUTHZ_USERS}/dispatcher", {"username": "dispatcher", "rules": [dev_publish, publish]}), self.calls)
+        self.assertIn(("POST", AUTHZ_ALL, {"rules": [dev_deny, deny]}), self.calls)
+
+        self.calls.clear()
+        self.responses[("GET", f"{AUTHZ_USERS}/dispatcher")] = _response(body={"rules": [dev_publish, publish]})
+        self.responses[("GET", AUTHZ_ALL)] = _response(body={"rules": [dev_deny, deny]})
+        self.client.apply_sink_namespace()
+        self.assertEqual([m for m, _, _ in self.calls], ["GET", "GET"])
+
+    def test_authorization_is_a_problem_unless_the_database_is_first(self):
+        file_first = {"sources": [{"type": "file", "enable": True}, {"type": "built_in_database", "enable": True}]}
+        db_first = {"sources": [{"type": "built_in_database", "enable": True}, {"type": "file", "enable": True}]}
+
+        self.responses[("GET", "/authorization/sources")] = _response(body=file_first)
+        self.assertIn("not first", self.client.sink_authorization_problem())
+        self.responses[("GET", "/authorization/sources")] = _response(body=db_first)
+        self.assertIsNone(self.client.sink_authorization_problem())
+
+    def test_installing_creates_the_database_and_moves_it_first(self):
+        self.responses[("GET", "/authorization/sources")] = _response(body={"sources": [{"type": "file"}]})
+
+        self.client.install_sink_authorization()
+
+        self.assertEqual(
+            [(m, p) for m, p, _ in self.calls],
+            [
+                ("GET", "/authorization/sources"),
+                ("POST", "/authorization/sources"),
+                ("POST", "/authorization/sources/built_in_database/move"),
+            ],
+        )
+        self.assertEqual(self.calls[2][2], {"position": "front"})
+
+    def test_connections_are_counted_per_sink_of_this_namespace(self):
+        self.responses[("GET", "/clients?like_username=mt-sources-sink-&limit=10000")] = _response(
+            body={"data": [{"username": SINK_USER}, {"username": SINK_USER}, {"username": "mt-sources-dev-sink-x"}]}
+        )
+
+        self.assertEqual(self.client.sink_connections(), {SINK_ID: 2})
+
+    def test_before_installation_there_are_no_rules(self):
+        self.responses[("GET", f"{AUTHN_USERS}?like_user_id=mt-sources-sink-&limit=10000")] = _response(
+            body={"data": [{"user_id": SINK_USER}]}
+        )
+        self.responses[("GET", f"{AUTHZ_USERS}?like_username=mt-sources-sink-&limit=10000")] = _response(404)
+
+        self.assertEqual(self.client.managed_sink_ids(), ({SINK_ID}, set()))
