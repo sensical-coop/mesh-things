@@ -1,5 +1,6 @@
 """Celery tasks: the scheduling/IO shell around executor.py's pure logic."""
 import os
+from datetime import datetime, timedelta, timezone
 
 import structlog
 from celery import shared_task
@@ -10,6 +11,7 @@ from common.influx_query import duration_seconds
 from common.postprocessing import ResolvedPlan
 from common.units import QUALITY_CHANNELS
 
+from .alarm_memory import get_alarm_memory
 from .alarms import build_alarm, get_alarm_publisher
 from .executor import (
     analyse_completeness,
@@ -17,6 +19,8 @@ from .executor import (
     backfill_channels,
     completeness_applies,
     derived_reading_interval,
+    gaps_over,
+    silent_seconds,
 )
 from .influx_io import get_influx_io
 from .registry_client import get_registry_client
@@ -26,9 +30,17 @@ log = structlog.get_logger()
 COMPLETENESS_LOOKBACK = os.environ.get("QUALITY_WORKER__COMPLETENESS_LOOKBACK", "-24h")
 # Below this fraction of expected samples, the history is patchy enough to alarm.
 COMPLETENESS_THRESHOLD = float(os.environ.get("QUALITY_WORKER__COMPLETENESS_THRESHOLD", "0.8"))
-# A gap longer than this many reading intervals is a fault on its own, even if
-# the overall ratio still looks healthy.
-GAP_INTERVALS_THRESHOLD = float(os.environ.get("QUALITY_WORKER__GAP_INTERVALS_THRESHOLD", "3"))
+# A gap longer than this many reading intervals, and than GAP_MIN_SECONDS, is a
+# fault on its own, even if the overall ratio still looks healthy.
+GAP_INTERVALS_THRESHOLD = float(os.environ.get("QUALITY_WORKER__GAP_INTERVALS_THRESHOLD", "6"))
+GAP_MIN_SECONDS = float(os.environ.get("QUALITY_WORKER__GAP_MIN_SECONDS", "1800"))
+# A low ratio is re-raised at most this often while it stays low.
+RATIO_ALARM_REPEAT_SECONDS = 24 * 3600
+# Below this many expected readings, a few lost packets already look like a low ratio.
+RATIO_MIN_EXPECTED = int(os.environ.get("QUALITY_WORKER__RATIO_MIN_EXPECTED", "24"))
+# Mirrors the absence job, whose alarm already covers a silence this long.
+ABSENCE_MISSED_INTERVALS = float(os.environ.get("ABSENCE_DETECTION__MISSED_INTERVALS", "3"))
+ABSENCE_MIN_SECONDS = 60
 
 # The fields write_quality_metric emits and their units
 QUALITY_FIELDS = tuple(QUALITY_CHANNELS)
@@ -41,6 +53,18 @@ def _variant_intervals() -> dict[str, int | None]:
         variant["payload_kind"]: variant.get("default_reading_interval_seconds")
         for variant in get_registry_client().telemetry_variants()
     }
+
+
+def _utcnow() -> datetime:
+    return datetime.now(timezone.utc)
+
+
+def _absence_limit(device: dict) -> float | None:
+    """Seconds of silence after which the absence job alarms on this device, if it watches it."""
+    interval = device.get("publish_interval_seconds") or device.get("reading_interval_seconds")
+    if not device.get("absence_detection_enabled") or not interval:
+        return None
+    return max(ABSENCE_MIN_SECONDS, interval * ABSENCE_MISSED_INTERVALS)
 
 
 def _reading_interval_for(device: dict, payload_kind: str | None, variant_intervals: dict) -> int | None:
@@ -125,7 +149,8 @@ def check_completeness(device_uuid: str, lookback: str | None = None) -> dict:
 
     variant_intervals = _variant_intervals()
     window = duration_seconds(lookback)
-    publisher = get_alarm_publisher()
+    now = _utcnow()
+    publisher, memory = get_alarm_publisher(), get_alarm_memory()
     results = []
 
     rows = registry.device_measurements(device_uuid)
@@ -168,36 +193,53 @@ def check_completeness(device_uuid: str, lookback: str | None = None) -> dict:
         results.append({"channel": channel, **stats})
 
         # The metric is always written; only the alarm is opt-in.
-        gap_limit = interval * GAP_INTERVALS_THRESHOLD
         if not alarm_on_gaps:
             continue
-        if stats["ratio"] < COMPLETENESS_THRESHOLD:
+        alarm_key = f"{mesh_id}:{device_id}:{channel}"
+        gap_limit = max(interval * GAP_INTERVALS_THRESHOLD, GAP_MIN_SECONDS)
+        absence_limit = _absence_limit(device)
+        # Every gap is marked seen, so one hidden behind a low ratio does not alarm later.
+        new_gaps = [
+            (start, end)
+            for start, end in gaps_over(series, gap_limit)
+            if memory.first_time(f"gap:{alarm_key}:{int(end.timestamp())}", ttl_seconds=window)
+            and not (absence_limit and (end - start).total_seconds() >= absence_limit)
+        ]
+        silent_now = not series or (now - series[-1][0]).total_seconds() > gap_limit
+        # Time the absence alarm already reported is not counted against the ratio.
+        excluded = silent_seconds(series, now - timedelta(seconds=window), absence_limit) if absence_limit else 0
+        expected = max(1, int((window - excluded) // interval))
+        ratio = min(1.0, stats["observed"] / expected)
+        if ratio < COMPLETENESS_THRESHOLD and expected >= RATIO_MIN_EXPECTED and not silent_now:
+            if not memory.first_time(f"ratio:{alarm_key}", ttl_seconds=RATIO_ALARM_REPEAT_SECONDS):
+                continue
             publisher.publish(
                 build_alarm(
                     mesh_id,
                     device_id,
                     channel,
                     detector="completeness",
-                    value=stats["ratio"],
+                    value=ratio,
                     message=(
-                        f"Only {stats['observed']} of ~{stats['expected']} expected readings in "
-                        f"{lookback} ({stats['ratio']:.0%}) - the device published, but its "
+                        f"Only {stats['observed']} of ~{expected} expected readings in "
+                        f"{lookback} ({ratio:.0%}) - the device published, but its "
                         f"history has gaps at the configured {interval}s reading interval"
                     ),
                 )
             )
-        elif stats["largest_gap_seconds"] > gap_limit:
+        elif new_gaps:
+            start, end = max(new_gaps, key=lambda gap: gap[1] - gap[0])
+            gap_seconds = (end - start).total_seconds()
             publisher.publish(
                 build_alarm(
                     mesh_id,
                     device_id,
                     channel,
                     detector="completeness",
-                    value=stats["largest_gap_seconds"],
+                    value=gap_seconds,
                     message=(
-                        f"Overall completeness is fine but there is a "
-                        f"{stats['largest_gap_seconds']:.0f}s hole, over "
-                        f"{GAP_INTERVALS_THRESHOLD:g}x the {interval}s reading interval"
+                        f"No readings from {start.isoformat()} to {end.isoformat()} "
+                        f"({gap_seconds:.0f}s, limit {gap_limit:.0f}s at the {interval}s reading interval)"
                     ),
                 )
             )

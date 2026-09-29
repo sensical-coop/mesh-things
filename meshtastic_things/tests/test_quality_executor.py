@@ -9,6 +9,8 @@ from quality_worker.executor import (
     backfill_channels,
     completeness_applies,
     derived_reading_interval,
+    gaps_over,
+    silent_seconds,
 )
 
 START = datetime(2026, 9, 1, tzinfo=timezone.utc)
@@ -55,6 +57,30 @@ class TestAnalyseCompleteness:
         series = _series([1.0] * 48, interval_seconds=1800)
         stats = analyse_completeness(series, window_seconds=86400, reading_interval_seconds=3600)
         assert stats["ratio"] == 1.0
+
+
+class TestGapsOver:
+    def test_only_gaps_over_the_limit_are_returned(self):
+        series = _series([1.0] * 3, interval_seconds=300) + _series([1.0] * 3, interval_seconds=300, offset_seconds=4000)
+        assert gaps_over(series, limit_seconds=1800) == [(START + timedelta(seconds=600), START + timedelta(seconds=4000))]
+
+    def test_a_gap_at_the_limit_is_not_a_gap(self):
+        assert gaps_over(_series([1.0] * 3, interval_seconds=1800), limit_seconds=1800) == []
+
+    def test_every_gap_is_returned(self):
+        series = _series([1.0, 1.0], interval_seconds=7200)
+        series += _series([1.0], offset_seconds=4 * 7200)
+        assert len(gaps_over(series, limit_seconds=3600)) == 2
+
+
+class TestSilentSeconds:
+    def test_counts_only_silences_over_the_limit(self):
+        series = _series([1.0] * 3, interval_seconds=300) + _series([1.0] * 3, interval_seconds=300, offset_seconds=4000)
+        assert silent_seconds(series, START, limit_seconds=900) == 3400
+
+    def test_includes_a_silence_before_the_first_reading(self):
+        series = _series([1.0] * 3, interval_seconds=300, offset_seconds=3600)
+        assert silent_seconds(series, START, limit_seconds=900) == 3600
 
 
 @pytest.mark.parametrize(

@@ -104,3 +104,22 @@ def analyse_completeness(
         "ratio": min(1.0, observed / expected) if expected else 0.0,
         "largest_gap_seconds": largest_gap,
     }
+
+
+def gaps_over(series: list[tuple], limit_seconds: float) -> list[tuple]:
+    """The (start, end) times of every gap between readings longer than `limit_seconds`."""
+    return [
+        (earlier, later)
+        for (earlier, _), (later, _) in zip(series, series[1:])
+        if (later - earlier).total_seconds() > limit_seconds
+    ]
+
+
+def silent_seconds(series: list[tuple], window_start, limit_seconds: float) -> float:
+    """Seconds of the window spent in silences of at least `limit_seconds`, including one before the first reading."""
+    bounds = [window_start] + [t for t, _ in series]
+    return sum(
+        (later - earlier).total_seconds()
+        for earlier, later in zip(bounds, bounds[1:])
+        if (later - earlier).total_seconds() >= limit_seconds
+    )
