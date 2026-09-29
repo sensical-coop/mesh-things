@@ -2,7 +2,7 @@
 """
 import re
 import uuid
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 
 _DURATION_RE = re.compile(r"^-?\d+(ms|s|m|h|d|w|mo|y)$")
 _IDENT_RE = re.compile(r"^[A-Za-z0-9_:.\-]+$")
@@ -64,6 +64,16 @@ def validate_range_bound(value: str, name: str) -> str:
         f"Invalid {name}: {value!r} (expected a relative duration like -1h, now(), "
         f"a date like 2026-09-01, or a timestamp like 2026-09-01T13:45:00Z)"
     )
+
+
+def bound_to_datetime(value: str, now: datetime) -> datetime:
+    """The instant a range bound from validate_range_bound refers to, relative ones counted from `now`."""
+    if value == "now()":
+        return now
+    if _DURATION_RE.match(value):
+        seconds = duration_seconds(value)
+        return now - timedelta(seconds=seconds) if value.startswith("-") else now + timedelta(seconds=seconds)
+    return datetime.fromisoformat(value.replace("Z", "+00:00"))
 
 
 def validate_duration(value: str, name: str) -> str:

@@ -17,13 +17,13 @@ DETECTOR_SPECS = (
         "name": FLAT_VALUE,
         "scope": MEASUREMENT_SCOPE,
         "requires": (),
-        "description": "Fires when a channel reports the same value for a whole window.",
+        "description": "Fires when a channel reports exactly the same value for hours on end.",
     },
     {
         "name": RANGE,
         "scope": MEASUREMENT_SCOPE,
         "requires": ("valid_min", "valid_max"),
-        "description": "Fires when a reading falls outside the range configured for this device.",
+        "description": "Fires when several readings in a row fall outside the range configured for this device.",
     },
     {
         "name": COMPLETENESS,
@@ -35,7 +35,7 @@ DETECTOR_SPECS = (
         "name": ABSENCE,
         "scope": DEVICE_SCOPE,
         "requires": ("publish_interval_seconds",),
-        "description": "Fires when a device stops publishing for several of its publish intervals.",
+        "description": "Fires once when a device stops publishing for several of its publish intervals.",
     },
 )
 
