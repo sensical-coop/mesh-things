@@ -20,12 +20,16 @@ df -h / | tail -1
 echo "== docker"
 docker system df
 
-# Log files are root-owned; without sudo their sizes are unknown.
+# Log files are root-owned, so their sizes need root or passwordless sudo.
 echo "== container logs (MB)"
-for c in $(docker ps -aq); do
-	size="$(sudo -n stat -c %s "$(docker inspect -f '{{.LogPath}}' "$c")" 2>/dev/null)" || size=""
-	printf '%6s %s\n' "${size:+$((size / 1048576))}" "$(docker inspect -f '{{.Name}}' "$c" | tr -d /)"
-done | sort -rn | head -10
+if [ "$(id -u)" -eq 0 ] || sudo -n true 2>/dev/null; then
+	for c in $(docker ps -aq); do
+		size="$(sudo -n stat -c %s "$(docker inspect -f '{{.LogPath}}' "$c")")"
+		printf '%6d %s\n' "$((size / 1048576))" "$(docker inspect -f '{{.Name}}' "$c" | tr -d /)"
+	done | sort -rn | head -10
+else
+	echo "(needs root: run it with sudo to see them)"
+fi
 
 echo "== volumes"
 docker system df -v | grep -E "^${PROJECT}_" | sort -k3 -h -r
