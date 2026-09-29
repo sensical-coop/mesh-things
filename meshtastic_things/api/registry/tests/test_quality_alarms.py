@@ -20,15 +20,15 @@ def _window(mesh, device_id=1):
     return f"{mesh['id']}:{device_id}"
 
 
-def _alarm(mesh_id, device_id=1, detector="absence", channel=None, **overrides):
+def _alarm(mesh_id, device_id=1, detector="flat_value", channel="env.temperature", **overrides):
     event = {
         "mesh_id": str(mesh_id),
         "device_id": device_id,
         "channel": channel,
         "detector": detector,
         "source": "stream",
-        "value": 900,
-        "message": "No telemetry received for 900s",
+        "value": 21.0,
+        "message": "Value flat at 21.0 for 12.0h (145 readings)",
         "triggered_at": "2026-09-06T12:00:00+00:00",
     }
     event.update(overrides)
@@ -48,7 +48,9 @@ class QualityAlarmRoutingTests(RegistryTestCase):
     def test_alarm_emails_the_device_owner(self):
         _, mesh = self._device(label="Garden mesh")
 
-        AlarmCommand._handle(_alarm(mesh["id"], 1))
+        AlarmCommand._handle(
+            _alarm(mesh["id"], 1, detector="absence", channel=None, message="No telemetry received for 900s")
+        )
 
         self.assertEqual(len(mail.outbox), 1)
         sent = mail.outbox[0]
@@ -72,9 +74,16 @@ class QualityAlarmRoutingTests(RegistryTestCase):
     def test_absence_email_explains_the_publish_vs_read_distinction(self):
         _, mesh = self._device()
 
-        AlarmCommand._handle(_alarm(mesh["id"], 1, detector="absence"))
+        AlarmCommand._handle(_alarm(mesh["id"], 1, detector="absence", channel=None))
 
         self.assertIn("may still deliver this period later", mail.outbox[0].body)
+
+    def test_condition_email_says_it_will_not_repeat(self):
+        _, mesh = self._device()
+
+        AlarmCommand._handle(_alarm(mesh["id"], 1, detector="range"))
+
+        self.assertIn("not get another email about this condition", mail.outbox[0].body)
 
     def test_completeness_email_names_the_channel(self):
         _, mesh = self._device()
@@ -86,13 +95,90 @@ class QualityAlarmRoutingTests(RegistryTestCase):
         self.assertIn("environment_metrics.temperature", mail.outbox[0].body)
         self.assertIn("gaps", mail.outbox[0].subject)
 
-    def test_repeat_alarm_is_held_for_the_summary(self):
+    def test_second_alarm_is_held_for_the_summary(self):
         _, mesh = self._device()
 
         AlarmCommand._handle(_alarm(mesh["id"], 1), now=NOW)
-        AlarmCommand._handle(_alarm(mesh["id"], 1), now=NOW + 10)
+        AlarmCommand._handle(_alarm(mesh["id"], 1, channel="env.humidity"), now=NOW + 10)
 
         self.assertEqual(len(mail.outbox), 1)
+
+    def test_replayed_alarm_is_neither_emailed_nor_held(self):
+        _, mesh = self._device()
+
+        AlarmCommand._handle(_alarm(mesh["id"], 1, detector="range", replay=True), now=NOW)
+
+        self.assertEqual(len(mail.outbox), 0)
+        self.assertIsNone(redis_client().zscore(WINDOWS_KEY, _window(mesh)))
+
+    def test_a_repeat_never_opens_a_window_or_emails(self):
+        _, mesh = self._device()
+
+        AlarmCommand._handle(_alarm(mesh["id"], 1, repeat=True), now=NOW)
+
+        self.assertEqual(len(mail.outbox), 0)
+        self.assertIsNone(redis_client().zscore(WINDOWS_KEY, _window(mesh)))
+
+    def test_a_repeat_is_counted_in_an_open_window(self):
+        _, mesh = self._device()
+        AlarmCommand._handle(_alarm(mesh["id"], 1), now=NOW)
+        AlarmCommand._handle(_alarm(mesh["id"], 1, repeat=True, message="still flat"), now=NOW + 10)
+
+        AlarmCommand.flush_due_windows(now=NOW + ALARM_EMAIL_COOLDOWN_SECONDS)
+
+        self.assertEqual(len(mail.outbox), 2)
+        self.assertIn("Latest: still flat", mail.outbox[1].body)
+
+    def test_a_repeat_is_not_emailed_even_without_a_cooldown(self):
+        owner, mesh = self._device()
+        Owner.objects.filter(pk=owner["id"]).update(alarm_email_cooldown_seconds=0)
+
+        AlarmCommand._handle(_alarm(mesh["id"], 1, repeat=True), now=NOW)
+
+        self.assertEqual(len(mail.outbox), 0)
+
+    def test_hourly_repeats_of_one_condition_email_once(self):
+        _, mesh = self._device()
+        AlarmCommand._handle(_alarm(mesh["id"], 1), now=NOW)
+        for hour in range(1, 25):
+            now = NOW + hour * ALARM_EMAIL_COOLDOWN_SECONDS + 1
+            AlarmCommand.flush_due_windows(now=now)
+            AlarmCommand._handle(_alarm(mesh["id"], 1, repeat=True), now=now)
+
+        self.assertEqual(len(mail.outbox), 1)
+
+    def test_absence_is_emailed_at_most_once_a_day_per_device(self):
+        _, mesh = self._device()
+        absence = _alarm(mesh["id"], 1, detector="absence", channel=None)
+
+        AlarmCommand._handle(absence, now=NOW)
+        AlarmCommand.flush_due_windows(now=NOW + ALARM_EMAIL_COOLDOWN_SECONDS)
+        AlarmCommand._handle(absence, now=NOW + 3 * 3600)
+        AlarmCommand.flush_due_windows(now=NOW + 5 * 3600)
+        AlarmCommand._handle(absence, now=NOW + 25 * 3600)
+
+        self.assertEqual(len(mail.outbox), 2)
+        self.assertNotIn("Alarm summary", mail.outbox[1].subject)
+
+    def test_a_second_absence_the_same_day_is_counted_in_an_open_window(self):
+        _, mesh = self._device()
+        AlarmCommand._handle(_alarm(mesh["id"], 1, detector="absence", channel=None), now=NOW)
+        AlarmCommand._handle(_alarm(mesh["id"], 1, detector="absence", channel=None), now=NOW + 60)
+
+        AlarmCommand.flush_due_windows(now=NOW + ALARM_EMAIL_COOLDOWN_SECONDS)
+
+        self.assertEqual(len(mail.outbox), 2)
+        self.assertIn("Alarm summary", mail.outbox[1].subject)
+
+    def test_absence_is_emailed_straight_away_during_an_open_window(self):
+        _, mesh = self._device()
+        AlarmCommand._handle(_alarm(mesh["id"], 1), now=NOW)
+
+        AlarmCommand._handle(_alarm(mesh["id"], 1, detector="absence", channel=None), now=NOW + 10)
+
+        self.assertEqual(len(mail.outbox), 2)
+        self.assertIn("stopped publishing", mail.outbox[1].subject)
+        self.assertEqual(redis_client().zscore(WINDOWS_KEY, _window(mesh)), NOW + ALARM_EMAIL_COOLDOWN_SECONDS)
 
     def test_owner_can_disable_the_cooldown(self):
         # alarm_email_cooldown_seconds=0 means "email on every alarm".
@@ -129,7 +215,7 @@ class QualityAlarmRoutingTests(RegistryTestCase):
 
         AlarmCommand._handle(_alarm(mesh["id"], 1, detector="flat_value", channel="env.temperature"), now=NOW)
         AlarmCommand._handle(_alarm(mesh["id"], 1, detector="flat_value", channel="env.humidity"), now=NOW + 1)
-        AlarmCommand._handle(_alarm(mesh["id"], 1, detector="absence"), now=NOW + 2)
+        AlarmCommand._handle(_alarm(mesh["id"], 1, detector="range"), now=NOW + 2)
 
         self.assertEqual(len(mail.outbox), 1)
 
@@ -155,7 +241,7 @@ class QualityAlarmRoutingTests(RegistryTestCase):
                 now=NOW + 60 * (i + 1),
             )
         AlarmCommand._handle(
-            _alarm(mesh["id"], 1, detector="absence", triggered_at="2026-09-06T12:30:00+00:00"),
+            _alarm(mesh["id"], 1, detector="range", triggered_at="2026-09-06T12:30:00+00:00"),
             now=NOW + 1800,
         )
 
@@ -172,7 +258,7 @@ class QualityAlarmRoutingTests(RegistryTestCase):
         self.assertIn("flat_value), env.temperature", summary.body)
         self.assertIn("3 time(s), first 2026-09-06T12:01:00+00:00, last 2026-09-06T12:03:00+00:00", summary.body)
         self.assertIn("Latest: flat #2", summary.body)
-        self.assertIn("(absence)", summary.body)
+        self.assertIn("(range)", summary.body)
         self.assertIn("1 time(s)", summary.body)
 
     def test_no_summary_when_nothing_was_held(self):
