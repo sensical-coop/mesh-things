@@ -6,8 +6,9 @@ from unittest.mock import call, patch
 
 from django.core import mail
 from django.core.management import CommandError, call_command
-from django.test import override_settings
+from django.test import SimpleTestCase, override_settings
 from django.utils import timezone
+from drf_spectacular.generators import SchemaGenerator
 
 from common import sinks as sink_names
 from registry import data_lifecycle, sinks
@@ -475,3 +476,13 @@ class OwnerDeletionTests(SinkTestCase):
         self.assertEqual(resp.status_code, 502)
         self.assertTrue(Owner.objects.filter(pk=self.operator["id"]).exists())
         self.assertTrue(Sink.objects.exists())
+
+
+class SchemaTests(SimpleTestCase):
+    def test_streams_are_typed_in_every_sink_response(self):
+        schemas = SchemaGenerator().get_schema(request=None, public=True)["components"]["schemas"]
+        for name in ("SinkRead", "SinkCredentials"):
+            streams = schemas[name]["properties"]["streams"]
+            self.assertEqual(streams["type"], "array", name)
+            self.assertEqual(streams["items"], {"$ref": "#/components/schemas/StreamsEnum"}, name)
+        self.assertEqual(schemas["StreamsEnum"]["enum"], list(sink_names.STREAMS))

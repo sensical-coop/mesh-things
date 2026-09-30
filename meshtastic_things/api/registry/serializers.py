@@ -620,6 +620,12 @@ class SinkTermsAcceptanceSerializer(_TermsAcceptanceInputMixin):
 
 
 class SinkReadSerializer(serializers.ModelSerializer):
+    # Declared because the model's JSONField would reach the schema untyped.
+    streams = serializers.ListField(
+        child=serializers.ChoiceField(choices=sink_names.STREAMS),
+        read_only=True,
+        help_text="Which readings are sent: `decoded`, `derived`, `alarms`.",
+    )
     created_by_id = serializers.UUIDField(read_only=True, allow_null=True)
     paused_at = serializers.DateTimeField(
         read_only=True, allow_null=True, help_text="When the sink was paused because its terms lapsed."
