@@ -3,8 +3,8 @@ source terms per source and sink terms per sink.
 
 A version and its text change together: any edit to a statement needs a new version,
 so that each acceptance's `text_hash` still names the text it agreed to. The retention
-sentence of the mesh and source terms is built from the settings, so changing them
-changes the hash too.
+sentence of the mesh and source terms, and the address of the Data Processing Agreement
+they point to, are built from the settings, so changing them changes the hash too.
 """
 import hashlib
 import json
@@ -67,7 +67,7 @@ _MESH = {
         "description": (
             "A mesh stores the traffic its gateways send to the default broker. That traffic can "
             "include personal data from people who never signed up here: node names, device IDs, "
-            "positions, messages and telemetry. For this mesh you decide what is collected and why, "
+            "positions and telemetry. For this mesh you decide what is collected and why, "
             "and Sensical processes it only on your behalf to run the service. Tick each box to "
             "continue."
         ),
@@ -75,7 +75,8 @@ _MESH = {
             (
                 "controller",
                 "I act as data controller for the traffic this mesh brings in. I authorise Sensical to "
-                "ingest, decode and store it on my behalf as a processor, under the Mesh Things Terms. "
+                "ingest, decode and store it on my behalf as a processor, under the Data Processing "
+                "Agreement ({dpa_url}). "
                 "If I'm an operator, this includes keeping the devices I choose in a long-term archive "
                 "that I can download.",
             ),
@@ -114,7 +115,7 @@ _MESH = {
         "description": (
             "Una malla guarda el tráfico que sus pasarelas envían al bróker por defecto. Ese tráfico "
             "puede incluir datos personales de personas que nunca se han registrado aquí: nombres de "
-            "nodo, identificadores de dispositivo, posiciones, mensajes y telemetría. En esta malla tú "
+            "nodo, identificadores de dispositivo, posiciones y telemetría. En esta malla tú "
             "decides qué se recoge y para qué, y Sensical lo trata solo por tu cuenta para prestar el "
             "servicio. Marca cada casilla para continuar."
         ),
@@ -123,7 +124,7 @@ _MESH = {
                 "controller",
                 "Actúo como responsable del tratamiento del tráfico que trae esta malla. Autorizo a "
                 "Sensical a recibirlo, descifrarlo y almacenarlo por mi cuenta como encargado del "
-                "tratamiento, según las Condiciones de Mesh Things. Si soy operador, esto incluye "
+                "tratamiento, según el Acuerdo de procesamiento de los datos ({dpa_url}). Si soy operador, esto incluye "
                 "conservar los dispositivos que elija en un archivo a largo plazo que puedo descargar.",
             ),
             (
@@ -167,7 +168,7 @@ _SOURCE = {
         "description": (
             "A source bridges traffic from a broker you choose into Mesh Things. That traffic can "
             "include personal data from people who never signed up here: node names, device IDs, "
-            "positions, messages and telemetry. For this traffic you decide what is collected and "
+            "positions and telemetry. For this traffic you decide what is collected and "
             "why, and Sensical processes it only on your behalf to run the service. Tick each box "
             "to continue."
         ),
@@ -176,7 +177,7 @@ _SOURCE = {
                 "controller",
                 "I act as data controller for the traffic this source brings in. I authorise "
                 "Sensical to ingest, decode and store it on my behalf as a processor, under the "
-                "Mesh Things Terms. This includes keeping the devices I choose in a long-term archive "
+                "Data Processing Agreement ({dpa_url}). This includes keeping the devices I choose in a long-term archive "
                 "that I can download.",
             ),
             (
@@ -219,7 +220,7 @@ _SOURCE = {
         "description": (
             "Una fuente trae a Mesh Things el tráfico de un bróker que tú eliges. Ese tráfico puede "
             "incluir datos personales de personas que nunca se han registrado aquí: nombres de "
-            "nodo, identificadores de dispositivo, posiciones, mensajes y telemetría. En este "
+            "nodo, identificadores de dispositivo, posiciones y telemetría. En este "
             "tráfico tú decides qué se recoge y para qué, y Sensical lo trata solo por tu cuenta "
             "para prestar el servicio. Marca cada casilla para continuar."
         ),
@@ -228,7 +229,7 @@ _SOURCE = {
                 "controller",
                 "Actúo como responsable del tratamiento del tráfico que trae esta fuente. Autorizo a "
                 "Sensical a recibirlo, descifrarlo y almacenarlo por mi cuenta como encargado del "
-                "tratamiento, según las Condiciones de Mesh Things. Esto incluye conservar los "
+                "tratamiento, según el Acuerdo de procesamiento de los datos ({dpa_url}). Esto incluye conservar los "
                 "dispositivos que elija en un archivo a largo plazo que puedo descargar.",
             ),
             (
@@ -374,6 +375,11 @@ _COPY = {TermsKind.ACCOUNT: _ACCOUNT, TermsKind.MESH: _MESH, TermsKind.SOURCE: _
 
 
 
+def dpa_url() -> str:
+    """The Data Processing Agreement the mesh, source and sink terms are accepted under."""
+    return f"{settings.PUBLIC_FRONTEND_URL.rstrip('/')}/dpa"
+
+
 def terms(kind: str, locale: str | None = None) -> dict:
     """The current terms of `kind` in `locale`, falling back to English.
 
@@ -395,7 +401,7 @@ def terms(kind: str, locale: str | None = None) -> dict:
         "locale": locale,
         "title": text["title"],
         "description": text["description"],
-        "statements": [{"id": sid, "text": body} for sid, body in text["statements"]],
+        "statements": [{"id": sid, "text": body.format(dpa_url=dpa_url())} for sid, body in text["statements"]],
         "footnote": footnote,
     }
 
