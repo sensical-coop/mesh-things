@@ -12,12 +12,6 @@ x-flink-state-volumes: &flink-state-volumes
   - flink_checkpoints:/opt/flink/checkpoints
   - flink_savepoints:/opt/flink/savepoints
 
-x-flink-logging: &flink-logging
-  driver: json-file
-  options:
-    max-size: "50m"
-    max-file: "3"
-
 x-flink-state-properties: &flink-state-properties |
   state.backend: rocksdb
   state.checkpoints.dir: file:///opt/flink/checkpoints
@@ -50,7 +44,6 @@ services:
     mem_limit: 1600m
     <<: *flink-image
     volumes: *flink-state-volumes
-    logging: *flink-logging
     container_name: jobmanager
     command: jobmanager
     restart: unless-stopped
@@ -71,7 +64,6 @@ services:
     mem_limit: 3600m
     <<: *flink-image
     volumes: *flink-state-volumes
-    logging: *flink-logging
     container_name: taskmanager
     command: taskmanager
     restart: unless-stopped
@@ -95,7 +87,6 @@ services:
     env_file: "../.env"
     <<: *flink-image
     volumes: *flink-state-volumes
-    logging: *flink-logging
     restart: "no"
     command: ["./submit-job.sh", "decode_job.py", "mesh-decode-decrypt"]
     environment:
@@ -119,7 +110,6 @@ services:
     env_file: "../.env"
     <<: *flink-image
     volumes: *flink-state-volumes
-    logging: *flink-logging
     restart: "no"
     command: ["./submit-job.sh", "postprocessing_job.py", "mesh-postprocessing"]
     environment:
@@ -142,7 +132,6 @@ services:
     env_file: "../.env"
     <<: *flink-image
     volumes: *flink-state-volumes
-    logging: *flink-logging
     restart: "no"
     command: ["./submit-job.sh", "pattern_detection_job.py", "mesh-pattern-detection"]
     environment:
@@ -165,7 +154,6 @@ services:
     env_file: "../.env"
     <<: *flink-image
     volumes: *flink-state-volumes
-    logging: *flink-logging
     restart: "no"
     command: ["./submit-job.sh", "absence_detection_job.py", "mesh-absence-detection"]
     environment:
@@ -191,7 +179,6 @@ services:
     env_file: "../.env"
     <<: *flink-image
     volumes: *flink-state-volumes
-    logging: *flink-logging
     restart: unless-stopped
     command:
       - ./watch-jobs.sh
