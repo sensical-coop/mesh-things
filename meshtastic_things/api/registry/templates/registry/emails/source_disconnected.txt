@@ -1,0 +1,15 @@
+Hi {{ name }},
+
+Your source "{{ source }}" has not been connected to {{ server }} since
+{{ since|date:"Y-m-d H:i" }} UTC (status: {{ status }}). Nothing from its meshes is
+reaching Mesh Things while it stays this way.
+
+Check that the broker is up and reachable, and that the source's credentials and
+topic are still valid. The source reconnects on its own once the broker accepts it.
+A status of "missing" means the bridge is gone from this instance's broker: ask the
+administrators of this instance to restore it.
+
+{{ source_link }}
+
+You will not be emailed again about this outage. If the source reconnects and
+fails again later, you will be.

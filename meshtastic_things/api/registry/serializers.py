@@ -113,6 +113,7 @@ class OwnerReadSerializer(serializers.ModelSerializer):
             "last_login",
             "created_at",
             "alarm_email_cooldown_seconds",
+            "status_alerts_enabled",
             "terms_accepted_version",
         ]
         read_only_fields = fields
@@ -148,8 +149,16 @@ class OwnerUpdateSerializer(serializers.ModelSerializer):
 
     class Meta:
         model = Owner
-        fields = ["name", "email", "alarm_email_cooldown_seconds"]
-        extra_kwargs = {"name": {"required": False}}
+        fields = ["name", "email", "alarm_email_cooldown_seconds", "status_alerts_enabled"]
+        extra_kwargs = {
+            "name": {"required": False},
+            "status_alerts_enabled": {
+                "help_text": (
+                    "Email me when a source I created stays disconnected, or a sink I created with "
+                    "meshes or devices attached has nobody connected. Off by default."
+                )
+            },
+        }
 
     def validate_alarm_email_cooldown_seconds(self, value):
         if value is not None and value > ALARM_EMAIL_COOLDOWN_MAX_SECONDS:

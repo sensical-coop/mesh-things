@@ -55,6 +55,8 @@ class Owner(AbstractBaseUser, PermissionsMixin):
     password_reset_sent_at = models.DateTimeField(null=True, blank=True)
     # Length of a device's alarm-email window, in seconds. Null uses the server default.
     alarm_email_cooldown_seconds = models.PositiveIntegerField(null=True, blank=True)
+    # Emails about the sources and sinks this owner created that stay disconnected or unused.
+    status_alerts_enabled = models.BooleanField(default=False)
     role = models.CharField(max_length=16, choices=OwnerRole.choices, default=OwnerRole.MEMBER)
 
     objects = OwnerManager()

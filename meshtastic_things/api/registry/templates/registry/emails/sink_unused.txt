@@ -1,0 +1,16 @@
+Hi {{ name }},
+
+Nobody has been connected to your sink "{{ sink }}" since
+{{ since|date:"Y-m-d H:i" }} UTC, although it has meshes or devices attached.
+{% if max_offline_hours %}
+Readings are only kept for a consumer that has connected before, and for at most
+{{ max_offline_hours }} hours after it disconnects. Anything older is discarded.
+{% endif %}
+Check that the service that uses this sink is running and still has the sink's
+credentials. If the sink is no longer needed, detach its meshes and devices or
+delete it.
+
+{{ sink_link }}
+
+You will not be emailed again until someone connects and then the sink is left
+unused again.

@@ -210,6 +210,11 @@ SOURCES_ALLOW_PRIVATE_BROKERS = env_bool("REGISTRY__SOURCES_ALLOW_PRIVATE_BROKER
 # longer than this, or holding more queued messages than this. 0 turns either check off.
 SINKS_MAX_OFFLINE_HOURS = env_int("REGISTRY__SINKS_MAX_OFFLINE_HOURS", 24)
 SINKS_MAX_QUEUED = env_int("REGISTRY__SINKS_MAX_QUEUED", 10000)
+# An operator who opted in is emailed once when a source has not been connected for this many hours,
+# or when a sink with meshes or devices attached has had nobody connected for this long.
+# Checked on each lifecycle pass. 0 turns either alert off.
+SOURCE_ALERT_HOURS = env_int("REGISTRY__SOURCE_ALERT_HOURS", 2)
+SINK_ALERT_HOURS = env_int("REGISTRY__SINK_ALERT_HOURS", 24)
 
 # Off for an instance run by its own mesh owner, where there is no second party to
 # accept terms from. Turns off terms routes, recording, renewals, lapses and retention.
