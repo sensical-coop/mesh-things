@@ -248,3 +248,15 @@ class EmqxSinkTests(SimpleTestCase):
         self.responses[("GET", f"{AUTHZ_USERS}?like_username=mt-sources-sink-&limit=10000")] = _response(404)
 
         self.assertEqual(self.client.managed_sink_ids(), ({SINK_ID}, set()))
+
+    def test_sessions_are_listed_only_for_this_namespaces_sinks(self):
+        self.responses[("GET", "/clients?like_username=mt-sources-sink-&limit=10000")] = _response(
+            body={"data": [{"clientid": "a", "username": SINK_USER}, {"clientid": "b", "username": "mt-sources-dev-sink-x"}]}
+        )
+
+        self.assertEqual([s["clientid"] for s in self.client.sink_sessions()], ["a"])
+
+    def test_discarding_a_session_deletes_the_client(self):
+        self.client.discard_session("c/1")
+
+        self.assertEqual(self.calls, [("DELETE", "/clients/c%2F1", None)])

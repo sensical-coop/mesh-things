@@ -41,3 +41,21 @@ def source_id_from_topic(topic: str) -> str | None:
         return None
     source_id, _, remote = rest.partition("/")
     return source_id if remote else None
+
+
+def reaches_reserved_topics(topic_filter: str) -> bool:
+    """Whether a source's filter could match what a stack republishes or sinks on its broker.
+
+    Those topics all start with a namespace (`{namespace}/...` for sources,
+    `{namespace}-sinks/...` for sinks), this instance's or the default one a production
+    stack sharing the broker uses. Bridging them back in would republish each message
+    under its own filter again, without end. Refused wherever the broker is, since an
+    address or alias can name this instance's broker without looking like it.
+    """
+    levels = topic_filter.split("/")
+    if levels[0] == "#":
+        return True
+    # Every reserved topic has at least two levels.
+    if len(levels) == 1:
+        return False
+    return levels[0] == "+" or levels[0].startswith((namespace(), DEFAULT_NAMESPACE))

@@ -9,6 +9,9 @@ nothing, so its lapse only stops it sending and refuses its consumer. Account
 terms never lapse. With terms not enforced (a self-hosted instance) none of this runs,
 and anything a lapse paused is resumed. Each step is idempotent, so `run_pass` can
 resume after a failure.
+
+Each pass also discards sink consumers' broker sessions that have been offline too long or
+queued too much, which the broker's own limits would let grow for weeks.
 """
 from datetime import datetime, timedelta
 
@@ -16,6 +19,8 @@ import structlog
 from django.conf import settings
 from django.db import transaction
 from django.utils import timezone
+
+from common.env import env_str
 
 from .data_store import get_data_store
 from .disk_alert import check_disk
@@ -280,6 +285,47 @@ def pause_lapsed_sinks(now: datetime) -> int:
     return paused
 
 
+def _stale_session_reason(session: dict, now: datetime) -> str | None:
+    queued = session.get("mqueue_len") or 0
+    if settings.SINKS_MAX_QUEUED and queued > settings.SINKS_MAX_QUEUED:
+        return f"{queued} messages queued"
+    disconnected_at = session.get("disconnected_at")
+    if session.get("connected") or not disconnected_at or not settings.SINKS_MAX_OFFLINE_HOURS:
+        return None
+    offline = now - datetime.fromisoformat(disconnected_at)
+    if offline > timedelta(hours=settings.SINKS_MAX_OFFLINE_HOURS):
+        return f"offline for {offline}"
+    return None
+
+
+def discard_stale_sink_sessions(now: datetime) -> int:
+    """Drop sink consumers' sessions offline past SINKS_MAX_OFFLINE_HOURS or queueing past SINKS_MAX_QUEUED.
+
+    A consumer still connected with too much queued is disconnected too: it is not keeping up.
+    """
+    if not env_str("REGISTRY__EMQX_API_URL"):
+        return 0
+    client = get_emqx_client()
+    try:
+        sessions = client.sink_sessions()
+    except Exception as e:
+        log.warning("sink_sessions_unavailable", error=str(e))
+        return 0
+    discarded = 0
+    for session in sessions:
+        reason = _stale_session_reason(session, now)
+        if reason is None:
+            continue
+        try:
+            client.discard_session(session["clientid"])
+        except Exception as e:
+            log.warning("sink_session_discard_failed", clientid=session["clientid"], error=str(e))
+            continue
+        log.info("sink_session_discarded", clientid=session["clientid"], reason=reason)
+        discarded += 1
+    return discarded
+
+
 def purge_due_deletions(now: datetime) -> int:
     """Delete the readings of every deletion past its grace period. Failures are retried next pass."""
     store = get_data_store()
@@ -341,5 +387,6 @@ def run_pass(now: datetime | None = None) -> dict:
         "paused_sinks": pause_lapsed_sinks(now),
         "resumed": resume_paused(),
         "deletions_done": purge_due_deletions(now),
+        "sink_sessions_discarded": discard_stale_sink_sessions(now),
         "disk_alerts": int(check_disk()),
     }

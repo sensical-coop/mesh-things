@@ -11,11 +11,13 @@ from drf_spectacular.utils import extend_schema_field
 from rest_framework import serializers
 
 from common import sinks as sink_names
+from common import sources as source_names
 from common.algorithms import validate_calibration, validate_step
 from common.channels import channel_name, origin_of
 from common.detectors import DETECTOR_CHOICES, MEASUREMENT_DETECTORS, enabled_detectors_for
 from common.env import env_str
 
+from .broker_hosts import is_own_broker
 from .broker_hosts import refusal as broker_refusal
 from .emailing import ALARM_EMAIL_COOLDOWN_MAX_SECONDS
 from . import postprocessing
@@ -419,8 +421,13 @@ class MeshUpdateSerializer(_MeshTermsMixin, serializers.ModelSerializer):
         return _validate_visible_source(self, value)
 
 
-def _own_emqx_host() -> str:
-    return urlsplit(env_str("REGISTRY__EMQX_API_URL")).hostname or ""
+def _own_broker_hosts() -> list[str]:
+    """Every name this instance's broker goes by: its API, the bridge's and the sinks' address."""
+    return [
+        urlsplit(env_str("REGISTRY__EMQX_API_URL")).hostname or "",
+        env_str("MQTT_BRIDGE__BROKER"),
+        sinks_broker().rpartition(":")[0],
+    ]
 
 
 class SourceSerializer(serializers.ModelSerializer):
@@ -478,7 +485,7 @@ class SourceSerializer(serializers.ModelSerializer):
         if not sep or not host or not port.isdigit() or not 0 < int(port) < 65536:
             raise serializers.ValidationError("Must be host:port.")
         # Bridging our own broker into itself would loop through the republished topics.
-        if host.strip("[]").rstrip(".").lower() == _own_emqx_host().lower():
+        if is_own_broker(host, _own_broker_hosts()):
             raise serializers.ValidationError("A source cannot point at this instance's own broker.")
         reason = broker_refusal(host)
         if reason:
@@ -494,6 +501,10 @@ class SourceSerializer(serializers.ModelSerializer):
             raise serializers.ValidationError("Must be a plain topic filter; $share and $SYS topics are not accepted.")
         if value in settings.SOURCES_BLOCKED_TOPICS:
             raise serializers.ValidationError("This topic filter is not allowed as a source.")
+        if source_names.reaches_reserved_topics(value):
+            raise serializers.ValidationError(
+                "This topic filter could match the topics sources are republished and sinks are sent on."
+            )
         return value
 
 

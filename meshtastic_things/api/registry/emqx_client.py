@@ -182,6 +182,17 @@ class EmqxClient:
             if client.get("username") == username:
                 self._delete(f"/clients/{quote(client['clientid'], safe='')}")
 
+    def sink_sessions(self) -> list[dict]:
+        """Every session, connected or not, of a sink consumer in this instance's namespace."""
+        return [
+            client for client in self._sink_clients(sinks.username(""))
+            if sinks.id_from_username(client.get("username") or "")
+        ]
+
+    def discard_session(self, clientid: str) -> None:
+        """Disconnect a client if connected, and drop its session and queued messages."""
+        self._delete(f"/clients/{quote(clientid, safe='')}")
+
     def sink_connections(self) -> dict[str, int]:
         """Connected clients per sink in this instance's namespace, in one call."""
         counts: dict[str, int] = {}
