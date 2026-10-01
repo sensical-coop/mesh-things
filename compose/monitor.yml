@@ -1,0 +1,34 @@
+x-monitor-image: &monitor-image
+  image: meshtastic-things/monitor:latest
+  # Prebuilt alternative, disabled. See compose/api.yml.
+  # image: ghcr.io/sensical-coop/meshtastic-kafka/monitor:${TAG:-latest}
+  build:
+    context: ../meshtastic_things
+    dockerfile: monitor/Dockerfile
+
+services:
+  # Checks this stack end to end from outside and emails superusers on failure.
+  # Meant for another machine, where compose/monitor.public.yml opens its port:
+  #   docker compose -f compose/monitor.yml -f compose/monitor.public.yml \
+  #     --env-file monitor.env --profile monitor up -d --build
+  # No depends_on, so this file also runs on its own.
+  server_monitor:
+    profiles: ["monitor"]
+    <<: *monitor-image
+    mem_limit: 128m
+    container_name: server-monitor
+    env_file:
+      - path: ../monitor.env
+        required: false
+    environment:
+      # Fixed inside the container; MONITOR__PORT picks the host side.
+      MONITOR__PORT: 8095
+    restart: unless-stopped
+    ports:
+      - 127.0.0.1:${MONITOR__PORT:-8095}:8095
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8095/health"]
+      interval: 1m
+      timeout: 10s
+      retries: 3
+      start_period: 30s

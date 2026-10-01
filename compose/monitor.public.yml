@@ -1,0 +1,6 @@
+# Publishes the server monitor's status API on every interface, for Uptime Robot.
+# Only for the monitor's own host, never beside the stack: see compose/monitor.yml.
+services:
+  server_monitor:
+    ports: !override
+      - ${MONITOR__PORT:-8095}:8095

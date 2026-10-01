@@ -232,3 +232,6 @@ caddy/credentials/*
 # Internal files
 plans/
 pending*
+
+# Server monitor settings (see monitor.env.example)
+monitor.env
