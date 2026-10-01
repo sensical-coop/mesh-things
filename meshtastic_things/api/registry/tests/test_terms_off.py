@@ -137,3 +137,17 @@ class TermsOnByDefaultTests(RegistryTestCase):
 
         self.assertIn("terms_version", resp.json())
         self.assertFalse(Owner.objects.filter(email="no@example.com").exists())
+
+    def test_a_missing_version_is_reported_with_the_other_field_errors(self):
+        resp = self.client.post("/owners", {"name": "No", "email": "not-an-email"}, format="json")
+
+        self.assertEqual(resp.status_code, 400)
+        self.assertEqual(set(resp.json()), {"email", "password", "terms_version"})
+
+    def test_the_schema_does_not_mark_the_version_required(self):
+        schema = self.client.get("/schema", HTTP_ACCEPT="application/json").json()
+
+        for name in ("OwnerCreate", "SourceCreate", "SourceTermsAcceptance"):
+            component = schema["components"]["schemas"][name]
+            self.assertIn("terms_version", component["properties"], name)
+            self.assertNotIn("terms_version", component.get("required", []), name)
