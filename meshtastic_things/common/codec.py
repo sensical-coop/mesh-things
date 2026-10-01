@@ -22,14 +22,21 @@ def parse_envelope(raw: bytes) -> mqtt_pb2.ServiceEnvelope:
 def parse_service_envelope(raw: bytes) -> mesh_pb2.MeshPacket:
     return parse_envelope(raw).packet
 
+def _cipher(packet_id: int, node_id: int, key_bytes: bytes) -> Cipher:
+    nonce = packet_id.to_bytes(8, "little") + node_id.to_bytes(8, "little")
+    return Cipher(algorithms.AES(key_bytes), modes.CTR(nonce), backend=default_backend())
+
+def encrypt_packet(data_bytes: bytes, packet_id: int, node_id: int, key_bytes: bytes) -> bytes:
+    """Encrypt a serialized `Data` the way a node does; the inverse of decrypt_packet."""
+    encryptor = _cipher(packet_id, node_id, key_bytes).encryptor()
+    return encryptor.update(data_bytes) + encryptor.finalize()
+
 def decrypt_packet(mp: mesh_pb2.MeshPacket, key_bytes: bytes | None) -> mesh_pb2.Data | None:
     """Decrypt a payload. Returns None if there is a failure"""
     if not key_bytes:
         return None
     try:
-        nonce = getattr(mp, "id").to_bytes(8, "little") + getattr(mp, "from").to_bytes(8, "little")
-        cipher = Cipher(algorithms.AES(key_bytes), modes.CTR(nonce), backend=default_backend())
-        decryptor = cipher.decryptor()
+        decryptor = _cipher(getattr(mp, "id"), getattr(mp, "from"), key_bytes).decryptor()
         decrypted_bytes = decryptor.update(getattr(mp, "encrypted")) + decryptor.finalize()
 
         data = mesh_pb2.Data()
