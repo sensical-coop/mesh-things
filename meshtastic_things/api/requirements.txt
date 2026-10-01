@@ -10,5 +10,5 @@ whitenoise==6.8.2
 gunicorn==23.0.0
 redis==5.2.1
 # Only for its protobuf schema
-meshtastic
+meshtastic==2.7.11
 influxdb-client==1.50.0
