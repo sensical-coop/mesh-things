@@ -1,13 +1,5 @@
-# Docker keeps every container's log unless capped: 3 files of 10 MB each.
-x-logging: &logging
-  driver: json-file
-  options:
-    max-size: "10m"
-    max-file: "3"
-
 services:
   kafka:
-    logging: *logging
     mem_limit: 1600m
     image: apache/kafka:latest
     env_file: "../.env"
@@ -29,7 +21,6 @@ services:
 
   # Precreate every topic for the pipeline needs
   kafka-topics-init:
-    logging: *logging
     mem_limit: 256m
     container_name: kafka-topics-init
     image: apache/kafka:latest
@@ -74,7 +65,6 @@ services:
           --add-config retention.ms=259200000,retention.bytes=536870912
 
   influxdb:
-    logging: *logging
     mem_limit: 1024m
     container_name: influxdb
     image: influxdb:2.7
@@ -117,7 +107,6 @@ services:
         ensure_bucket "$${INFLUX__ALARM_COUNTS_BUCKET:-alarm_counts}" 0
 
   postgres:
-    logging: *logging
     mem_limit: 512m
     container_name: postgres
     image: postgres:16-alpine
@@ -137,7 +126,6 @@ services:
   # Shared cache for registry and readings. Persisted (AOF) because it also holds
   # alarm-email windows and the alarms held for their summaries.
   redis:
-    logging: *logging
     mem_limit: 256m
     container_name: meshtastic-things-redis
     image: redis:7-alpine

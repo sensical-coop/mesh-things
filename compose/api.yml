@@ -1,12 +1,4 @@
-# Docker keeps every container's log unless capped: 3 files of 10 MB each.
-x-logging: &logging
-  driver: json-file
-  options:
-    max-size: "10m"
-    max-file: "3"
-
 x-api-image: &api-image
-  logging: *logging
   image: meshtastic-things/api:latest
   # To pull prebuilt images instead of building on the server: uncomment below,
   # comment `build:`, and re-enable the publish jobs in deploy.yml. Set TAG to a
