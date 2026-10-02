@@ -67,8 +67,14 @@ class _TermsAcceptanceInputMixin(serializers.Serializer):
 
     terms_kind: str
 
+    # Not required in the schema, since an instance without terms takes none; enforced below.
     terms_version = serializers.CharField(
-        write_only=True, help_text="Version of the terms accepted, as served by the terms endpoint."
+        write_only=True,
+        required=False,
+        help_text=(
+            "Version of the terms accepted, as served by the terms endpoint. "
+            "Required unless the instance does not enforce terms."
+        ),
     )
     terms_locale = serializers.ChoiceField(
         choices=LOCALES,
@@ -78,10 +84,18 @@ class _TermsAcceptanceInputMixin(serializers.Serializer):
         help_text="Locale the terms were shown in.",
     )
 
-    def __init__(self, *args, **kwargs):
-        super().__init__(*args, **kwargs)
-        if not terms_enforced():
-            self.fields["terms_version"].required = False
+    def to_internal_value(self, data):
+        missing = terms_enforced() and hasattr(data, "get") and data.get("terms_version") is None
+        required = {"terms_version": [self.fields["terms_version"].error_messages["required"]]}
+        try:
+            attrs = super().to_internal_value(data)
+        except serializers.ValidationError as e:
+            if missing and isinstance(e.detail, dict):
+                e.detail.setdefault("terms_version", required["terms_version"])
+            raise
+        if missing:
+            raise serializers.ValidationError(required)
+        return attrs
 
     def validate_terms_version(self, value):
         if not terms_enforced():
