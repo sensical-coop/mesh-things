@@ -28,6 +28,8 @@ class RegistryTestCase(APITestCase):
         self.fake_emqx = MagicMock()
         self.fake_emqx.source_status.return_value = "connected"
         self.fake_emqx.source_statuses.return_value = {}
+        self.fake_emqx.sink_authorization_problem.return_value = None
+        self.fake_emqx.sink_connections.return_value = {}
         self._original_emqx = emqx_client._client
         emqx_client._client = self.fake_emqx
         # Broker names in tests never hit DNS; tests that need an answer patch it.
@@ -111,6 +113,14 @@ class RegistryTestCase(APITestCase):
             {"server": server, "topic": topic, "terms_version": VERSIONS[TermsKind.SOURCE], **fields},
             format="json",
             **self.auth_headers(operator),
+        )
+        assert resp.status_code == 201, resp.content
+        return resp.json()
+
+    def create_sink(self, operator, **fields) -> dict:
+        """Returns the creation response, which carries the password."""
+        resp = self.client.post(
+            "/sinks", {"terms_version": VERSIONS[TermsKind.SINK], **fields}, format="json", **self.auth_headers(operator)
         )
         assert resp.status_code == 201, resp.content
         return resp.json()

@@ -1,5 +1,13 @@
+# Docker keeps every container's log unless capped: 3 files of 10 MB each.
+x-logging: &logging
+  driver: json-file
+  options:
+    max-size: "10m"
+    max-file: "3"
+
 services:
   kafka:
+    logging: *logging
     mem_limit: 1600m
     image: apache/kafka:latest
     env_file: "../.env"
@@ -21,6 +29,7 @@ services:
 
   # Precreate every topic for the pipeline needs
   kafka-topics-init:
+    logging: *logging
     mem_limit: 256m
     container_name: kafka-topics-init
     image: apache/kafka:latest
@@ -39,7 +48,7 @@ services:
           "$$PROTO_DECODE__KAFKA_TOPIC" \
           "$${REGISTRY__DEVICES_KAFKA_TOPIC:-mesh.devices.v1}" \
           "$${REGISTRY__SENSOR_DISCOVERY_KAFKA_TOPIC:-mesh.sensor_discovery.v1}" \
-          "$$CALIBRATED__KAFKA_TOPIC" \
+          "$${POSTPROCESSING__DERIVED_KAFKA_TOPIC:-mesh.telemetry.derived.v1}" \
           "$$PATTERN_DETECTION__ALARMS_TOPIC" \
         ; do
           /opt/kafka/bin/kafka-topics.sh --bootstrap-server kafka:29092 \
@@ -50,15 +59,22 @@ services:
           "$${REGISTRY__KAFKA_TOPIC:-mesh.keys.v1}" \
           "$${REGISTRY__NODE_REJECTIONS_KAFKA_TOPIC:-mesh.node_rejections.v1}" \
           "$${REGISTRY__QUALITY_CONFIG_KAFKA_TOPIC:-mesh.quality_config.v1}" \
-          "$$CALIBRATION__KAFKA_TOPIC" \
+          "$${REGISTRY__POSTPROCESSING_CONFIG_KAFKA_TOPIC:-mesh.postprocessing_config.v1}" \
+          "$${REGISTRY__SINK_CONFIG_KAFKA_TOPIC:-mesh.sink_config.v1}" \
         ; do
           /opt/kafka/bin/kafka-topics.sh --bootstrap-server kafka:29092 \
             --create --if-not-exists --topic "$$topic" \
             --partitions 1 --replication-factor 1 \
             --config cleanup.policy=compact
         done
+        # Alarms are persisted to InfluxDB, so this topic is only a transport buffer.
+        # Altered rather than set at creation so existing topics pick it up too.
+        /opt/kafka/bin/kafka-configs.sh --bootstrap-server kafka:29092 --alter \
+          --entity-type topics --entity-name "$$PATTERN_DETECTION__ALARMS_TOPIC" \
+          --add-config retention.ms=259200000,retention.bytes=536870912
 
   influxdb:
+    logging: *logging
     mem_limit: 1024m
     container_name: influxdb
     image: influxdb:2.7
@@ -74,7 +90,34 @@ services:
       retries: 5
       start_period: 30s
 
+  # One-shot: the alarm buckets, and the retention of individual alarms. Idempotent,
+  # so it runs on every `up`. INFLUX__TOKEN must be allowed to create buckets.
+  influx_init:
+    mem_limit: 128m
+    container_name: influx-init
+    image: influxdb:2.7
+    restart: "no"
+    depends_on:
+      influxdb:
+        condition: service_healthy
+    env_file: "../.env"
+    entrypoint: ["/bin/sh", "-ec"]
+    command:
+      - |
+        export INFLUX_HOST="$$INFLUX__URL" INFLUX_TOKEN="$$INFLUX__TOKEN" INFLUX_ORG="$$INFLUX__ORG"
+        ensure_bucket() {
+          if id=$$(influx bucket list --name "$$1" --hide-headers 2>/dev/null | cut -f1) && [ -n "$$id" ]; then
+            influx bucket update --id "$$id" --retention "$$2" >/dev/null
+          else
+            influx bucket create --name "$$1" --retention "$$2" >/dev/null
+          fi
+          echo "bucket $$1: retention $$2"
+        }
+        ensure_bucket "$${INFLUX__ALARMS_BUCKET:-alarms}" "$${INFLUX__ALARMS_RETENTION_DAYS:-30}d"
+        ensure_bucket "$${INFLUX__ALARM_COUNTS_BUCKET:-alarm_counts}" 0
+
   postgres:
+    logging: *logging
     mem_limit: 512m
     container_name: postgres
     image: postgres:16-alpine
@@ -94,6 +137,7 @@ services:
   # Shared cache for registry and readings. Persisted (AOF) because it also holds
   # alarm-email windows and the alarms held for their summaries.
   redis:
+    logging: *logging
     mem_limit: 256m
     container_name: meshtastic-things-redis
     image: redis:7-alpine

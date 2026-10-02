@@ -1,5 +1,5 @@
 """Gas-sensor algorithms"""
-from . import POINTWISE, algorithm
+from . import POINTWISE, Param, algorithm
 
 # Molar volume of an ideal gas at 0 degC, 1013.25 hPa, in litres/mol.
 MOLAR_VOLUME_STP = 22.414
@@ -12,12 +12,12 @@ REFERENCE_TEMPERATURE_C = 20.0
     name="ec_sensor_ppb",
     inputs=("working", "auxiliary", "temperature"),
     outputs=("concentration_ppb",),
-    params=("sensitivity",),
-    optional_params=(
-        "working_zero",
-        "auxiliary_zero",
-        "temperature_coefficient",
-        "reference_temperature",
+    params=(
+        Param("sensitivity", calibration=True, unit="mV/ppb", doc="Working electrode response per ppb, non-zero."),
+        Param("working_zero", calibration=True, unit="mV", doc="Working electrode reading in clean air."),
+        Param("auxiliary_zero", calibration=True, unit="mV", doc="Auxiliary electrode reading in clean air."),
+        Param("temperature_coefficient", unit="1/degC", doc="Auxiliary correction per degree from the reference."),
+        Param("reference_temperature", unit="degC"),
     ),
     mode=POINTWISE,
     output_units={"concentration_ppb": "ppb"},
@@ -59,8 +59,10 @@ def ec_sensor_ppb(
     name="ppb_to_ugm3",
     inputs=("concentration_ppb", "temperature"),
     outputs=("concentration_ugm3",),
-    params=("molecular_weight",),
-    optional_params=("pressure_hpa",),
+    params=(
+        Param("molecular_weight", unit="g/mol", doc="For example NO2 46.01, O3 48.00, CO 28.01, SO2 64.07."),
+        Param("pressure_hpa", unit="hPa"),
+    ),
     mode=POINTWISE,
     output_units={"concentration_ugm3": "ug/m3"},
 )

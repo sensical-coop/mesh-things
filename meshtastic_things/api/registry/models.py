@@ -101,6 +101,16 @@ class Owner(AbstractBaseUser, PermissionsMixin):
             return Source.objects.filter(created_by_id=self.id)
         return Source.objects.none()
 
+    @property
+    def visible_sinks(self):
+        """Sinks this owner may see: every one for a superuser, their own for an
+        operator, none otherwise."""
+        if self.is_superuser:
+            return Sink.objects.all()
+        if self.role == OwnerRole.OPERATOR:
+            return Sink.objects.filter(created_by_id=self.id)
+        return Sink.objects.none()
+
     def can_view_mesh(self, mesh) -> bool:
         """Reads."""
         return self.is_superuser or mesh.owner_id == self.id or mesh.is_public
@@ -196,6 +206,8 @@ class TermsKind(models.TextChoices):
     MESH = "mesh", "Mesh"
     # Accepted per source by the operator, as controller of the bridged traffic.
     SOURCE = "source", "Source"
+    # Accepted per sink by the operator, as controller of the readings it sends to a third party.
+    SINK = "sink", "Sink"
 
 
 class TermsAcceptance(models.Model):
@@ -209,12 +221,15 @@ class TermsAcceptance(models.Model):
     owner = models.ForeignKey(
         Owner, on_delete=models.SET_NULL, null=True, blank=True, related_name="terms_acceptances"
     )
-    # Set for mesh and source terms respectively.
+    # Set for mesh, source and sink terms respectively.
     mesh = models.ForeignKey(
         "Mesh", on_delete=models.SET_NULL, null=True, blank=True, related_name="terms_acceptances"
     )
     source = models.ForeignKey(
         Source, on_delete=models.SET_NULL, null=True, blank=True, related_name="terms_acceptances"
+    )
+    sink = models.ForeignKey(
+        "Sink", on_delete=models.SET_NULL, null=True, blank=True, related_name="terms_acceptances"
     )
     acceptor_name = models.CharField(max_length=255)
     acceptor_email = models.EmailField()
@@ -325,12 +340,16 @@ def _max_three_admin_keys(value: list[str]) -> None:
 
 
 class PostprocessingBlueprint(models.Model):
-    """Reusable recipe for calculating new channels."""
+    """Reusable recipe for calculating new channels, identified across its versions."""
 
     id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
     name = models.CharField(max_length=255)
     description = models.TextField(null=True, blank=True)
-    owner = models.ForeignKey(Owner, on_delete=models.CASCADE, related_name="blueprints")
+    # Null once the owner is deleted while other owners' devices still use it;
+    # only superusers edit it from then on.
+    owner = models.ForeignKey(Owner, on_delete=models.SET_NULL, null=True, blank=True, related_name="blueprints")
+    # Attachable to any owner's devices. Existing attachments survive it being unset.
+    is_public = models.BooleanField(default=False)
     created_at = models.DateTimeField(auto_now_add=True)
     updated_at = models.DateTimeField(auto_now=True)
 
@@ -344,28 +363,54 @@ class PostprocessingBlueprint(models.Model):
         return self.name
 
 
-class PostprocessingStep(models.Model):
-    """One step for a blueprint, run in `order`"""
+class BlueprintVersion(models.Model):
+    """An immutable set of steps. Editing a blueprint means adding a version."""
 
     id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
-    blueprint = models.ForeignKey(PostprocessingBlueprint, on_delete=models.CASCADE, related_name="steps")
+    blueprint = models.ForeignKey(PostprocessingBlueprint, on_delete=models.CASCADE, related_name="versions")
+    number = models.PositiveIntegerField()
+    # [{"slot": "temperature", "default_channel": "environment_metrics.temperature"}, ...]
+    inputs = models.JSONField(default=list)
+    notes = models.TextField(null=True, blank=True)
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        db_table = "blueprint_versions"
+        ordering = ["number"]
+        constraints = [
+            models.UniqueConstraint(fields=["blueprint", "number"], name="uq_blueprint_version_number")
+        ]
+
+    def __str__(self) -> str:
+        return f"{self.blueprint} v{self.number}"
+
+
+class PostprocessingStep(models.Model):
+    """One step of a blueprint version, run in `order`."""
+
+    id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
+    version = models.ForeignKey(BlueprintVersion, on_delete=models.CASCADE, related_name="steps")
+    # Stable across versions, so a device's calibration carries over.
+    key = models.SlugField(max_length=64)
     order = models.PositiveIntegerField()
     function_name = models.CharField(max_length=128)
-    inputs = models.JSONField(default=dict, blank=True)
+    # {algorithm input: "slot:<name>" | "step:<key>.<output>"}
+    inputs = models.JSONField(default=dict)
+    # Configuration only; calibration is per device.
     params = models.JSONField(default=dict, blank=True)
-    outputs = models.JSONField(default=dict, blank=True)
-    created_at = models.DateTimeField(auto_now_add=True)
-    updated_at = models.DateTimeField(auto_now=True)
+    # {algorithm output: derived field name}
+    outputs = models.JSONField(default=dict)
 
     class Meta:
         db_table = "postprocessing_steps"
         ordering = ["order"]
         constraints = [
-            models.UniqueConstraint(fields=["blueprint", "order"], name="uq_step_blueprint_order")
+            models.UniqueConstraint(fields=["version", "order"], name="uq_step_version_order"),
+            models.UniqueConstraint(fields=["version", "key"], name="uq_step_version_key"),
         ]
 
     def __str__(self) -> str:
-        return f"{self.order}. {self.function_name}"
+        return f"{self.order}. {self.key} ({self.function_name})"
 
 
 class Device(models.Model):
@@ -381,15 +426,18 @@ class Device(models.Model):
     # DeviceReadSerializer only shows this to the
     # device's actual mesh owner
     admin_keys_b64 = models.JSONField(default=list, blank=True, validators=[_max_three_admin_keys])
-    # Optional Blueprint
-    postprocessing_blueprint = models.ForeignKey(
-        PostprocessingBlueprint, on_delete=models.SET_NULL, null=True, blank=True, related_name="devices"
-    )
     reading_interval_seconds = models.PositiveIntegerField(null=True, blank=True)
     publish_interval_seconds = models.PositiveIntegerField(null=True, blank=True)
     # The absence detector is device-wide rather than per channel, so it is
     # switched on here rather than in a Measurement's enabled_detectors.
     absence_detection_enabled = models.BooleanField(default=False)
+    # Opt-in to the Parquet archive, effective only while the mesh owner is an operator.
+    archive_enabled = models.BooleanField(default=False)
+    # Who switched it on and when, cleared when switched off. The history is in SinkInstruction.
+    archive_enabled_at = models.DateTimeField(null=True, blank=True)
+    archive_enabled_by = models.ForeignKey(
+        Owner, on_delete=models.SET_NULL, null=True, blank=True, related_name="+"
+    )
     latitude = models.FloatField(null=True, blank=True)
     longitude = models.FloatField(null=True, blank=True)
     location_overridden = models.BooleanField(default=False)
@@ -427,6 +475,93 @@ class Device(models.Model):
         if described:
             return f"{described} ({node_ids.to_hex(self.device_id)})"
         return f"{'gateway' if self.is_gateway else 'node'} {node_ids.to_hex(self.device_id)}"
+
+
+def _default_streams() -> list[str]:
+    return ["decoded"]
+
+
+class Sink(models.Model):
+    """Readings an operator's consumer subscribes to on this instance's EMQX.
+
+    The consumer's password lives only in EMQX, hashed; it is shown once when set.
+    """
+
+    id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
+    label = models.CharField(max_length=255, null=True, blank=True)
+    # A non-empty subset of common.sinks.STREAMS.
+    streams = models.JSONField(default=_default_streams)
+    created_by = models.ForeignKey(
+        Owner, on_delete=models.SET_NULL, null=True, blank=True, related_name="created_sinks"
+    )
+    # Set when its terms acceptance lapsed: nothing is sent and its consumer is refused until renewed.
+    paused_at = models.DateTimeField(null=True, blank=True)
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        db_table = "sinks"
+
+    def __str__(self) -> str:
+        return self.label or str(self.id)
+
+    @property
+    def current_terms_acceptance(self):
+        return self.terms_acceptances.order_by("-accepted_at").first()
+
+
+class MeshSink(models.Model):
+    """Every node of a mesh, including those that appear later, goes to the sink."""
+
+    mesh = models.ForeignKey(Mesh, on_delete=models.CASCADE, related_name="sink_links")
+    sink = models.ForeignKey(Sink, on_delete=models.CASCADE, related_name="mesh_links")
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        db_table = "mesh_sinks"
+        constraints = [models.UniqueConstraint(fields=["mesh", "sink"], name="uq_mesh_sink")]
+
+
+class DeviceSink(models.Model):
+    """One node's readings go to the sink."""
+
+    device = models.ForeignKey(Device, on_delete=models.CASCADE, related_name="sink_links")
+    sink = models.ForeignKey(Sink, on_delete=models.CASCADE, related_name="device_links")
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        db_table = "device_sinks"
+        constraints = [models.UniqueConstraint(fields=["device", "sink"], name="uq_device_sink")]
+
+
+class SinkInstruction(models.Model):
+    """Append-only record of the controller's instruction to send a device's readings to a
+    sink or to stop (GDPR Art. 28(3)(a), Art. 5(2)).
+
+    Kept after the device or owner is deleted, so both are snapshotted.
+    """
+
+    id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
+    # "archive", or "sink:<uuid>" for an MQTT sink.
+    sink = models.CharField(max_length=64)
+    enabled = models.BooleanField()
+    device = models.ForeignKey(Device, on_delete=models.SET_NULL, null=True, blank=True, related_name="+")
+    mesh_id = models.UUIDField()
+    # Null when the instruction covers the whole mesh.
+    node_id = models.BigIntegerField(null=True, blank=True)
+    given_by = models.ForeignKey(Owner, on_delete=models.SET_NULL, null=True, blank=True, related_name="+")
+    given_by_name = models.CharField(max_length=255)
+    given_by_email = models.EmailField()
+    given_at = models.DateTimeField(default=timezone.now)
+
+    class Meta:
+        db_table = "sink_instructions"
+        indexes = [models.Index(fields=["mesh_id", "node_id", "given_at"], name="sink_instr_mesh_node_at")]
+
+    def __str__(self) -> str:
+        state = "on" if self.enabled else "off"
+        target = f"mesh {self.mesh_id}" if self.node_id is None else node_ids.to_hex(self.node_id)
+        return f"{self.sink} {state} for {target} by {self.given_by_email} ({self.given_at:%Y-%m-%d})"
 
 
 class MeasurementType(models.Model):
@@ -541,6 +676,10 @@ class Measurement(models.Model):
     # the range detector is a not checked for this channel; set/cleared together.
     valid_min = models.FloatField(null=True, blank=True)
     valid_max = models.FloatField(null=True, blank=True)
+    # The postprocessing computing this channel; null for anything the device reports.
+    produced_by = models.ForeignKey(
+        "DevicePostprocessing", on_delete=models.CASCADE, null=True, blank=True, related_name="outputs"
+    )
     first_seen = models.DateTimeField(auto_now_add=True)
     last_seen = models.DateTimeField(null=True, blank=True)
 
@@ -555,3 +694,107 @@ class Measurement(models.Model):
 
     def __str__(self) -> str:
         return f"{self.measurement_type} on {self.device_telemetry_variant.device}"
+
+
+class DevicePostprocessing(models.Model):
+    """A blueprint version applied to one device, with its own wiring and calibration."""
+
+    id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
+    device = models.ForeignKey(Device, on_delete=models.CASCADE, related_name="postprocessings")
+    # RESTRICT rather than PROTECT so deleting the owner of both still cascades.
+    blueprint_version = models.ForeignKey(BlueprintVersion, on_delete=models.RESTRICT, related_name="attachments")
+    # Prepended to every derived field name, so one blueprint can run twice on a device.
+    output_prefix = models.CharField(max_length=64, blank=True, default="")
+    # Null falls back to half the device's reading interval.
+    tolerance_seconds = models.PositiveIntegerField(null=True, blank=True)
+    is_enabled = models.BooleanField(default=False)
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        db_table = "device_postprocessings"
+
+    def __str__(self) -> str:
+        return f"{self.blueprint_version} on {self.device}"
+
+
+class PostprocessingInputBinding(models.Model):
+    """Wires one blueprint input slot to a channel of the device."""
+
+    id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
+    device_postprocessing = models.ForeignKey(
+        DevicePostprocessing, on_delete=models.CASCADE, related_name="input_bindings"
+    )
+    slot = models.CharField(max_length=64)
+    # RESTRICT keeps a postprocessing from losing an input that another one
+    # produces, while still letting a whole device be deleted.
+    measurement = models.ForeignKey(Measurement, on_delete=models.RESTRICT, related_name="consumers")
+
+    class Meta:
+        db_table = "postprocessing_input_bindings"
+        constraints = [
+            models.UniqueConstraint(fields=["device_postprocessing", "slot"], name="uq_input_binding_slot")
+        ]
+
+    def __str__(self) -> str:
+        return f"{self.slot} <- {self.measurement.measurement_type}"
+
+
+class StepCalibration(models.Model):
+    """Calibration of one step on one device, in force from `valid_from`.
+
+    Append-only history, so reprocessing old data applies the calibration that
+    was in force at the time.
+    """
+
+    id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
+    device_postprocessing = models.ForeignKey(
+        DevicePostprocessing, on_delete=models.CASCADE, related_name="calibrations"
+    )
+    step_key = models.SlugField(max_length=64)
+    # A calibration only applies to a step still running the same algorithm.
+    function_name = models.CharField(max_length=128)
+    params = models.JSONField(default=dict)
+    valid_from = models.DateTimeField()
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        db_table = "step_calibrations"
+        ordering = ["step_key", "valid_from"]
+
+    def __str__(self) -> str:
+        return f"{self.step_key} from {self.valid_from:%Y-%m-%d %H:%M}"
+
+
+class BackfillStatus(models.TextChoices):
+    PENDING = "pending", "Pending"
+    RUNNING = "running", "Running"
+    DONE = "done", "Done"
+    FAILED = "failed", "Failed"
+
+
+class PostprocessingBackfill(models.Model):
+    """A request to run a postprocessing over stored history, picked up by the quality worker."""
+
+    id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
+    device_postprocessing = models.ForeignKey(
+        DevicePostprocessing, on_delete=models.CASCADE, related_name="backfills"
+    )
+    start = models.DateTimeField()
+    stop = models.DateTimeField()
+    # Also rerun the postprocessings reading this one's outputs, in order.
+    include_dependants = models.BooleanField(default=False)
+    status = models.CharField(max_length=16, choices=BackfillStatus.choices, default=BackfillStatus.PENDING)
+    requested_by = models.ForeignKey(Owner, on_delete=models.SET_NULL, null=True, blank=True, related_name="+")
+    points_published = models.PositiveIntegerField(default=0)
+    error = models.TextField(null=True, blank=True)
+    created_at = models.DateTimeField(auto_now_add=True)
+    started_at = models.DateTimeField(null=True, blank=True)
+    finished_at = models.DateTimeField(null=True, blank=True)
+
+    class Meta:
+        db_table = "postprocessing_backfills"
+        ordering = ["created_at"]
+
+    def __str__(self) -> str:
+        return f"{self.device_postprocessing} {self.start:%Y-%m-%d}..{self.stop:%Y-%m-%d} ({self.status})"

@@ -1,6 +1,12 @@
 import os
+from datetime import datetime, timedelta, timezone
 
 from influxdb_client import InfluxDBClient
+
+from common.alarm_counts import ALARM_COUNTS, ALARM_COUNTS_BUCKET, ALARMS_BUCKET, ALARMS_RETENTION_DAYS
+from common.channels import ALARMS
+from common.detectors import RANGE
+from common.influx_query import bound_to_datetime
 
 from common.influx_query import (  # noqa: F401
     ALLOWED_AGG,
@@ -24,6 +30,10 @@ class InfluxQueryClient:
 
     def ping(self) -> bool:
         return self._client.ping()
+
+    def _bucket_for(self, measurement: str) -> str:
+        """Alarms live in their own bucket, kept ALARMS_RETENTION_DAYS; everything else with the readings."""
+        return ALARMS_BUCKET if measurement == ALARMS else self.bucket
 
     def timeseries(
         self,
@@ -61,7 +71,7 @@ class InfluxQueryClient:
             agg_stage = f'|> aggregateWindow(every: {window}, fn: {agg}, createEmpty: false)'
 
         flux = f'''{imports}
-from(bucket: "{self.bucket}")
+from(bucket: "{self._bucket_for(measurement)}")
   |> range(start: {start}, stop: {stop})
   |> filter(fn: (r) => {filters})
   {numeric_only}
@@ -76,7 +86,7 @@ from(bucket: "{self.bucket}")
         lookback = _validate_range_bound(lookback, "lookback")
 
         flux = f'''
-from(bucket: "{self.bucket}")
+from(bucket: "{self._bucket_for(measurement)}")
   |> range(start: {lookback})
   |> filter(fn: (r) => r._measurement == "{measurement}" and r.mesh_id == "{mesh_id}" and r.node_id == "{int(node_id)}")
   |> last()
@@ -85,49 +95,105 @@ from(bucket: "{self.bucket}")
 
     def latest_all(self, mesh_id: str, node_id: int, lookback: str = "-30d") -> list[dict]:
         """No-?payload_kind= variant of latest() - combined query across every
-        field; grouping by (_measurement, _field) avoids the schema-collision issue."""
+        field; grouping by (_measurement, _field) avoids the schema-collision issue.
+
+        last() runs before any other operator so InfluxDB can push it down to
+        storage; otherwise every point in the lookback, alarms included, is read.
+        """
         mesh_id = _validate_mesh_id(mesh_id)
         lookback = _validate_range_bound(lookback, "lookback")
 
-        flux = f'''
-from(bucket: "{self.bucket}")
+        readings = []
+        for bucket in (self.bucket, ALARMS_BUCKET):
+            flux = f'''
+from(bucket: "{bucket}")
   |> range(start: {lookback})
   |> filter(fn: (r) => r.mesh_id == "{mesh_id}" and r.node_id == "{int(node_id)}")
+  |> last()
   |> filter(fn: (r) => not contains(value: r._field, set: {_METADATA_FIELDS_FLUX}))
   |> group(columns: ["_measurement", "_field"])
+  |> sort(columns: ["_time"])
   |> last()
 '''
-        return self._records_to_readings(self._query_api.query(flux))
+            readings += self._records_to_readings(self._query_api.query(flux))
+        return sorted(readings, key=lambda r: (r["measurement"], r["field"]))
 
-    def device_metrics(self, mesh_id: str, node_id: int, start: str, stop: str) -> dict:
-        """Aggregates the `quality` and `alarms` measurements the batch/stream
-        quality tiers already write - no new computation, see
-        docs/done.md#9."""
+    def device_metrics(self, mesh_id: str, node_id: int, start: str, stop: str, now: datetime | None = None) -> dict:
+        """Aggregates the `quality` metrics and the alarms the quality tiers already write.
+
+        Alarms are read one by one when the range lies within their retention,
+        and from the daily counts, rounded to whole days, when it reaches back further.
+        """
         mesh_id = _validate_mesh_id(mesh_id)
         start = _validate_range_bound(start, "start")
         stop = _validate_range_bound(stop, "stop")
+        now = now or datetime.now(timezone.utc)
+        start_at, stop_at = bound_to_datetime(start, now), bound_to_datetime(stop, now)
 
         quality_flux = f'''
 from(bucket: "{self.bucket}")
   |> range(start: {start}, stop: {stop})
   |> filter(fn: (r) => r._measurement == "quality" and r.mesh_id == "{mesh_id}" and r.node_id == "{int(node_id)}")
+  |> last()
   |> group(columns: ["channel", "_field"])
+  |> sort(columns: ["_time"])
   |> last()
 '''
         channels = self._records_to_channel_quality(self._query_api.query(quality_flux))
 
-        alarms_flux = f'''
-from(bucket: "{self.bucket}")
+        device = f'r.mesh_id == "{mesh_id}" and r.node_id == "{int(node_id)}"'
+        if start_at >= now - timedelta(days=ALARMS_RETENTION_DAYS):
+            alarms_flux = f'''
+from(bucket: "{ALARMS_BUCKET}")
   |> range(start: {start}, stop: {stop})
-  |> filter(fn: (r) => r._measurement == "alarms" and r.mesh_id == "{mesh_id}" and r.node_id == "{int(node_id)}")
+  |> filter(fn: (r) => r._measurement == "{ALARMS}" and r._field == "message" and {device})
   |> group(columns: ["detector"])
   |> count()
 '''
+            # Hours with a range alarm on any channel; range re-raises hourly while it holds.
+            range_hours_flux = f'''
+from(bucket: "{ALARMS_BUCKET}")
+  |> range(start: {start}, stop: {stop})
+  |> filter(fn: (r) => r._measurement == "{ALARMS}" and r._field == "message" and r.detector == "{RANGE}" and {device})
+  |> group()
+  |> aggregateWindow(every: 1h, fn: count, createEmpty: false)
+  |> count()
+'''
+        else:
+            alarms_flux = f'''
+from(bucket: "{ALARM_COUNTS_BUCKET}")
+  |> range(start: {start}, stop: {stop})
+  |> filter(fn: (r) => r._measurement == "{ALARM_COUNTS}" and r._field == "alarms" and {device})
+  |> group(columns: ["detector"])
+  |> sum()
+'''
+            # Per day, the channel out of range longest stands in for the device.
+            range_hours_flux = f'''
+from(bucket: "{ALARM_COUNTS_BUCKET}")
+  |> range(start: {start}, stop: {stop})
+  |> filter(fn: (r) => r._measurement == "{ALARM_COUNTS}" and r._field == "hours_active"
+       and r.detector == "{RANGE}" and {device})
+  |> group(columns: ["_time"])
+  |> max()
+  |> group()
+  |> sum()
+'''
+        # Hours the device reported at all, so time before it existed or while it was off is not "in range".
+        reported_hours_flux = f'''
+from(bucket: "{self.bucket}")
+  |> range(start: {start}, stop: {stop})
+  |> filter(fn: (r) => r._measurement != "quality" and {device})
+  |> keep(columns: ["_start", "_stop", "_time"])
+  |> map(fn: (r) => ({{r with _value: 1}}))
+  |> aggregateWindow(every: 1h, fn: count, createEmpty: false)
+  |> count()
+'''
         alarms_by_detector = self._records_to_alarm_counts(self._query_api.query(alarms_flux))
+        range_hours = self._sum(self._query_api.query(range_hours_flux))
+        reported_hours = self._sum(self._query_api.query(reported_hours_flux))
 
         points_ingested = sum(c["observed"] or 0 for c in channels)
-        range_alarms = alarms_by_detector.get("range", 0)
-        range_ratio = (1 - range_alarms / points_ingested) if points_ingested else None
+        range_ratio = max(0.0, 1 - range_hours / reported_hours) if reported_hours else None
 
         return {
             "points_ingested": points_ingested,
@@ -153,6 +219,10 @@ from(bucket: "{self.bucket}")
             }
             for channel, fields in sorted(by_channel.items())
         ]
+
+    @staticmethod
+    def _sum(tables) -> float:
+        return sum(record.get_value() or 0 for table in tables for record in table.records)
 
     @staticmethod
     def _records_to_alarm_counts(tables) -> dict[str, int]:

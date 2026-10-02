@@ -8,6 +8,8 @@ from registry.kafka_publisher import (
     gateway_kafka_key,
     measurement_alarms_kafka_key,
     node_rejection_kafka_key,
+    postprocessing_kafka_key,
+    sink_config_kafka_key,
 )
 from registry.models import (
     Device,
@@ -24,6 +26,8 @@ from .helpers import RegistryTestCase
 KEYS_TOPIC = "mesh.keys.v1"
 REJECTIONS_TOPIC = "mesh.node_rejections.v1"
 QUALITY_CONFIG_TOPIC = "mesh.quality_config.v1"
+POSTPROCESSING_CONFIG_TOPIC = "mesh.postprocessing_config.v1"
+SINK_CONFIG_TOPIC = "mesh.sink_config.v1"
 
 
 class KafkaContractTestCase(RegistryTestCase):
@@ -41,6 +45,8 @@ class KafkaContractTestCase(RegistryTestCase):
         publisher._keys_topic = KEYS_TOPIC
         publisher._node_rejections_topic = REJECTIONS_TOPIC
         publisher._quality_config_topic = QUALITY_CONFIG_TOPIC
+        publisher._postprocessing_config_topic = POSTPROCESSING_CONFIG_TOPIC
+        publisher._sink_config_topic = SINK_CONFIG_TOPIC
         publisher._producer = MagicMock()
         self.publisher = publisher
 
@@ -294,6 +300,58 @@ class MeasurementAlarmEventTests(KafkaContractTestCase):
         self.assertEqual(event["op"], "delete")
 
 
+class PostprocessingPlansEventTests(KafkaContractTestCase):
+    """The stream job holds one entry per device and replaces it whole."""
+
+    PLAN = {"id": "pp", "blueprint_id": "bp", "blueprint_version": 1, "tolerance_seconds": 30.0, "steps": []}
+
+    def test_plans_are_keyed_by_mesh_and_device(self):
+        self.publisher.publish_postprocessing_plans(self.device, [self.PLAN])
+
+        topic, key, event = self.published()
+        self.assertEqual(topic, POSTPROCESSING_CONFIG_TOPIC)
+        self.assertEqual(key, f"{self.mesh.id}:{self.device.device_id}")
+        self.assertEqual(key, postprocessing_kafka_key(self.device))
+        self.assertEqual(event["kind"], "postprocessing_plans")
+        self.assertEqual(event["op"], "upsert")
+        self.assertEqual(event["plans"], [self.PLAN])
+        self.assertEqual(event["device_id"], self.device.device_id)
+
+    def test_no_plans_tombstones_the_entry(self):
+        self.publisher.publish_postprocessing_plans(self.device, [])
+
+        _, _, event = self.published()
+        self.assertEqual(event["op"], "delete")
+        self.assertEqual(event["plans"], [])
+
+    def test_the_event_round_trips_through_json(self):
+        self.publisher.publish_postprocessing_plans(self.device, [self.PLAN])
+
+        _, _, event = self.published()
+        self.assertEqual(json.loads(json.dumps(event))["plans"][0]["id"], "pp")
+
+
+class DeviceSinksEventTests(KafkaContractTestCase):
+    """The s3 writer, and later the sink dispatcher, key the entry the way postprocessing does."""
+
+    def test_sinks_are_keyed_by_mesh_and_device(self):
+        self.publisher.publish_device_sinks(self.mesh.id, self.device.device_id, ["archive"])
+
+        topic, key, event = self.published()
+        self.assertEqual(topic, SINK_CONFIG_TOPIC)
+        self.assertEqual(key, f"{self.mesh.id}:{self.device.device_id}")
+        self.assertEqual(key, sink_config_kafka_key(self.mesh.id, self.device.device_id))
+        self.assertEqual(key, postprocessing_kafka_key(self.device))
+        self.assertEqual((event["kind"], event["op"], event["sinks"]), ("device_sinks", "upsert", ["archive"]))
+        self.assertIsInstance(event["mesh_id"], str)
+
+    def test_no_sinks_tombstones_the_entry(self):
+        self.publisher.publish_device_sinks(self.mesh.id, self.device.device_id, [])
+
+        _, _, event = self.published()
+        self.assertEqual((event["op"], event["sinks"]), ("delete", []))
+
+
 class WireVocabularyTests(KafkaContractTestCase):
     """The API's uuid/node_id rename deliberately did not reach the wire format."""
 
@@ -302,6 +360,8 @@ class WireVocabularyTests(KafkaContractTestCase):
             lambda: self.publisher.publish_gateway_upsert(self.device, self.mesh),
             lambda: self.publisher.publish_gateway_delete(self.device),
             lambda: self.publisher.publish_device_intervals(self.device),
+            lambda: self.publisher.publish_postprocessing_plans(self.device, []),
+            lambda: self.publisher.publish_device_sinks(self.mesh.id, self.device.device_id, []),
         ):
             with self.subTest(publish=publish):
                 self.publisher._producer.send.reset_mock()

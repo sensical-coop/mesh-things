@@ -25,6 +25,7 @@ class QualityWorkerRouteContractTests(SeededCatalogTestCase):
             "/telemetry-variants",
             "/measurements",
             f"/devices/{self.device['uuid']}/measurements",
+            f"/devices/{self.device['uuid']}/postprocessings",
         ):
             with self.subTest(path=path):
                 resp = self.client.get(path, **self.auth_headers(self.owner))
@@ -40,10 +41,10 @@ class QualityWorkerFieldContractTests(SeededCatalogTestCase):
         self.device = self.create_node(self.owner, self.mesh, device_id=7)
 
     def test_devices_carry_what_scan_devices_and_the_tasks_read(self):
-        """The five keys tasks.py reads off a device row."""
+        """The keys tasks.py reads off a device row."""
         device = self.client.get("/devices", **self.auth_headers(self.owner)).json()[0]
 
-        for field in ("uuid", "mesh_id", "node_id", "reading_interval_seconds", "postprocessing_blueprint_id"):
+        for field in ("uuid", "mesh_id", "node_id", "reading_interval_seconds"):
             with self.subTest(field=field):
                 self.assertIn(field, device)
 
@@ -69,6 +70,56 @@ class QualityWorkerFieldContractTests(SeededCatalogTestCase):
                 self.assertIn("measurement_type", row)
                 for field in ("channel", "origin", "payload_kind"):
                     self.assertIn(field, row["measurement_type"])
+                # Completeness follows a derived channel's inputs through it.
+                self.assertIn("produced_by", row)
+
+    def test_postprocessings_carry_their_input_bindings(self):
+        """derived_reading_interval walks these to find a derived channel's inputs."""
+        from registry.models import Device, DeviceTelemetryVariant, Measurement, TelemetryVariant
+
+        device = Device.objects.get(pk=self.device["uuid"])
+        variant = TelemetryVariant.objects.get(payload_kind="telemetry:environment_metrics")
+        dtv = DeviceTelemetryVariant.objects.create(device=device, telemetry_variant=variant)
+        temperature = Measurement.objects.create(
+            device_telemetry_variant=dtv, measurement_type=variant.measurement_links.get(
+                measurement_type__field_name="temperature"
+            ).measurement_type
+        )
+        blueprint = self.client.post(
+            "/postprocessing-blueprints",
+            {
+                "name": "contract",
+                "inputs": [{"slot": "value", "default_channel": "environment_metrics.temperature"}],
+                "steps": [
+                    {
+                        "key": "cal",
+                        "order": 0,
+                        "function_name": "offset_scale",
+                        "inputs": {"value": "slot:value"},
+                        "outputs": {"calibrated": "contract_temperature"},
+                    }
+                ],
+            },
+            format="json",
+            **self.auth_headers(self.owner),
+        ).json()
+        self.client.post(
+            f"/devices/{self.device['uuid']}/postprocessings",
+            {"blueprint_id": blueprint["id"]},
+            format="json",
+            **self.auth_headers(self.owner),
+        )
+
+        [attached] = self.client.get(
+            f"/devices/{self.device['uuid']}/postprocessings", **self.auth_headers(self.owner)
+        ).json()
+        rows = self.client.get(
+            f"/devices/{self.device['uuid']}/measurements", **self.auth_headers(self.owner)
+        ).json()
+
+        self.assertEqual(attached["input_bindings"], {"value": str(temperature.id)})
+        derived = next(r for r in rows if r["produced_by"])
+        self.assertEqual(derived["produced_by"], attached["id"])
 
     def test_the_catalog_is_flat_and_carries_channel_and_unit(self):
         """catalog_units reads these at the root: this response is not nested."""

@@ -4,6 +4,7 @@ import argparse
 import datetime
 import json
 import os
+import time
 import traceback
 
 import structlog
@@ -36,6 +37,13 @@ QUALITY_CONFIG_STATE = MapStateDescriptor("quality-config", Types.STRING(), Type
 # How many publish intervals of silence before alarming.
 MISSED_INTERVALS = float(os.environ.get("ABSENCE_DETECTION__MISSED_INTERVALS", "3"))
 MIN_TIMER_SECONDS = 60
+# A device that published after an alarm alarms again only this many silence
+# limits after the previous one.
+REPEAT_FACTOR = float(os.environ.get("ABSENCE_DETECTION__REPEAT_FACTOR", "3"))
+
+
+def _silence_ms(interval_seconds: float) -> int:
+    return int(max(MIN_TIMER_SECONDS, interval_seconds * MISSED_INTERVALS) * 1000)
 
 SOURCE_STREAM = "stream"
 
@@ -52,11 +60,22 @@ class DeviceKeySelector(KeySelector):
 
 
 class DetectAbsence(KeyedBroadcastProcessFunction):
-    """Restarts a processing-time timer on every device publication"""
+    """Alarms once when a device goes silent, and again only after it has published.
+
+    Every publication restarts a processing-time timer. A later silence alarms
+    only once REPEAT_FACTOR times the silence limit has passed since the
+    previous alarm; one due earlier is held until then.
+    """
 
     def open(self, runtime_context):
+        from common import detectors
+
+        self._detectors = detectors
+        self._started_ms = int(time.time() * 1000)
         self._deadline = runtime_context.get_state(ValueStateDescriptor("absence-deadline", Types.LONG()))
         self._identity = runtime_context.get_state(ValueStateDescriptor("absence-identity", Types.STRING()))
+        self._last_seen = runtime_context.get_state(ValueStateDescriptor("absence-last-seen", Types.LONG()))
+        self._last_alarm = runtime_context.get_state(ValueStateDescriptor("absence-last-alarm", Types.LONG()))
 
     def process_element(self, value: str, ctx):
         try:
@@ -74,24 +93,25 @@ class DetectAbsence(KeyedBroadcastProcessFunction):
         if not interval:
             return
 
+        now = ctx.timer_service().current_processing_time()
         self._identity.update(json.dumps({"mesh_id": mesh_id, "device_id": device_id, "interval": interval}))
-        self._arm(ctx, interval)
+        self._last_seen.update(now)
+        self._arm(ctx, now + _silence_ms(interval))
         yield from ()
 
-    def _arm(self, ctx, interval_seconds: float) -> None:
+    def _arm(self, ctx, deadline: int) -> None:
         timer_service = ctx.timer_service()
         previous = self._deadline.value()
         if previous is not None:
             timer_service.delete_processing_time_timer(previous)
-        delay_ms = int(max(MIN_TIMER_SECONDS, interval_seconds * MISSED_INTERVALS) * 1000)
-        deadline = timer_service.current_processing_time() + delay_ms
         timer_service.register_processing_time_timer(deadline)
         self._deadline.update(deadline)
 
     def on_timer(self, timestamp, ctx):
         """Nothing arrived before the deadline"""
         raw = self._identity.value()
-        if not raw:
+        # PyFlink can still fire a timer deleted after it was queued, so only the current deadline counts.
+        if not raw or timestamp != self._deadline.value():
             return
         identity = json.loads(raw)
         interval = self._publish_interval(ctx, identity["mesh_id"], identity["device_id"])
@@ -100,7 +120,27 @@ class DetectAbsence(KeyedBroadcastProcessFunction):
             self._deadline.clear()
             self._identity.clear()
             return
-        silent_for = int(max(MIN_TIMER_SECONDS, interval * MISSED_INTERVALS))
+
+        now = ctx.timer_service().current_processing_time()
+        last_seen = self._last_seen.value()
+        if last_seen is not None and now - last_seen < _silence_ms(interval):
+            self._arm(ctx, last_seen + _silence_ms(interval))
+            return
+        if timestamp < self._started_ms:
+            # Due while the job was down: give the backlog time to arrive first.
+            self._arm(ctx, now + _silence_ms(interval))
+            return
+
+        held_until = self._detectors.absence_on_timer(
+            self._last_alarm.value(), now, _silence_ms(interval) * REPEAT_FACTOR
+        )
+        if held_until is not None:
+            self._arm(ctx, int(held_until))
+            return
+
+        self._deadline.clear()
+        self._last_alarm.update(now)
+        silent_for = int((now - (self._last_seen.value() or now)) / 1000)
         yield json.dumps(
             {
                 "mesh_id": identity["mesh_id"],
@@ -112,14 +152,13 @@ class DetectAbsence(KeyedBroadcastProcessFunction):
                 "value": silent_for,
                 "message": (
                     f"No telemetry received for {silent_for}s "
-                    f"({MISSED_INTERVALS:g}x the {interval}s publish interval). "
+                    f"(limit {MISSED_INTERVALS:g}x the {interval}s publish interval). "
                     "Note this is a publishing fault, not necessarily a reading fault - "
                     "a batching device may still deliver this window later."
                 ),
                 "triggered_at": datetime.datetime.now(datetime.timezone.utc).isoformat(),
             }
         )
-        self._arm(ctx, interval)
 
     def _publish_interval(self, ctx, mesh_id, device_id):
         """Device publish interval"""

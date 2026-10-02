@@ -6,7 +6,10 @@ import pyarrow.parquet as pq
 import pytest
 from botocore.exceptions import ClientError
 
-from writer.s3_writer import PARTITION_FILENAME, UNKNOWN_MESH, S3Writer, _flatten
+import json
+from types import SimpleNamespace
+
+from writer.s3_writer import PARTITION_FILENAME, S3Writer, _flatten
 
 
 class _FakeS3:
@@ -36,6 +39,7 @@ def _make_s3_writer():
     writer.s3_client = _FakeS3()
     writer.s3_bucket = "bucket"
     writer.s3_prefix = "telemetry"
+    writer.archived = set()
     return writer
 
 def _record(node_id, mesh_id=None, packet_id=1, rx_time=1757000000):
@@ -71,14 +75,52 @@ def test_flush_writes_one_object_per_mesh_regardless_of_device_count():
     assert any(f"mesh_id={MESH_B}/dt=" in k for k in keys)
     assert not any("node_id=" in k for k in keys)
 
-def test_a_record_without_a_mesh_id_keeps_the_tree_uniform():
+def test_the_partition_is_mesh_date_and_hour():
     writer = _make_s3_writer()
 
-    writer.flush([_record(1)])
+    writer.flush([_record(1, MESH_A)])
 
     key = next(iter(writer.s3_client.objects))
-    assert key.startswith(f"telemetry/mesh_id={UNKNOWN_MESH}/dt=")
+    assert key.startswith(f"telemetry/mesh_id={MESH_A}/dt=")
     assert key.endswith(PARTITION_FILENAME)
+
+
+def _sink_record(key, sinks, op="upsert"):
+    return SimpleNamespace(value=json.dumps({"key": key, "sinks": sinks, "op": op}).encode())
+
+
+def test_only_devices_that_opted_in_are_archived():
+    writer = _make_s3_writer()
+    writer._apply_sink_record(_sink_record(f"{MESH_A}:1", ["archive"]))
+
+    assert writer.archives(_record(1, MESH_A))
+    assert not writer.archives(_record(2, MESH_A))
+    # The same node number on another mesh is another device.
+    assert not writer.archives(_record(1, MESH_B))
+
+
+def test_readings_without_a_mesh_are_never_archived():
+    writer = _make_s3_writer()
+    writer._apply_sink_record(_sink_record(f"{MESH_A}:1", ["archive"]))
+
+    assert not writer.archives(_record(1))
+
+
+def test_a_tombstone_or_another_sink_stops_archiving():
+    writer = _make_s3_writer()
+    key = f"{MESH_A}:1"
+    for update in (_sink_record(key, [], op="delete"), _sink_record(key, ["sink:other"])):
+        writer._apply_sink_record(_sink_record(key, ["archive"]))
+        writer._apply_sink_record(update)
+
+        assert not writer.archives(_record(1, MESH_A))
+
+
+def test_derived_rows_follow_their_device():
+    writer = _make_s3_writer()
+    writer._apply_sink_record(_sink_record(f"{MESH_A}:1", ["archive"]))
+
+    assert writer.archives(_derived_record("pp-1"))
 
 def test_flush_is_a_noop_for_empty_records():
     writer = _make_s3_writer()
@@ -180,3 +222,22 @@ def test_archive_reads_back_through_pyarrow_and_pandas(tmp_path):
 
     one_device = pd.read_parquet(root, filters=[("node_id", "==", 1)])
     assert sorted(one_device["packet_id"]) == [1, 3]
+
+
+def _derived_record(postprocessing_id, rx_time=1757000000):
+    return {"node_id": 1, "mesh_id": MESH_A, "rx_time": rx_time, "payload_kind": "computed:derived",
+            "payload": {"derived": {"x": 1.0}}, "postprocessing_id": postprocessing_id}
+
+
+def test_derived_rows_of_two_postprocessings_at_the_same_time_are_both_kept():
+    # Neither has a packet_id, so the postprocessing is what tells them apart.
+    writer = _make_s3_writer()
+
+    writer.flush([_derived_record("pp-1"), _derived_record("pp-2")])
+
+    key = next(iter(writer.s3_client.objects))
+    assert sorted(r["postprocessing_id"] for r in writer.s3_client.rows(key)) == ["pp-1", "pp-2"]
+
+
+def test_decoded_rows_have_no_postprocessing_id():
+    assert _flatten(_record(1, MESH_A))["postprocessing_id"] is None

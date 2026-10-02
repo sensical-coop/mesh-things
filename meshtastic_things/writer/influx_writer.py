@@ -9,6 +9,7 @@ from influxdb_client import WriteOptions
 from influxdb_client.client.write_api import WriteType
 from kafka import KafkaConsumer
 from tools.healthcheck import HealthState, KafkaConsumerHealth
+from common.alarm_counts import ALARMS_BUCKET
 from writer.point_builders import get_points
 
 log = structlog.get_logger()
@@ -24,9 +25,11 @@ class InfluxWriter(object):
 
         )
         self.influx_url = influx_url
-        topics = [os.environ['PROTO_DECODE__KAFKA_TOPIC']]
-        # Optional: also persist pattern-detection alarms into the same bucket,
-        # if that job is deployed
+        topics = [
+            os.environ['PROTO_DECODE__KAFKA_TOPIC'],
+            os.environ.get('POSTPROCESSING__DERIVED_KAFKA_TOPIC', 'mesh.telemetry.derived.v1'),
+        ]
+        # Optional: also persist alarms, into their own bucket, if the detection jobs are deployed
         alarms_topic = os.environ.get('PATTERN_DETECTION__ALARMS_TOPIC')
         if alarms_topic:
             topics.append(alarms_topic)
@@ -55,7 +58,7 @@ class InfluxWriter(object):
             await self.write_batch(messages)
 
     async def write_batch(self, messages) -> None:
-        points = []
+        points, alarm_points = [], []
 
         for topic_partition, consumer_records in messages.items():
             try:
@@ -65,17 +68,21 @@ class InfluxWriter(object):
                         log.debug(f'{record.key} [{record.timestamp}]: {record.value}')
                         event = json.loads(record.value)
                         if event is not None:
-                            points.extend(get_points(event))
+                            # Alarm events are the ones carrying a detector, as in get_points.
+                            (alarm_points if "detector" in event else points).extend(get_points(event))
                     except Exception as e:
                         log.exception("Bad message skipped", exc_info=e)
             except Exception as e:
                 log.exception("Issue while opening records", exc_info=e)
 
-        if points:
+        if points or alarm_points:
             try:
                 async with InfluxDBClientAsync(url=self.influx_url, token=os.environ['INFLUX__TOKEN'], org=os.environ['INFLUX__ORG']) as influxdb_client:
                     influx_write_api = influxdb_client.write_api()
-                    await influx_write_api.write(bucket=os.environ['INFLUX__BUCKET'], record=points)
+                    if points:
+                        await influx_write_api.write(bucket=os.environ['INFLUX__BUCKET'], record=points)
+                    if alarm_points:
+                        await influx_write_api.write(bucket=ALARMS_BUCKET, record=alarm_points)
             except Exception as e:
                 self._rewind(messages)
                 log.exception("Write failed, rewound to retry next poll", exc_info=e)

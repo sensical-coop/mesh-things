@@ -1,7 +1,7 @@
 import pytest
 
 from common import algorithms
-from common.algorithms import POINTWISE, AlgorithmSpec, discover, get, validate_step
+from common.algorithms import POINTWISE, AlgorithmSpec, Param, discover, get, validate_calibration, validate_step
 
 
 @pytest.fixture(autouse=True)
@@ -29,7 +29,7 @@ def test_spec_declares_multi_sensor_inputs():
     spec = get("ec_sensor_ppb")
     assert spec.inputs == ("working", "auxiliary", "temperature")
     assert spec.outputs == ("concentration_ppb",)
-    assert "sensitivity" in spec.params
+    assert "sensitivity" in {p.name for p in spec.calibration_params}
     assert spec.mode == POINTWISE
 
 def test_call_wraps_a_bare_return_for_single_output_algorithms():
@@ -52,27 +52,84 @@ def test_invalid_mode_is_rejected_at_decoration_time():
     with pytest.raises(ValueError, match="mode must be one of"):
         algorithms.algorithm(name="bad", inputs=("x",), outputs=("y",), mode="streaming")
 
-def test_param_declared_both_required_and_optional_is_rejected():
-    with pytest.raises(ValueError, match="both required and optional"):
-        algorithms.algorithm(
-            name="bad", inputs=("x",), outputs=("y",), params=("p",), optional_params=("p",)
-        )
+def test_param_declared_twice_is_rejected():
+    with pytest.raises(ValueError, match="declared twice"):
+
+        @algorithms.algorithm(name="_twice", inputs=("x",), outputs=("y",), params=("p", Param("p")))
+        def _f(x, *, p):
+            return x
+
+def test_inputs_must_match_the_positional_arguments():
+    with pytest.raises(ValueError, match="positional arguments"):
+
+        @algorithms.algorithm(name="_bad_inputs", inputs=("x", "z"), outputs=("y",))
+        def _f(x):
+            return x
+
+def test_params_must_match_the_keyword_only_arguments():
+    with pytest.raises(ValueError, match="keyword-only arguments"):
+
+        @algorithms.algorithm(name="_bad_params", inputs=("x",), outputs=("y",), params=("gain",))
+        def _f(x, *, offset=0.0):
+            return x
+
+def test_defaults_are_read_from_the_signature():
+    params = {p.name: p for p in get("ec_sensor_ppb").params}
+    assert params["sensitivity"].required
+    assert not params["working_zero"].required
+    assert params["working_zero"].default == 0.0
+    assert params["reference_temperature"].default == 20.0
+
+def test_param_metadata_is_exposed_for_introspection():
+    params = {p["name"]: p for p in get("ec_sensor_ppb").as_dict()["params"]}
+    assert params["sensitivity"] == {
+        "name": "sensitivity",
+        "calibration": True,
+        "required": True,
+        "default": None,
+        "unit": "mV/ppb",
+        "doc": "Working electrode response per ppb, non-zero.",
+    }
+    assert params["reference_temperature"]["calibration"] is False
 
 def test_validate_step_accepts_a_well_formed_step():
     errors = validate_step(
         "ec_sensor_ppb",
         {"working": "ads.chan0", "auxiliary": "ads.chan1", "temperature": "environment_metrics.temperature"},
-        {"sensitivity": 0.42},
+        {"temperature_coefficient": 0.01},
+        {"concentration_ppb": "no2_ppb"},
     )
     assert errors == []
 
-def test_validate_step_allows_optional_params():
+def test_validate_step_rejects_calibration_params():
+    # They describe one physical sensor, so they belong to the device.
     errors = validate_step(
-        "ec_sensor_ppb",
-        {"working": "a", "auxiliary": "b", "temperature": "c"},
-        {"sensitivity": 0.42, "working_zero": 220.0},
+        "ec_sensor_ppb", {"working": "a", "auxiliary": "b", "temperature": "c"}, {"sensitivity": 0.42}
     )
-    assert errors == []
+    assert any("calibration parameters, set per device" in e and "sensitivity" in e for e in errors)
+
+def test_validate_step_rejects_unknown_output():
+    errors = validate_step("dew_point", {"temperature": "a", "relative_humidity": "b"}, {}, {"dewpoint": "x"})
+    assert any("has no output(s)" in e for e in errors)
+
+def test_validate_step_requires_an_output_binding():
+    errors = validate_step("dew_point", {"temperature": "a", "relative_humidity": "b"}, {}, {})
+    assert any("at least one output" in e for e in errors)
+
+def test_validate_calibration_requires_every_required_calibration_param():
+    errors = validate_calibration("ec_sensor_ppb", {"working_zero": 220.0})
+    assert any("requires calibration param(s)" in e and "sensitivity" in e for e in errors)
+
+def test_validate_calibration_allows_an_incomplete_draft():
+    assert validate_calibration("ec_sensor_ppb", {"working_zero": 220.0}, complete=False) == []
+
+def test_validate_calibration_rejects_configuration_params():
+    errors = validate_calibration("ec_sensor_ppb", {"sensitivity": 1.0, "reference_temperature": 25.0})
+    assert any("are configuration, set on the blueprint step" in e for e in errors)
+
+def test_validate_calibration_rejects_unknown_params():
+    errors = validate_calibration("offset_scale", {"gain": 2.0})
+    assert any("does not accept param(s)" in e and "gain" in e for e in errors)
 
 def test_validate_step_rejects_unknown_function():
     errors = validate_step("does_not_exist", {}, {})
@@ -80,26 +137,26 @@ def test_validate_step_rejects_unknown_function():
     assert "Unknown algorithm" in errors[0]
 
 def test_validate_step_rejects_missing_input():
-    errors = validate_step("ec_sensor_ppb", {"working": "a"}, {"sensitivity": 1.0})
+    errors = validate_step("ec_sensor_ppb", {"working": "a"}, {})
     assert any("requires input(s)" in e and "auxiliary" in e for e in errors)
 
 def test_validate_step_rejects_unexpected_input():
     errors = validate_step(
         "ec_sensor_ppb",
         {"working": "a", "auxiliary": "b", "temperature": "c", "pressure": "d"},
-        {"sensitivity": 1.0},
+        {},
     )
     assert any("does not accept input(s)" in e and "pressure" in e for e in errors)
 
 def test_validate_step_rejects_missing_required_param():
-    errors = validate_step("ec_sensor_ppb", {"working": "a", "auxiliary": "b", "temperature": "c"}, {})
-    assert any("requires param(s)" in e and "sensitivity" in e for e in errors)
+    errors = validate_step("ppb_to_ugm3", {"concentration_ppb": "a", "temperature": "b"}, {})
+    assert any("requires param(s)" in e and "molecular_weight" in e for e in errors)
 
 def test_validate_step_rejects_unknown_param():
     errors = validate_step(
         "ec_sensor_ppb",
         {"working": "a", "auxiliary": "b", "temperature": "c"},
-        {"sensitivity": 1.0, "nonsense": 3},
+        {"nonsense": 3},
     )
     assert any("does not accept param(s)" in e and "nonsense" in e for e in errors)
 
@@ -146,6 +203,28 @@ def test_absolute_humidity_rises_with_temperature_at_fixed_rh():
     cool = spec.call({"temperature": 10.0, "relative_humidity": 50.0}, {})
     warm = spec.call({"temperature": 30.0, "relative_humidity": 50.0}, {})
     assert warm["absolute_humidity"] > cool["absolute_humidity"]
+
+def test_offset_scale_applies_scale_then_offset():
+    result = get("offset_scale").call({"value": 10.0}, {"scale": 2.0, "offset": 1.0})
+    assert result["calibrated"] == pytest.approx(21.0)
+
+def test_offset_scale_defaults_to_identity():
+    assert get("offset_scale").call({"value": 10.0}, {})["calibrated"] == pytest.approx(10.0)
+
+def test_lookup_table_interpolates_and_clamps():
+    spec = get("lookup_table")
+    points = [[10, 100], [0, 0]]
+    assert spec.call({"value": 5.0}, {"points": points})["calibrated"] == pytest.approx(50.0)
+    assert spec.call({"value": -5.0}, {"points": points})["calibrated"] == pytest.approx(0.0)
+    assert spec.call({"value": 50.0}, {"points": points})["calibrated"] == pytest.approx(100.0)
+
+def test_lookup_table_needs_a_point():
+    with pytest.raises(ValueError, match="at least one"):
+        get("lookup_table").call({"value": 1.0}, {"points": []})
+
+def test_calibration_curves_preserve_the_input_unit():
+    assert get("offset_scale").unit_for("calibrated", {"value": "degC"}) == "degC"
+    assert get("lookup_table").unit_for("calibrated", {"value": "ppb"}) == "ppb"
 
 def test_dew_point_rejects_zero_humidity():
     spec = get("dew_point")

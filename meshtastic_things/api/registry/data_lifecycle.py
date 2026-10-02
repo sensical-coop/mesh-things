@@ -1,13 +1,17 @@
 """Terms renewal, pausing on lapse, and scheduled deletion of stored readings.
 
-Mesh terms (a mesh on the default broker) and source terms follow one workflow. With a
+Mesh terms (a mesh on the default broker), source terms and sink terms follow one workflow. With a
 retention period, an acceptance lasts that long; its owner is emailed before it lapses
 and renews by accepting again. A lapse stops ingestion first (the mesh's gateways are
 deregistered, or the source's bridge removed), then schedules the affected readings for
-deletion after `DATA_DELETION_GRACE_DAYS`, during which renewing cancels it. Account
+deletion after `DATA_DELETION_GRACE_DAYS`, during which renewing cancels it. A sink stores
+nothing, so its lapse only stops it sending and refuses its consumer. Account
 terms never lapse. With terms not enforced (a self-hosted instance) none of this runs,
 and anything a lapse paused is resumed. Each step is idempotent, so `run_pass` can
 resume after a failure.
+
+Each pass also discards sink consumers' broker sessions that have been offline too long or
+queued too much, which the broker's own limits would let grow for weeks.
 """
 from datetime import datetime, timedelta
 
@@ -16,10 +20,15 @@ from django.conf import settings
 from django.db import transaction
 from django.utils import timezone
 
+from common.env import env_str
+
 from .data_store import get_data_store
+from .disk_alert import check_disk
 from .emailing import (
     send_mesh_terms_lapsed_email,
     send_mesh_terms_renewal_email,
+    send_sink_terms_lapsed_email,
+    send_sink_terms_renewal_email,
     send_source_terms_lapsed_email,
     send_source_terms_renewal_email,
 )
@@ -31,6 +40,7 @@ from .models import (
     DataDeletionStatus,
     Mesh,
     Owner,
+    Sink,
     Source,
     TermsAcceptance,
     TermsKind,
@@ -47,7 +57,12 @@ def acceptance_expiry(kind: str, accepted_at: datetime) -> datetime | None:
 
 
 def record_acceptance(
-    kind: str, owner: Owner, locale: str | None, mesh: Mesh | None = None, source: Source | None = None
+    kind: str,
+    owner: Owner,
+    locale: str | None,
+    mesh: Mesh | None = None,
+    source: Source | None = None,
+    sink: Sink | None = None,
 ) -> TermsAcceptance:
     """Record that `owner` accepted the current terms of `kind`, as served in `locale`.
 
@@ -62,6 +77,7 @@ def record_acceptance(
         owner=owner,
         mesh=mesh,
         source=source,
+        sink=sink,
         acceptor_name=owner.name,
         acceptor_email=owner.email,
         terms_version=served["version"],
@@ -133,6 +149,19 @@ def resume_source(source: Source) -> None:
         )
 
 
+def resume_sink(sink: Sink) -> None:
+    """Let a paused sink's consumer back in and start sending again.
+
+    Raises if the broker or the pipeline cannot be told; the sink then stays paused.
+    """
+    if sink.paused_at is None:
+        return
+    get_emqx_client().apply_sink(str(sink.id))
+    get_publisher().publish_sink(sink.id, sink.streams)
+    sink.paused_at = None
+    sink.save(update_fields=["paused_at"])
+
+
 def resume_mesh(mesh: Mesh) -> None:
     """Re-register a paused mesh's gateways and cancel the deletion its lapse scheduled.
 
@@ -165,6 +194,10 @@ def send_renewal_notices(now: datetime) -> int:
     for mesh in Mesh.objects.filter(source__isnull=True, paused_at__isnull=True).select_related("owner"):
         acceptance = mesh.current_terms_acceptance
         if _due_for_notice(acceptance, now) and _notify(send_mesh_terms_renewal_email, mesh, acceptance):
+            sent += _mark_notified(acceptance, now)
+    for sink in Sink.objects.filter(paused_at__isnull=True, created_by__isnull=False).select_related("created_by"):
+        acceptance = sink.current_terms_acceptance
+        if _due_for_notice(acceptance, now) and _notify(send_sink_terms_renewal_email, sink, acceptance):
             sent += _mark_notified(acceptance, now)
     return sent
 
@@ -230,6 +263,69 @@ def pause_lapsed_meshes(now: datetime) -> int:
     return paused
 
 
+def pause_lapsed_sinks(now: datetime) -> int:
+    """Stop sending for every sink whose acceptance lapsed, and refuse its consumer."""
+    if not terms_enforced():
+        return 0
+    paused = 0
+    for sink in Sink.objects.filter(paused_at__isnull=True).select_related("created_by"):
+        if not _lapsed(sink.current_terms_acceptance, now):
+            continue
+        try:
+            get_publisher().publish_sink(sink.id, None)
+            get_emqx_client().pause_sink(str(sink.id))
+        except Exception as e:
+            log.warning("sink_pause_failed", sink_id=str(sink.id), error=str(e))
+            continue
+        sink.paused_at = now
+        sink.save(update_fields=["paused_at"])
+        if sink.created_by is not None:
+            _notify(send_sink_terms_lapsed_email, sink)
+        paused += 1
+    return paused
+
+
+def _stale_session_reason(session: dict, now: datetime) -> str | None:
+    queued = session.get("mqueue_len") or 0
+    if settings.SINKS_MAX_QUEUED and queued > settings.SINKS_MAX_QUEUED:
+        return f"{queued} messages queued"
+    disconnected_at = session.get("disconnected_at")
+    if session.get("connected") or not disconnected_at or not settings.SINKS_MAX_OFFLINE_HOURS:
+        return None
+    offline = now - datetime.fromisoformat(disconnected_at)
+    if offline > timedelta(hours=settings.SINKS_MAX_OFFLINE_HOURS):
+        return f"offline for {offline}"
+    return None
+
+
+def discard_stale_sink_sessions(now: datetime) -> int:
+    """Drop sink consumers' sessions offline past SINKS_MAX_OFFLINE_HOURS or queueing past SINKS_MAX_QUEUED.
+
+    A consumer still connected with too much queued is disconnected too: it is not keeping up.
+    """
+    if not env_str("REGISTRY__EMQX_API_URL"):
+        return 0
+    client = get_emqx_client()
+    try:
+        sessions = client.sink_sessions()
+    except Exception as e:
+        log.warning("sink_sessions_unavailable", error=str(e))
+        return 0
+    discarded = 0
+    for session in sessions:
+        reason = _stale_session_reason(session, now)
+        if reason is None:
+            continue
+        try:
+            client.discard_session(session["clientid"])
+        except Exception as e:
+            log.warning("sink_session_discard_failed", clientid=session["clientid"], error=str(e))
+            continue
+        log.info("sink_session_discarded", clientid=session["clientid"], reason=reason)
+        discarded += 1
+    return discarded
+
+
 def purge_due_deletions(now: datetime) -> int:
     """Delete the readings of every deletion past its grace period. Failures are retried next pass."""
     store = get_data_store()
@@ -253,20 +349,8 @@ def purge_due_deletions(now: datetime) -> int:
     return done
 
 
-def expire_unowned_archive(now: datetime) -> bool:
-    """Delete archived readings that arrived without a mesh once older than the retention period.
-
-    They belong to no owner, so there is nobody to ask for a renewal. Skipped when terms
-    are not enforced, where the retention period means nothing.
-    """
-    if not terms_enforced() or not settings.DATA_RETENTION_DAYS:
-        return False
-    get_data_store().delete_unknown_mesh_archive_before(now - timedelta(days=settings.DATA_RETENTION_DAYS))
-    return True
-
-
 def resume_paused() -> int:
-    """With terms no longer enforced, resume every mesh and source a lapse paused.
+    """With terms no longer enforced, resume every mesh, source and sink a lapse paused.
 
     Their `terms_lapsed` deletions are cancelled; a failure is retried next pass.
     """
@@ -285,6 +369,12 @@ def resume_paused() -> int:
             resumed += 1
         except Exception as e:
             log.warning("source_resume_failed", source_id=str(source.id), error=str(e))
+    for sink in Sink.objects.filter(paused_at__isnull=False):
+        try:
+            resume_sink(sink)
+            resumed += 1
+        except Exception as e:
+            log.warning("sink_resume_failed", sink_id=str(sink.id), error=str(e))
     return resumed
 
 
@@ -294,7 +384,9 @@ def run_pass(now: datetime | None = None) -> dict:
         "renewal_notices": send_renewal_notices(now),
         "paused_sources": pause_lapsed_sources(now),
         "paused_meshes": pause_lapsed_meshes(now),
+        "paused_sinks": pause_lapsed_sinks(now),
         "resumed": resume_paused(),
         "deletions_done": purge_due_deletions(now),
-        "unowned_archive_expired": expire_unowned_archive(now),
+        "sink_sessions_discarded": discard_stale_sink_sessions(now),
+        "disk_alerts": int(check_disk()),
     }

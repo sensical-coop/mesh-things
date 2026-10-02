@@ -26,15 +26,15 @@ To deploy, simply use `docker compose`. There are two modes (`lite` and `full`),
 `COMPOSE_PROFILES`:
 
 - **lite**: includes MQTT ingestion, decode/decrypt packets, store data in InfluxDB, manage meshes/devices and access data back over the API.
-- **full**: everything in `lite`, plus data processing on the fly with Flink streams (decode, calibration, and the per-point quality checks), and a S3/MinIO Parquet archive.
+- **full**: everything in `lite`, plus data processing on the fly with Flink streams (decode, device postprocessing and calibration, and the per-point quality checks), and a Parquet archive that operators switch on per device. Add the `minio` profile to keep the archive on the bundled MinIO, or leave it out and point the archive at an external S3.
 
 ```bash
 cp env.example .env                    # edit .env with your settings
 docker compose up -d                   # lite
-docker compose --profile full up -d    # or the full stack: Flink streams, and S3 archive
+docker compose --profile full --profile minio up -d    # or the full stack: Flink streams, and the archive on MinIO
 ```
 
-Note: `lite` can add an optional batch quality worker (postprocessing blueprints, completeness/gap analysis) with `--profile quality`:
+Note: `lite` can add an optional batch quality worker (completeness/gap analysis) with `--profile quality`. Postprocessing runs in the Flink tier, so it needs `full`:
 
 ```bash
 docker compose up -d --profile quality # lite with profile quality

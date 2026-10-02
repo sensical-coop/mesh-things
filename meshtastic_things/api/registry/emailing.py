@@ -125,6 +125,31 @@ def send_source_terms_lapsed_email(source) -> None:
     )
 
 
+def send_sink_terms_renewal_email(sink, acceptance) -> None:
+    operator = sink.created_by
+    send_templated_email(
+        to_email=operator.email,
+        subject="Renew the terms for your sink - Mesh Things",
+        template_name="sink_terms_renewal",
+        context={
+            "name": operator.name,
+            "sink": str(sink),
+            "expires_at": acceptance.expires_at,
+            "sink_link": console_url("sinks", sink.id),
+        },
+    )
+
+
+def send_sink_terms_lapsed_email(sink) -> None:
+    operator = sink.created_by
+    send_templated_email(
+        to_email=operator.email,
+        subject="Your sink has been paused - Mesh Things",
+        template_name="sink_terms_lapsed",
+        context={"name": operator.name, "sink": str(sink), "sink_link": console_url("sinks", sink.id)},
+    )
+
+
 def send_mesh_terms_renewal_email(mesh, acceptance) -> None:
     owner = mesh.owner
     send_templated_email(
@@ -154,3 +179,21 @@ def send_mesh_terms_lapsed_email(mesh) -> None:
             "mesh_link": console_url("meshes", mesh.id),
         },
     )
+
+
+def send_disk_space_email(percent: float, free_bytes: int) -> None:
+    """Warn every active superuser with an email address that the disk is nearly full."""
+    recipients = Owner.objects.filter(is_superuser=True, is_active=True).exclude(email="")
+    for superuser in recipients:
+        send_templated_email(
+            to_email=superuser.email,
+            subject=f"Disk {percent:.0f}% full - Mesh Things",
+            template_name="disk_space",
+            context={
+                "name": superuser.name,
+                "percent": round(percent),
+                "free_gb": round(free_bytes / 1e9, 1),
+                "threshold": settings.DISK_ALERT_PERCENT,
+                "instance": getattr(settings, "PUBLIC_FRONTEND_URL", "") or "this instance",
+            },
+        )

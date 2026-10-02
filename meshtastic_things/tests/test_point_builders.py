@@ -193,3 +193,41 @@ def test_multiple_telemetry_submetrics_produce_multiple_points():
 
     measurements = {p.to_line_protocol().split(",")[0] for p in points}
     assert measurements == {"device_metrics", "environment_metrics"}
+
+
+def _derived(fields, **overrides):
+    event = {
+        "mesh_id": "11111111-2222-3333-4444-555555555555",
+        "node_id": 123,
+        "rx_time": 1700000000,
+        "payload_kind": "computed:derived",
+        "payload": {"derived": fields},
+        "postprocessing_id": "pp-1",
+        "blueprint_id": "bp-1",
+        "blueprint_version": 2,
+    }
+    event.update(overrides)
+    return event
+
+
+def test_derived_event_becomes_one_derived_point_tagged_with_its_postprocessing():
+    points = get_points(_derived({"no2_ppb": 12.5, "no2_ugm3": 23}))
+
+    assert len(points) == 1
+    line = points[0].to_line_protocol()
+    assert line.startswith("derived,")
+    assert "postprocessing_id=pp-1" in line
+    assert "mesh_id=11111111-2222-3333-4444-555555555555" in line
+    assert "no2_ppb=12.5" in line
+    assert "no2_ugm3=23" in line
+    assert line.endswith(" 1700000000000000000")
+
+
+def test_derived_event_needs_no_packet_id():
+    # A derived row can join samples from several packets, so it has none.
+    assert "packet_id" not in _derived({"x": 1.0})
+    assert get_points(_derived({"x": 1.0}))
+
+
+def test_derived_event_without_numeric_fields_writes_nothing():
+    assert get_points(_derived({"x": None, "flag": True})) == []

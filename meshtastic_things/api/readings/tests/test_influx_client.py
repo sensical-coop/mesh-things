@@ -1,8 +1,10 @@
 """Tests for influx route params"""
+from datetime import datetime, timezone
 from unittest.mock import MagicMock
 
 from django.test import SimpleTestCase
 
+from common.alarm_counts import ALARM_COUNTS_BUCKET, ALARMS_BUCKET
 from readings.influx_client import InfluxQueryClient
 
 MESH_ID = "11111111-2222-3333-4444-555555555555"
@@ -67,6 +69,25 @@ class TimeseriesFluxTests(SimpleTestCase):
     def test_relative_and_absolute_bounds_can_be_mixed(self):
         self.assertIn("range(start: 2026-09-01T00:00:00Z, stop: now())", self._flux(start="2026-09-01"))
 
+    def test_readings_come_from_the_readings_bucket(self):
+        self.assertIn('from(bucket: "telemetry")', self._flux())
+
+    def test_alarms_come_from_their_own_bucket(self):
+        self.assertIn(f'from(bucket: "{ALARMS_BUCKET}")', self._flux(measurement="alarms"))
+
+    def test_latest_alarms_come_from_their_own_bucket(self):
+        self.client.latest(MESH_ID, 123, "alarms")
+
+        self.assertIn(f'from(bucket: "{ALARMS_BUCKET}")', self.client._query_api.query.call_args.args[0])
+
+    def test_latest_of_everything_includes_the_alarms(self):
+        self.client._query_api.query.return_value = []
+
+        self.client.latest_all(MESH_ID, 123)
+
+        buckets = [c.args[0].split('from(bucket: "')[1].split('"')[0] for c in self.client._query_api.query.call_args_list]
+        self.assertEqual(buckets, ["telemetry", ALARMS_BUCKET])
+
 
 class _FakeRecord:
     def __init__(self, values, field, value):
@@ -106,12 +127,15 @@ class DeviceMetricsTests(SimpleTestCase):
     def _alarm_tables(self, **counts):
         return [_FakeTable([_FakeRecord({"detector": detector}, "_value", count)]) for detector, count in counts.items()]
 
+    def _range_hours(self, hours):
+        return [_FakeTable([_FakeRecord({}, "_value", hours)])]
+
     def test_queries_quality_then_alarms_filtered_by_mesh_and_node(self):
-        self.client._query_api.query.side_effect = [self._quality_tables(), self._alarm_tables()]
+        self.client._query_api.query.side_effect = [self._quality_tables(), self._alarm_tables(), [], []]
 
         self.client.device_metrics(MESH_ID, 123, "-1h", "now()")
 
-        quality_flux, alarms_flux = (c.args[0] for c in self.client._query_api.query.call_args_list)
+        quality_flux, alarms_flux, _, _ = (c.args[0] for c in self.client._query_api.query.call_args_list)
         self.assertIn('r._measurement == "quality"', quality_flux)
         self.assertIn(f'r.mesh_id == "{MESH_ID}"', quality_flux)
         self.assertIn('r.node_id == "123"', quality_flux)
@@ -125,6 +149,8 @@ class DeviceMetricsTests(SimpleTestCase):
                 self._channel_table("environment_metrics.temperature", "observed", 80.0),
             ],
             self._alarm_tables(),
+            [],
+            [],
         ]
 
         result = self.client.device_metrics(MESH_ID, 123, "-1h", "now()")
@@ -132,19 +158,22 @@ class DeviceMetricsTests(SimpleTestCase):
         self.assertEqual(result["points_ingested"], 270.0)
         self.assertEqual({c["channel"] for c in result["channels"]}, {"device_metrics.battery_level", "environment_metrics.temperature"})
 
-    def test_range_ratio_derived_from_range_alarms(self):
+    def test_range_ratio_is_the_share_of_reported_hours_without_a_range_alarm(self):
         self.client._query_api.query.side_effect = [
             self._quality_tables(observed=200.0),
-            self._alarm_tables(range=2, completeness=1),
+            self._alarm_tables(range=6, completeness=1),
+            self._range_hours(6),
+            self._range_hours(12),
         ]
 
-        result = self.client.device_metrics(MESH_ID, 123, "-1h", "now()")
+        # 24 h asked for, but the device only reported in 12 of them.
+        result = self.client.device_metrics(MESH_ID, 123, "-24h", "now()")
 
-        self.assertEqual(result["alarms_by_detector"], {"range": 2, "completeness": 1})
-        self.assertAlmostEqual(result["range_ratio"], 1 - 2 / 200.0)
+        self.assertEqual(result["alarms_by_detector"], {"range": 6, "completeness": 1})
+        self.assertAlmostEqual(result["range_ratio"], 1 - 6 / 12)
 
-    def test_range_ratio_is_none_when_nothing_was_ingested(self):
-        self.client._query_api.query.side_effect = [[], []]
+    def test_range_ratio_is_none_when_the_device_did_not_report(self):
+        self.client._query_api.query.side_effect = [[], [], [], []]
 
         result = self.client.device_metrics(MESH_ID, 123, "-1h", "now()")
 
@@ -152,6 +181,34 @@ class DeviceMetricsTests(SimpleTestCase):
         self.assertIsNone(result["range_ratio"])
         self.assertEqual(result["channels"], [])
         self.assertEqual(result["alarms_by_detector"], {})
+
+    def test_a_recent_range_reads_each_alarm(self):
+        self.client._query_api.query.side_effect = [[], [], [], []]
+
+        self.client.device_metrics(MESH_ID, 123, "-30d", "now()")
+
+        alarms_flux = self.client._query_api.query.call_args_list[1].args[0]
+        self.assertIn(f'from(bucket: "{ALARMS_BUCKET}")', alarms_flux)
+        self.assertIn("count()", alarms_flux)
+
+    def test_a_range_reaching_past_the_retention_reads_the_daily_counts(self):
+        self.client._query_api.query.side_effect = [[], [], [], []]
+
+        self.client.device_metrics(MESH_ID, 123, "-31d", "now()")
+
+        alarms_flux, range_flux, _ = (c.args[0] for c in self.client._query_api.query.call_args_list[1:])
+        self.assertIn(f'from(bucket: "{ALARM_COUNTS_BUCKET}")', alarms_flux)
+        self.assertIn('r._field == "alarms"', alarms_flux)
+        self.assertIn('r._field == "hours_active"', range_flux)
+
+    def test_an_absolute_range_is_placed_against_now(self):
+        self.client._query_api.query.side_effect = [[], [], [], []]
+        now = datetime(2026, 9, 29, tzinfo=timezone.utc)
+
+        self.client.device_metrics(MESH_ID, 123, "2026-08-01", "2026-08-02", now=now)
+
+        alarms_flux = self.client._query_api.query.call_args_list[1].args[0]
+        self.assertIn(ALARM_COUNTS_BUCKET, alarms_flux)
 
     def test_invalid_mesh_id_is_rejected_before_querying(self):
         with self.assertRaises(ValueError):

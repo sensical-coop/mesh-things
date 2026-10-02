@@ -1,3 +1,4 @@
+import secrets
 from datetime import timedelta
 
 import structlog
@@ -7,7 +8,7 @@ from django.contrib.auth.password_validation import validate_password
 from django.core.cache import cache
 from django.core.exceptions import ValidationError as DjangoValidationError
 from django.db import IntegrityError, transaction
-from django.db.models import Q
+from django.db.models import Q, RestrictedError
 from django.middleware.csrf import get_token as get_csrf_token
 from django.utils import timezone
 from drf_spectacular.utils import OpenApiParameter, OpenApiResponse, OpenApiTypes, extend_schema
@@ -29,28 +30,38 @@ from .data_lifecycle import (
     cancel_mesh_deletions,
     record_acceptance,
     resume_mesh,
+    resume_sink,
     resume_source,
     schedule_mesh_deletion,
 )
+from . import postprocessing, sinks
 from .emqx_client import get_emqx_client
 from .exceptions import BadGateway, Conflict
 from .kafka_publisher import get_publisher, publish_gateway_state
 from common.algorithms import REGISTRY, discover
+from common.env import env_str
 from common.detectors import DETECTOR_SPECS
 
 from .models import (
+    BackfillStatus,
+    BlueprintVersion,
     DataDeletion,
     DataDeletionReason,
     DataDeletionStatus,
     Device,
+    DeviceSink,
+    DevicePostprocessing,
     Measurement,
     MeasurementType,
     Mesh,
+    MeshSink,
     OperatorRequest,
     OperatorRequestStatus,
     Owner,
     OwnerRole,
+    PostprocessingBackfill,
     PostprocessingBlueprint,
+    Sink,
     Source,
     TermsKind,
     TelemetryVariant,
@@ -59,8 +70,13 @@ from .models import (
 from .permissions import IsOperator, IsSuperuser, IsVerifiedOwner
 from .serializers import (
     AlgorithmSerializer,
+    BackfillClaimSerializer,
+    BackfillResultSerializer,
+    BlueprintVersionSerializer,
     DetailSerializer,
     DeviceCreateSerializer,
+    DevicePostprocessingSerializer,
+    DevicePostprocessingWriteSerializer,
     DeviceReadSerializer,
     DeviceUpdateSerializer,
     OwnerDevicesSerializer,
@@ -85,8 +101,17 @@ from .serializers import (
     OwnerRoleSerializer,
     OwnerUpdateSerializer,
     OwnerWithApiKeySerializer,
+    PostprocessingBackfillSerializer,
+    PostprocessingBlueprintCreateSerializer,
     PostprocessingBlueprintSerializer,
+    PostprocessingBlueprintUpdateSerializer,
+    StepCalibrationSerializer,
     DataDeletionSerializer,
+    SinkCreateSerializer,
+    SinkCredentialsSerializer,
+    SinkReadSerializer,
+    SinkTermsAcceptanceSerializer,
+    SinkWriteSerializer,
     SourceCreateSerializer,
     SourceReadSerializer,
     AccountTermsAcceptanceSerializer,
@@ -130,7 +155,7 @@ DEVICE_FILTER_PARAMS = [
     _flag("is_allowed", "Restrict to allowed registrations, or to rejected ones when false."),
     _flag(
         "has_postprocessing",
-        "Restrict to devices with a blueprint attached, or to those without one when false.",
+        "Restrict to devices with a postprocessing attached, or to those without one when false.",
     ),
 ]
 
@@ -430,9 +455,16 @@ class OperatorRequestDetailView(APIView):
             operator_request.decided_by = request.user
             operator_request.decided_at = timezone.now()
             operator_request.save(update_fields=["status", "decision_note", "decided_by", "decided_at"])
-            if approve and not operator_request.owner.is_operator:
+            promoted = approve and not operator_request.owner.is_operator
+            if promoted:
                 operator_request.owner.role = OwnerRole.OPERATOR
                 operator_request.owner.save(update_fields=["role"])
+        if promoted:
+            try:
+                sinks.publish_owner(operator_request.owner)
+            except Exception as e:
+                # Only re-enables archives the owner had before, so nothing is archived by mistake.
+                log.warning("owner_sinks_publish_failed", owner_id=str(operator_request.owner_id), error=str(e))
         try:
             send_operator_request_decided_email(operator_request)
         except Exception as e:
@@ -560,11 +592,13 @@ def _get_owner_or_404(owner_id) -> Owner:
 
 
 def _delete_owner_cascading(owner: Owner) -> None:
-    """Delete an owner along with their meshes and devices.
+    """Delete an owner along with their meshes, devices, blueprints and sinks.
 
-    Their gateways are deregistered from the decoder first, and nothing is
-    removed if that fails.
+    Their gateways are deregistered from the decoder and their sinks' credentials
+    revoked first, and nothing is removed if that fails. Blueprints other owners'
+    devices still use are kept without an owner.
     """
+    blueprint_ids = list(owner.blueprints.values_list("id", flat=True))
     devices = Device.objects.filter(mesh__owner=owner)
     gateways = list(devices.filter(is_gateway=True, is_allowed=True))
     rejected_nodes = list(devices.filter(is_gateway=False, is_allowed=False))
@@ -579,11 +613,33 @@ def _delete_owner_cascading(owner: Owner) -> None:
             publisher.publish_node_unreject(node)
         except Exception as e:
             raise BadGateway(f"Failed to publish unreject for device {node.id}, owner NOT removed: {e}")
+    try:
+        sinks.unpublish_devices(devices)
+        sinks.unpublish_meshes(owner.meshes.all())
+    except Exception as e:
+        raise BadGateway(f"Failed to publish sink removal, owner NOT removed: {e}")
+    try:
+        # Last, since the broker cannot give a revoked password back.
+        other_meshes, other_devices = sinks.revoke_owner_sinks(owner)
+    except Exception as e:
+        raise BadGateway(f"Failed to revoke the owner's sinks, owner NOT removed: {e}")
+    processed = list(devices.filter(postprocessings__isnull=False).distinct())
+    owner_id = str(owner.id)
     with transaction.atomic():
         meshes = list(owner.meshes.values_list("id", "source_id"))
+        Sink.objects.filter(created_by=owner).delete()
         owner.delete()
+        PostprocessingBlueprint.objects.filter(pk__in=blueprint_ids).exclude(
+            versions__attachments__isnull=False
+        ).delete()
         for mesh_id, source_id in meshes:
             schedule_mesh_deletion(mesh_id, DataDeletionReason.MESH_DELETED, source_id=source_id)
+    postprocessing.unpublish_devices(processed)
+    try:
+        # Harmless if lost: the dispatcher sends nothing for a sink it no longer has.
+        sinks.republish(other_meshes, other_devices)
+    except Exception as e:
+        log.warning("sink_detach_publish_failed", owner_id=owner_id, error=str(e))
 
 
 class OwnerDetailView(APIView):
@@ -614,13 +670,16 @@ class OwnerDetailView(APIView):
 
         Args:
             role: `member`, the default, or `operator`, which may also manage
-                sources. Granting `operator` also approves any pending operator
-                request from this owner, without emailing them.
+                sources and archive devices. Granting `operator` also approves any
+                pending operator request from this owner, without emailing them.
+                Taking it away stops archiving the owner's devices, and the role
+                is kept if the pipeline cannot be told.
         """
         _require_superuser(request)
         owner = _get_owner_or_404(owner_id)
         serializer = OwnerRoleSerializer(data=request.data)
         serializer.is_valid(raise_exception=True)
+        previous_role = owner.role
         with transaction.atomic():
             owner.role = serializer.validated_data["role"]
             owner.save(update_fields=["role"])
@@ -629,14 +688,27 @@ class OwnerDetailView(APIView):
                 owner.operator_requests.filter(status=OperatorRequestStatus.PENDING).update(
                     status=OperatorRequestStatus.APPROVED, decided_by=request.user, decided_at=timezone.now()
                 )
+        if owner.role != previous_role:
+            try:
+                sinks.publish_owner(owner)
+            except Exception as e:
+                if owner.role == OwnerRole.OPERATOR:
+                    # A grant only re-enables archives the owner had before, so it stands.
+                    log.warning("owner_sinks_publish_failed", owner_id=str(owner.id), error=str(e))
+                else:
+                    owner.role = previous_role
+                    owner.save(update_fields=["role"])
+                    raise BadGateway(f"Failed to stop archiving the owner's devices, role NOT changed: {e}")
         return Response(OwnerReadSerializer(owner).data)
 
     @extend_schema(responses={204: NO_CONTENT})
     def delete(self, request, owner_id):
-        """Remove an owner, along with their meshes and devices. Superusers only.
+        """Remove an owner, along with their meshes, devices, blueprints and sinks. Superusers only.
 
-        Their gateways are deregistered from the decoder first, and nothing is
-        removed if that fails.
+        Their gateways are deregistered from the decoder and the credentials of
+        their sinks revoked first, and nothing is removed if that fails.
+        Blueprints other owners' devices still use are kept without an owner,
+        editable by superusers only.
         """
         _require_superuser(request)
         owner = _get_owner_or_404(owner_id)
@@ -699,10 +771,12 @@ class OwnerMeView(APIView):
 
     @extend_schema(responses={204: NO_CONTENT})
     def delete(self, request):
-        """Delete the authenticated owner, along with their meshes and devices.
+        """Delete the authenticated owner, along with their meshes, devices, blueprints and sinks.
 
-        Their gateways are deregistered from the decoder first, and nothing is
-        removed if that fails.
+        Their gateways are deregistered from the decoder and the credentials of
+        their sinks revoked first, and nothing is removed if that fails.
+        Blueprints other owners' devices still use are kept without an owner,
+        editable by superusers only.
         """
         _delete_owner_cascading(request.user)
         return Response(status=status.HTTP_204_NO_CONTENT)
@@ -751,7 +825,7 @@ def _devices_for_owner(owner: Owner) -> list[dict]:
     return DeviceReadSerializer(
         owner.visible_devices.select_related("mesh").order_by("mesh_id", "device_id"),
         many=True,
-        context={"viewer_id": owner.id},
+        context={"viewer_id": owner.id, "viewer_is_superuser": owner.is_superuser},
     ).data
 
 
@@ -820,7 +894,7 @@ class MeshListCreateView(APIView):
                 qs = qs.filter(source_id=source_id)
             except (ValueError, DjangoValidationError):
                 raise ValidationError({"source_id": "Must be a UUID."})
-        return Response(MeshSerializer(qs, many=True, context=_mesh_context(request)).data)
+        return Response(MeshSerializer(qs, many=True, context=_viewer_context(request)).data)
 
     @extend_schema(request=MeshSerializer, responses={201: MeshSerializer})
     def post(self, request):
@@ -846,11 +920,11 @@ class MeshListCreateView(APIView):
             if serializer.accept_terms_locale:
                 record_acceptance(TermsKind.MESH, request.user, serializer.accept_terms_locale, mesh=mesh)
         return Response(
-            MeshSerializer(mesh, context=_mesh_context(request)).data, status=status.HTTP_201_CREATED
+            MeshSerializer(mesh, context=_viewer_context(request)).data, status=status.HTTP_201_CREATED
         )
 
 
-def _mesh_context(request) -> dict:
+def _viewer_context(request) -> dict:
     return {"viewer_id": request.user.id, "viewer_is_superuser": request.user.is_superuser}
 
 
@@ -886,7 +960,7 @@ class MeshDetailView(APIView):
         """Return one mesh."""
         mesh = _get_mesh_or_404(mesh_id)
         _require_mesh_visible(mesh, request.user)
-        return Response(MeshSerializer(mesh, context=_mesh_context(request)).data)
+        return Response(MeshSerializer(mesh, context=_viewer_context(request)).data)
 
     @extend_schema(request=MeshUpdateSerializer, responses=MeshSerializer)
     def put(self, request, mesh_id):
@@ -945,7 +1019,7 @@ class MeshDetailView(APIView):
                 )
             if new_source is not None:
                 cancel_mesh_deletions([updated.id], DataDeletionReason.SOURCE_DETACHED, new_source)
-        return Response(MeshSerializer(updated, context=_mesh_context(request)).data)
+        return Response(MeshSerializer(updated, context=_viewer_context(request)).data)
 
     @extend_schema(responses={204: NO_CONTENT})
     def delete(self, request, mesh_id):
@@ -970,12 +1044,19 @@ class MeshDetailView(APIView):
                 publisher.publish_node_unreject(node)
             except Exception as e:
                 raise BadGateway(f"Failed to publish unreject for device {node.id}, mesh NOT removed: {e}")
+        try:
+            sinks.unpublish_devices(mesh.devices.all())
+            sinks.unpublish_meshes([mesh])
+        except Exception as e:
+            raise BadGateway(f"Failed to publish sink removal, mesh NOT removed: {e}")
+        processed = list(mesh.devices.filter(postprocessings__isnull=False).distinct())
         with transaction.atomic():
             mesh_id, source_id = mesh.id, mesh.source_id
             mesh.delete()
             schedule_mesh_deletion(
                 mesh_id, DataDeletionReason.MESH_DELETED, source_id=source_id, requested_by=request.user
             )
+        postprocessing.unpublish_devices(processed)
         return Response(status=status.HTTP_204_NO_CONTENT)
 
 
@@ -992,7 +1073,7 @@ class MeshDevicesView(APIView):
         if not request.user.can_edit_mesh(mesh):
             devices = devices.filter(is_allowed=True)
         return Response(
-            DeviceReadSerializer(devices, many=True, context={"viewer_id": request.user.id}).data
+            DeviceReadSerializer(devices, many=True, context=_viewer_context(request)).data
         )
 
 
@@ -1011,8 +1092,8 @@ class DeviceListCreateView(APIView):
             is_gateway: Restrict to gateways, or to plain nodes when false.
             is_allowed: Restrict to allowed registrations, or to rejected ones
                 when false.
-            has_postprocessing: Restrict to devices with a blueprint attached,
-                or to those without one when false.
+            has_postprocessing: Restrict to devices with a postprocessing
+                attached, or to those without one when false.
         """
         qs = Device.objects.select_related("mesh")
         qs = qs.all() if request.user.is_superuser else qs.filter(mesh__in=request.user.visible_meshes)
@@ -1026,8 +1107,9 @@ class DeviceListCreateView(APIView):
                 qs = qs.filter(**{flag: value.lower() in ("true", "1")})
         has_postprocessing = request.query_params.get("has_postprocessing")
         if has_postprocessing is not None:
-            qs = qs.filter(postprocessing_blueprint__isnull=has_postprocessing.lower() not in ("true", "1"))
-        return Response(DeviceReadSerializer(qs, many=True, context={"viewer_id": request.user.id}).data)
+            with_any = DevicePostprocessing.objects.values("device_id")
+            qs = qs.filter(id__in=with_any) if has_postprocessing.lower() in ("true", "1") else qs.exclude(id__in=with_any)
+        return Response(DeviceReadSerializer(qs, many=True, context=_viewer_context(request)).data)
 
     @extend_schema(request=DeviceCreateSerializer, responses={201: DeviceReadSerializer})
     def post(self, request):
@@ -1069,7 +1151,7 @@ class DeviceListCreateView(APIView):
                 device.delete()
                 raise BadGateway(f"Failed to publish gateway registration, rolled back: {e}")
         return Response(
-            DeviceReadSerializer(device, context={"viewer_id": request.user.id}).data,
+            DeviceReadSerializer(device, context=_viewer_context(request)).data,
             status=status.HTTP_201_CREATED,
         )
 
@@ -1087,7 +1169,7 @@ class DeviceDetailView(APIView):
         _require_mesh_visible(device.mesh, request.user)
         if not device.is_allowed and not request.user.can_edit_mesh(device.mesh):
             raise NotFound("Device not found")
-        return Response(DeviceReadSerializer(device, context={"viewer_id": request.user.id}).data)
+        return Response(DeviceReadSerializer(device, context=_viewer_context(request)).data)
 
     @extend_schema(request=DeviceUpdateSerializer, responses=DeviceReadSerializer)
     def put(self, request, device_uuid):
@@ -1096,22 +1178,27 @@ class DeviceDetailView(APIView):
         Position and identity fields are filled in from what the device reports
         until they are set here, after which the values given take precedence.
         Disallowing a gateway stops its traffic being decoded.
+
+        `archive_enabled` stores the device's readings in the Parquet archive from
+        then on. It is accepted only on a mesh owned by an operator and on
+        instances that run the archive. Turning it off stops storing new readings
+        and keeps those already stored. The setting is rolled back if the
+        pipeline cannot be told about it.
         """
         device = _get_device_or_404(device_uuid)
         _require_mesh_ownership(device.mesh, request.user)
         changing_allowed = "is_allowed" in request.data
         previous_allowed = device.is_allowed
+        previous_archive = device.archive_enabled
         location_keys_present = "latitude" in request.data and "longitude" in request.data
         nodeinfo_fields = ("name", "short_name", "hardware_type", "role")
         nodeinfo_keys_present = any(k in request.data for k in nodeinfo_fields)
         nodeinfo_keys_all_present = all(k in request.data for k in nodeinfo_fields)
 
-        serializer = DeviceUpdateSerializer(device, data=request.data, partial=True)
+        serializer = DeviceUpdateSerializer(
+            device, data=request.data, partial=True, context={"archive_available": sinks.archive_available()}
+        )
         serializer.is_valid(raise_exception=True)
-        # A device may only point at a blueprint its own mesh owner owns
-        blueprint = serializer.validated_data.get("postprocessing_blueprint")
-        if blueprint is not None and not request.user.is_superuser and blueprint.owner_id != device.mesh.owner_id:
-            raise PermissionDenied("You do not own this postprocessing blueprint")
         try:
             updated = serializer.save()
         except IntegrityError:
@@ -1142,6 +1229,24 @@ class DeviceDetailView(APIView):
             except Exception as e:
                 log.warning("device_intervals_publish_failed", device_id=str(updated.id), error=str(e))
 
+        if "reading_interval_seconds" in request.data and updated.postprocessings.filter(
+            is_enabled=True, tolerance_seconds__isnull=True
+        ).exists():
+            # Their join tolerance follows the reading interval.
+            try:
+                postprocessing.publish_device(updated)
+            except Exception as e:
+                log.warning("postprocessing_publish_failed", device_id=str(updated.id), error=str(e))
+
+        if updated.archive_enabled != previous_archive:
+            try:
+                sinks.publish_device(updated)
+            except Exception as e:
+                updated.archive_enabled = previous_archive
+                updated.save(update_fields=["archive_enabled"])
+                raise BadGateway(f"Failed to publish the archive setting, rolled back: {e}")
+            sinks.record_archive_instruction(updated, request.user)
+
         if changing_allowed and updated.is_allowed != previous_allowed:
             attempted_allowed = updated.is_allowed
             publisher = get_publisher()
@@ -1161,7 +1266,13 @@ class DeviceDetailView(APIView):
                 updated.save(update_fields=["is_allowed"])
                 action = "allow" if attempted_allowed else "reject"
                 raise BadGateway(f"Failed to publish device {action}, rolled back: {e}")
-        return Response(DeviceReadSerializer(updated, context={"viewer_id": request.user.id}).data)
+            if updated.archive_enabled or updated.sink_links.exists():
+                # Only an allowed registration is sent to a sink.
+                try:
+                    sinks.publish_device(updated)
+                except Exception as e:
+                    log.warning("device_sinks_publish_failed", device_id=str(updated.id), error=str(e))
+        return Response(DeviceReadSerializer(updated, context=_viewer_context(request)).data)
 
     @extend_schema(responses={204: NO_CONTENT})
     def delete(self, request, device_uuid):
@@ -1178,9 +1289,13 @@ class DeviceDetailView(APIView):
                 publisher.publish_gateway_delete(device)
             elif not device.is_gateway and not device.is_allowed:
                 publisher.publish_node_unreject(device)
+            sinks.unpublish_devices([device])
         except Exception as e:
             raise BadGateway(f"Failed to publish device deletion, device NOT removed: {e}")
+        had_postprocessing = device.postprocessings.exists()
         device.delete()
+        if had_postprocessing:
+            postprocessing.unpublish_devices([device])
         return Response(status=status.HTTP_204_NO_CONTENT)
 
 
@@ -1280,11 +1395,11 @@ def _publish_measurement_alarms(device, measurement) -> None:
         log.warning("measurement_alarms_publish_failed", measurement_id=str(measurement.id), error=str(e))
 
 
-def _require_operator(request) -> None:
+def _require_operator(request, what: str = "sources") -> None:
     if not request.user.is_authenticated:
         raise AuthenticationFailed()
     if not IsOperator().has_permission(request, None):
-        raise PermissionDenied("Only an operator may access sources")
+        raise PermissionDenied(f"Only an operator may access {what}")
 
 
 def _require_superuser(request) -> None:
@@ -1329,8 +1444,9 @@ class MeasurementTypeListCreateView(APIView):
     def get(self, request):
         """List the shared catalog of measurement types and their units.
 
-        Sensor fields are named `telemetry:<variant>` and blueprint outputs
-        `derived:<blueprint>`.
+        Sensor fields are named `telemetry:<variant>`. Blueprint outputs from
+        every postprocessing share `computed:derived`, and data quality metrics
+        use `computed:quality`.
 
         Args:
             kind: Restrict to one namespace, one of `telemetry`, `device` or
@@ -1519,11 +1635,33 @@ class AlgorithmListView(APIView):
         return Response([spec.as_dict() for spec in sorted(REGISTRY.values(), key=lambda s: s.name)])
 
 
-def _get_blueprint_or_404(blueprint_id) -> PostprocessingBlueprint:
+def _postprocessing_failed(e: postprocessing.PostprocessingError):
+    return Conflict(e.errors) if e.conflict else ValidationError(e.errors)
+
+
+def _publish_postprocessing(device: Device) -> None:
+    """Called inside the transaction, so a failed publish rolls the change back."""
     try:
-        return PostprocessingBlueprint.objects.get(pk=blueprint_id)
+        postprocessing.publish_device(device)
+    except Exception as e:
+        raise BadGateway(f"Failed to publish postprocessing plans, rolled back: {e}")
+
+
+def _clear_alarm_config(device: Device, measurements) -> None:
+    """Withdraw detector config for derived channels that no longer exist."""
+    for measurement in measurements:
+        if measurement.enabled_detectors is None and measurement.valid_min is None and measurement.valid_max is None:
+            continue
+        measurement.enabled_detectors = measurement.valid_min = measurement.valid_max = None
+        _publish_measurement_alarms(device, measurement)
+
+
+def _get_visible_blueprint_or_404(request, blueprint_id) -> PostprocessingBlueprint:
+    """A private blueprint of another owner is reported as missing, not forbidden."""
+    try:
+        return postprocessing.visible_blueprints(request.user).distinct().get(pk=blueprint_id)
     except (PostprocessingBlueprint.DoesNotExist, ValueError, TypeError):
-        raise NotFound("PostprocessingBlueprint not found")
+        raise NotFound("Postprocessing blueprint not found")
 
 
 def _require_blueprint_ownership(blueprint: PostprocessingBlueprint, owner: Owner) -> None:
@@ -1534,24 +1672,50 @@ def _require_blueprint_ownership(blueprint: PostprocessingBlueprint, owner: Owne
 class PostprocessingBlueprintListCreateView(APIView):
     permission_classes = [IsVerifiedOwner]
 
-    @extend_schema(responses=PostprocessingBlueprintSerializer(many=True))
+    @extend_schema(
+        parameters=[_flag("owned", "Restrict to the caller's own blueprints, excluding public ones.")],
+        responses=PostprocessingBlueprintSerializer(many=True),
+    )
     def get(self, request):
-        """List the caller's postprocessing blueprints, or every one for a superuser."""
-        qs = (
-            PostprocessingBlueprint.objects.all()
-            if request.user.is_superuser
-            else PostprocessingBlueprint.objects.filter(owner=request.user)
-        )
-        return Response(PostprocessingBlueprintSerializer(qs.prefetch_related("steps"), many=True).data)
+        """List the postprocessing blueprints the caller may use: their own and public ones.
 
-    @extend_schema(request=PostprocessingBlueprintSerializer, responses={201: PostprocessingBlueprintSerializer})
+        A superuser sees every blueprint.
+
+        Args:
+            owned: Restrict to the caller's own blueprints, excluding public ones.
+        """
+        qs = postprocessing.visible_blueprints(request.user).distinct()
+        if request.query_params.get("owned", "").lower() in ("true", "1"):
+            qs = qs.filter(owner_id=request.user.id)
+        return Response(
+            PostprocessingBlueprintSerializer(qs.order_by("name").prefetch_related("versions"), many=True).data
+        )
+
+    @extend_schema(
+        request=PostprocessingBlueprintCreateSerializer, responses={201: PostprocessingBlueprintSerializer}
+    )
     def post(self, request):
-        """Create a postprocessing blueprint, an ordered set of steps that compute
-        new channels from a device's readings."""
-        serializer = PostprocessingBlueprintSerializer(data=request.data)
+        """Create a postprocessing blueprint together with its first version.
+
+        A version declares the input slots it reads and an ordered list of
+        steps. Each step runs one algorithm, takes its inputs from a slot or
+        from an earlier step's output, and names the derived channels its
+        outputs are stored as. Calibration parameters are not set here: each
+        device supplies its own when the blueprint is attached to it.
+
+        Args:
+            name: Unique among the caller's blueprints.
+            description: Free text.
+            is_public: Lets any owner attach the blueprint to their devices. Defaults to false.
+            inputs: Input slots, each with an optional `default_channel`.
+            steps: Steps, each with a `key` that stays the same across versions.
+            notes: Free text describing this version.
+        """
+        serializer = PostprocessingBlueprintCreateSerializer(data=request.data)
         serializer.is_valid(raise_exception=True)
         try:
-            blueprint = serializer.save(owner=request.user)
+            with transaction.atomic():
+                blueprint = serializer.save(owner=request.user)
         except IntegrityError:
             raise Conflict(f"You already have a blueprint named {request.data.get('name')!r}")
         return Response(PostprocessingBlueprintSerializer(blueprint).data, status=status.HTTP_201_CREATED)
@@ -1562,21 +1726,19 @@ class PostprocessingBlueprintDetailView(APIView):
 
     @extend_schema(responses=PostprocessingBlueprintSerializer)
     def get(self, request, blueprint_id):
-        """Return one postprocessing blueprint and its steps."""
-        blueprint = _get_blueprint_or_404(blueprint_id)
-        _require_blueprint_ownership(blueprint, request.user)
-        return Response(PostprocessingBlueprintSerializer(blueprint).data)
+        """Return one postprocessing blueprint and its latest version."""
+        return Response(PostprocessingBlueprintSerializer(_get_visible_blueprint_or_404(request, blueprint_id)).data)
 
-    @extend_schema(request=PostprocessingBlueprintSerializer, responses=PostprocessingBlueprintSerializer)
+    @extend_schema(request=PostprocessingBlueprintUpdateSerializer, responses=PostprocessingBlueprintSerializer)
     def put(self, request, blueprint_id):
-        """Update a postprocessing blueprint.
+        """Rename or describe a blueprint, or change whether it is public.
 
-        Supplying `steps` replaces the whole ordered list; omitting it leaves
-        the existing steps untouched.
+        Steps cannot be changed here: create a new version instead. Making a
+        blueprint private does not detach it from devices already using it.
         """
-        blueprint = _get_blueprint_or_404(blueprint_id)
+        blueprint = _get_visible_blueprint_or_404(request, blueprint_id)
         _require_blueprint_ownership(blueprint, request.user)
-        serializer = PostprocessingBlueprintSerializer(blueprint, data=request.data, partial=True)
+        serializer = PostprocessingBlueprintUpdateSerializer(blueprint, data=request.data, partial=True)
         serializer.is_valid(raise_exception=True)
         try:
             updated = serializer.save()
@@ -1586,15 +1748,427 @@ class PostprocessingBlueprintDetailView(APIView):
 
     @extend_schema(responses={204: NO_CONTENT})
     def delete(self, request, blueprint_id):
-        """Delete a postprocessing blueprint.
+        """Delete a blueprint and all of its versions.
 
-        Devices using it keep recording telemetry and simply stop producing
-        computed channels.
+        Refused while any device still uses one of its versions.
         """
-        blueprint = _get_blueprint_or_404(blueprint_id)
+        blueprint = _get_visible_blueprint_or_404(request, blueprint_id)
         _require_blueprint_ownership(blueprint, request.user)
-        blueprint.delete()
+        try:
+            blueprint.delete()
+        except RestrictedError:
+            raise Conflict("Devices still use a version of this blueprint. Detach it from them first")
         return Response(status=status.HTTP_204_NO_CONTENT)
+
+
+class BlueprintVersionListCreateView(APIView):
+    permission_classes = [IsVerifiedOwner]
+
+    @extend_schema(responses=BlueprintVersionSerializer(many=True))
+    def get(self, request, blueprint_id):
+        """List every version of a blueprint, oldest first."""
+        blueprint = _get_visible_blueprint_or_404(request, blueprint_id)
+        versions = blueprint.versions.prefetch_related("steps")
+        return Response(BlueprintVersionSerializer(versions, many=True).data)
+
+    @extend_schema(request=BlueprintVersionSerializer, responses={201: BlueprintVersionSerializer})
+    def post(self, request, blueprint_id):
+        """Add a version of a blueprint.
+
+        Versions are immutable, so this is how a blueprint's steps change.
+        Devices keep running the version they use until they are moved to the
+        new one. Keeping a step's `key` and algorithm lets a device keep its
+        calibration when it moves.
+
+        Args:
+            inputs: Input slots, each with an optional `default_channel`.
+            steps: Steps, each with a `key` that stays the same across versions.
+            notes: Free text describing what changed.
+        """
+        blueprint = _get_visible_blueprint_or_404(request, blueprint_id)
+        _require_blueprint_ownership(blueprint, request.user)
+        serializer = BlueprintVersionSerializer(data=request.data)
+        serializer.is_valid(raise_exception=True)
+        with transaction.atomic():
+            locked = PostprocessingBlueprint.objects.select_for_update().get(pk=blueprint.pk)
+            latest = locked.versions.order_by("-number").values_list("number", flat=True).first() or 0
+            version = serializer.save(blueprint=locked, number=latest + 1)
+        return Response(BlueprintVersionSerializer(version).data, status=status.HTTP_201_CREATED)
+
+
+class BlueprintVersionDetailView(APIView):
+    permission_classes = [IsVerifiedOwner]
+
+    @extend_schema(responses=BlueprintVersionSerializer)
+    def get(self, request, blueprint_id, number):
+        """Return one version of a blueprint and its steps."""
+        blueprint = _get_visible_blueprint_or_404(request, blueprint_id)
+        try:
+            version = blueprint.versions.get(number=number)
+        except BlueprintVersion.DoesNotExist:
+            raise NotFound("Blueprint version not found")
+        return Response(BlueprintVersionSerializer(version).data)
+
+
+def _get_device_postprocessing_or_404(device: Device, postprocessing_id) -> DevicePostprocessing:
+    try:
+        return postprocessing.with_relations(DevicePostprocessing.objects.filter(device=device)).get(
+            pk=postprocessing_id
+        )
+    except (DevicePostprocessing.DoesNotExist, ValueError, TypeError):
+        raise NotFound("Postprocessing not found on this device")
+
+
+def _postprocessing_data(dp: DevicePostprocessing) -> dict:
+    fresh = postprocessing.with_relations(DevicePostprocessing.objects.filter(pk=dp.pk)).get()
+    return DevicePostprocessingSerializer(fresh).data
+
+
+def _apply_enabled(dp: DevicePostprocessing, requested: bool | None) -> None:
+    """Enable or disable, refusing to leave an enabled postprocessing unable to run."""
+    target = dp.is_enabled if requested is None else requested
+    if target:
+        dp = postprocessing.with_relations(DevicePostprocessing.objects.filter(pk=dp.pk)).get()
+        if found := postprocessing.problems(dp):
+            raise ValidationError({"is_enabled": found})
+    DevicePostprocessing.objects.filter(pk=dp.pk).update(is_enabled=target)
+
+
+class DevicePostprocessingListView(APIView):
+    permission_classes = [IsVerifiedOwner]
+
+    @extend_schema(responses=DevicePostprocessingSerializer(many=True))
+    def get(self, request, device_uuid):
+        """List the blueprints attached to a device, with their wiring, outputs and state.
+
+        `problems` lists what keeps a postprocessing from being enabled, and is
+        empty once it can run.
+        """
+        device = _get_device_or_404(device_uuid)
+        _require_mesh_visible(device.mesh, request.user)
+        attached = postprocessing.with_relations(device.postprocessings.order_by("created_at"))
+        return Response(DevicePostprocessingSerializer(attached, many=True).data)
+
+    @extend_schema(request=DevicePostprocessingWriteSerializer, responses={201: DevicePostprocessingSerializer})
+    def post(self, request, device_uuid):
+        """Attach a blueprint to a device.
+
+        Slots not given in `input_bindings` are bound to the device's channel
+        named by their `default_channel` when it has one. The derived channels
+        the blueprint produces are registered on the device straight away, so
+        detectors and ranges can be configured on them before any data
+        arrives. A postprocessing starts disabled unless `is_enabled` is set,
+        and can only be enabled once every slot is bound and every step that
+        needs one has a calibration. Changes are rolled back if the stream
+        tier cannot be notified.
+
+        Args:
+            blueprint_id: Blueprint to attach, the caller's own or a public one. Required.
+            blueprint_version: Version number. Defaults to the latest.
+            input_bindings: {slot: measurement id of this device}.
+            output_prefix: Prepended to every derived field name, so a blueprint can run twice on one device.
+            tolerance_seconds: Maximum distance between samples joined into one row. Defaults to half the device's
+                reading interval.
+            is_enabled: Start running straight away. Defaults to false.
+        """
+        device = _get_device_or_404(device_uuid)
+        _require_mesh_ownership(device.mesh, request.user)
+        serializer = DevicePostprocessingWriteSerializer(data=request.data)
+        serializer.is_valid(raise_exception=True)
+        data = serializer.validated_data
+        if "blueprint_id" not in data:
+            raise ValidationError({"blueprint_id": "This field is required."})
+        blueprint = _get_visible_blueprint_or_404(request, data["blueprint_id"])
+        if not postprocessing.can_attach(request.user, blueprint, device):
+            raise PermissionDenied("This blueprint is neither public nor owned by the device's mesh owner")
+        versions = blueprint.versions.order_by("-number")
+        version = versions.filter(number=data["blueprint_version"]).first() if "blueprint_version" in data else versions.first()
+        if version is None:
+            raise ValidationError({"blueprint_version": "No such version of this blueprint"})
+        try:
+            with transaction.atomic():
+                dp = DevicePostprocessing.objects.create(
+                    device=device,
+                    blueprint_version=version,
+                    output_prefix=data.get("output_prefix", ""),
+                    tolerance_seconds=data.get("tolerance_seconds"),
+                )
+                postprocessing.set_bindings(dp, data.get("input_bindings") or {})
+                postprocessing.sync_outputs(dp)
+                _apply_enabled(dp, data.get("is_enabled", False))
+                _publish_postprocessing(device)
+        except postprocessing.PostprocessingError as e:
+            raise _postprocessing_failed(e)
+        return Response(_postprocessing_data(dp), status=status.HTTP_201_CREATED)
+
+
+class DevicePostprocessingDetailView(APIView):
+    permission_classes = [IsVerifiedOwner]
+
+    @extend_schema(responses=DevicePostprocessingSerializer)
+    def get(self, request, device_uuid, postprocessing_id):
+        """Return one blueprint attachment on a device."""
+        device = _get_device_or_404(device_uuid)
+        _require_mesh_visible(device.mesh, request.user)
+        return Response(DevicePostprocessingSerializer(_get_device_postprocessing_or_404(device, postprocessing_id)).data)
+
+    @extend_schema(request=DevicePostprocessingWriteSerializer, responses=DevicePostprocessingSerializer)
+    def put(self, request, device_uuid, postprocessing_id):
+        """Rewire, move to another version, or enable or disable a postprocessing.
+
+        Moving to another version keeps bindings for slots it still declares
+        and calibrations for steps with the same key and algorithm. Derived
+        channels the new wiring no longer produces are removed from the device,
+        which is refused while another postprocessing reads them. Changes are
+        rolled back if the stream tier cannot be notified.
+
+        Args:
+            blueprint_version: Version number of the same blueprint.
+            input_bindings: {slot: measurement id of this device}. Null unbinds a slot. Slots not given keep
+                their binding.
+            output_prefix: Prepended to every derived field name.
+            tolerance_seconds: Maximum distance between samples joined into one row. Null uses half the device's
+                reading interval.
+            is_enabled: Run or stop the postprocessing.
+        """
+        device = _get_device_or_404(device_uuid)
+        _require_mesh_ownership(device.mesh, request.user)
+        dp = _get_device_postprocessing_or_404(device, postprocessing_id)
+        serializer = DevicePostprocessingWriteSerializer(data=request.data)
+        serializer.is_valid(raise_exception=True)
+        data = serializer.validated_data
+        if "blueprint_id" in data and data["blueprint_id"] != dp.blueprint_version.blueprint_id:
+            raise ValidationError({"blueprint_id": "Detach this postprocessing and attach the other blueprint instead"})
+
+        removed = []
+        try:
+            with transaction.atomic():
+                rewired = "input_bindings" in data or "output_prefix" in data
+                if "blueprint_version" in data and data["blueprint_version"] != dp.blueprint_version.number:
+                    try:
+                        dp.blueprint_version = dp.blueprint_version.blueprint.versions.get(
+                            number=data["blueprint_version"]
+                        )
+                    except BlueprintVersion.DoesNotExist:
+                        raise ValidationError({"blueprint_version": "No such version of this blueprint"})
+                    rewired = True
+                for field in ("output_prefix", "tolerance_seconds"):
+                    if field in data:
+                        setattr(dp, field, data[field])
+                dp.save()
+                if rewired:
+                    postprocessing.set_bindings(dp, data.get("input_bindings") or {})
+                    removed = postprocessing.sync_outputs(dp)
+                _apply_enabled(dp, data.get("is_enabled"))
+                _publish_postprocessing(device)
+        except postprocessing.PostprocessingError as e:
+            raise _postprocessing_failed(e)
+        _clear_alarm_config(device, removed)
+        return Response(_postprocessing_data(dp))
+
+    @extend_schema(responses={204: NO_CONTENT})
+    def delete(self, request, device_uuid, postprocessing_id):
+        """Detach a blueprint from a device.
+
+        Its derived channels are removed from the device, while readings
+        already stored remain queryable. Refused while another postprocessing
+        on the device reads one of those channels.
+        """
+        device = _get_device_or_404(device_uuid)
+        _require_mesh_ownership(device.mesh, request.user)
+        dp = _get_device_postprocessing_or_404(device, postprocessing_id)
+        outputs = list(dp.outputs.all())
+        try:
+            with transaction.atomic():
+                postprocessing.delete_outputs(outputs)
+                dp.delete()
+                _publish_postprocessing(device)
+        except postprocessing.PostprocessingError as e:
+            raise _postprocessing_failed(e)
+        _clear_alarm_config(device, outputs)
+        return Response(status=status.HTTP_204_NO_CONTENT)
+
+
+class DevicePostprocessingCalibrationsView(APIView):
+    permission_classes = [IsVerifiedOwner]
+
+    @extend_schema(responses=StepCalibrationSerializer(many=True))
+    def get(self, request, device_uuid, postprocessing_id):
+        """List the calibration history of a postprocessing, per step and oldest first."""
+        device = _get_device_or_404(device_uuid)
+        _require_mesh_visible(device.mesh, request.user)
+        dp = _get_device_postprocessing_or_404(device, postprocessing_id)
+        return Response(StepCalibrationSerializer(dp.calibrations.all(), many=True).data)
+
+    @extend_schema(request=StepCalibrationSerializer, responses={201: StepCalibrationSerializer})
+    def post(self, request, device_uuid, postprocessing_id):
+        """Record a calibration for one step, in force from `valid_from` onwards.
+
+        History is kept: readings are processed with the calibration in force
+        when they were taken, so recalibrating a sensor never rewrites the
+        past. Every required calibration parameter of the step's algorithm
+        must be given. Rolled back if the stream tier cannot be notified.
+
+        Args:
+            step_key: Step being calibrated.
+            params: Calibration parameters of the step's algorithm.
+            valid_from: When this calibration takes effect. Defaults to now.
+        """
+        device = _get_device_or_404(device_uuid)
+        _require_mesh_ownership(device.mesh, request.user)
+        dp = _get_device_postprocessing_or_404(device, postprocessing_id)
+        serializer = StepCalibrationSerializer(data=request.data, context={"device_postprocessing": dp})
+        serializer.is_valid(raise_exception=True)
+        with transaction.atomic():
+            calibration = serializer.save(
+                device_postprocessing=dp,
+                valid_from=serializer.validated_data.get("valid_from") or timezone.now(),
+            )
+            if dp.is_enabled:
+                _publish_postprocessing(device)
+        return Response(StepCalibrationSerializer(calibration).data, status=status.HTTP_201_CREATED)
+
+
+class DevicePostprocessingCalibrationDetailView(APIView):
+    permission_classes = [IsVerifiedOwner]
+
+    @extend_schema(responses={204: NO_CONTENT})
+    def delete(self, request, device_uuid, postprocessing_id, calibration_id):
+        """Delete a calibration recorded by mistake.
+
+        Refused when it would leave an enabled postprocessing without a
+        calibration it needs. To change a calibration from some point onwards,
+        record a new one instead.
+        """
+        device = _get_device_or_404(device_uuid)
+        _require_mesh_ownership(device.mesh, request.user)
+        dp = _get_device_postprocessing_or_404(device, postprocessing_id)
+        with transaction.atomic():
+            deleted, _ = dp.calibrations.filter(pk=calibration_id).delete()
+            if not deleted:
+                raise NotFound("Calibration not found")
+            if dp.is_enabled:
+                fresh = postprocessing.with_relations(DevicePostprocessing.objects.filter(pk=dp.pk)).get()
+                if found := postprocessing.problems(fresh):
+                    raise Conflict(found)
+                _publish_postprocessing(device)
+        return Response(status=status.HTTP_204_NO_CONTENT)
+
+
+class DevicePostprocessingBackfillsView(APIView):
+    permission_classes = [IsVerifiedOwner]
+
+    @extend_schema(responses=PostprocessingBackfillSerializer(many=True))
+    def get(self, request, device_uuid, postprocessing_id):
+        """List the backfills requested for a postprocessing and how they went, oldest first."""
+        device = _get_device_or_404(device_uuid)
+        _require_mesh_visible(device.mesh, request.user)
+        dp = _get_device_postprocessing_or_404(device, postprocessing_id)
+        return Response(PostprocessingBackfillSerializer(dp.backfills.all(), many=True).data)
+
+    @extend_schema(request=PostprocessingBackfillSerializer, responses={202: PostprocessingBackfillSerializer})
+    def post(self, request, device_uuid, postprocessing_id):
+        """Recompute a postprocessing's derived channels over stored history.
+
+        Readings already stored between `start` and `stop` are run through the
+        postprocessing with the calibration in force when each was taken, and
+        the results replace any derived values stored for the same times.
+        Backfilled values are stored and archived but never raise alarms. The
+        request is queued and runs within about a minute; its progress is
+        reported in `status`. The postprocessing must be runnable, although it
+        does not need to be enabled.
+
+        Args:
+            start: Start of the range to recompute.
+            stop: End of the range. Defaults to now. At most 90 days after `start`.
+            include_dependants: Also recompute every enabled postprocessing that reads this one's outputs. Defaults
+                to false.
+        """
+        device = _get_device_or_404(device_uuid)
+        _require_mesh_ownership(device.mesh, request.user)
+        dp = _get_device_postprocessing_or_404(device, postprocessing_id)
+        if found := postprocessing.problems(dp):
+            raise ValidationError({"postprocessing": found})
+        serializer = PostprocessingBackfillSerializer(data=request.data)
+        serializer.is_valid(raise_exception=True)
+        backfill = serializer.save(device_postprocessing=dp, requested_by=request.user)
+        return Response(PostprocessingBackfillSerializer(backfill).data, status=status.HTTP_202_ACCEPTED)
+
+
+class PostprocessingBackfillListView(APIView):
+    permission_classes = [IsSuperuser]
+
+    @extend_schema(
+        parameters=[_query("status", "Restrict to one status.", enum=[s.value for s in BackfillStatus])],
+        responses=PostprocessingBackfillSerializer(many=True),
+    )
+    def get(self, request):
+        """List backfills across every device, oldest first. Superusers only.
+
+        Args:
+            status: Restrict to one status, such as `pending`.
+        """
+        qs = PostprocessingBackfill.objects.all()
+        if status_filter := request.query_params.get("status"):
+            qs = qs.filter(status=status_filter)
+        return Response(PostprocessingBackfillSerializer(qs, many=True).data)
+
+
+def _get_backfill_or_404(backfill_id, lock: bool = False) -> PostprocessingBackfill:
+    qs = PostprocessingBackfill.objects.select_for_update() if lock else PostprocessingBackfill.objects
+    try:
+        return qs.get(pk=backfill_id)
+    except (PostprocessingBackfill.DoesNotExist, ValueError, TypeError):
+        raise NotFound("Backfill not found")
+
+
+class PostprocessingBackfillClaimView(APIView):
+    permission_classes = [IsSuperuser]
+
+    @extend_schema(request=None, responses=BackfillClaimSerializer)
+    def post(self, request, backfill_id):
+        """Claim a pending backfill for processing and return everything needed to run it. Superusers only.
+
+        Only one caller can claim a backfill. A backfill left running for over
+        an hour is presumed abandoned and can be claimed again.
+        """
+        with transaction.atomic():
+            backfill = _get_backfill_or_404(backfill_id, lock=True)
+            stale_before = timezone.now() - postprocessing.BACKFILL_CLAIM_TIMEOUT
+            abandoned = backfill.status == BackfillStatus.RUNNING and backfill.started_at < stale_before
+            if backfill.status != BackfillStatus.PENDING and not abandoned:
+                raise Conflict(f"Backfill is {backfill.status}")
+            backfill.status = BackfillStatus.RUNNING
+            backfill.started_at = timezone.now()
+            backfill.error = None
+            backfill.save(update_fields=["status", "started_at", "error"])
+        return Response(BackfillClaimSerializer(backfill).data)
+
+
+class PostprocessingBackfillDetailView(APIView):
+    permission_classes = [IsSuperuser]
+
+    @extend_schema(request=BackfillResultSerializer, responses=PostprocessingBackfillSerializer)
+    def put(self, request, backfill_id):
+        """Record how a claimed backfill finished. Superusers only.
+
+        Args:
+            status: `done` or `failed`.
+            points_published: Derived values published.
+            error: Why it failed.
+        """
+        serializer = BackfillResultSerializer(data=request.data)
+        serializer.is_valid(raise_exception=True)
+        with transaction.atomic():
+            backfill = _get_backfill_or_404(backfill_id, lock=True)
+            if backfill.status != BackfillStatus.RUNNING:
+                raise Conflict(f"Backfill is {backfill.status}, not running")
+            backfill.status = serializer.validated_data["status"]
+            backfill.points_published = serializer.validated_data["points_published"]
+            backfill.error = serializer.validated_data.get("error")
+            backfill.finished_at = timezone.now()
+            backfill.save(update_fields=["status", "points_published", "error", "finished_at"])
+        return Response(PostprocessingBackfillSerializer(backfill).data)
 
 
 def _get_source_or_404(request, source_id) -> Source:
@@ -1732,7 +2306,7 @@ class MeshTermsAcceptanceView(APIView):
         except Exception as e:
             raise BadGateway(f"Failed to resume the mesh's gateways, terms NOT renewed: {e}")
         record_acceptance(TermsKind.MESH, request.user, serializer.validated_data["terms_locale"], mesh=mesh)
-        return Response(MeshSerializer(mesh, context=_mesh_context(request)).data, status=status.HTTP_201_CREATED)
+        return Response(MeshSerializer(mesh, context=_viewer_context(request)).data, status=status.HTTP_201_CREATED)
 
 
 class SourceTermsView(APIView):
@@ -1918,6 +2492,324 @@ class SourceTermsAcceptanceView(APIView):
             raise BadGateway(f"Failed to restart the bridge, terms NOT renewed: {e}")
         record_acceptance(TermsKind.SOURCE, request.user, serializer.validated_data["terms_locale"], source=source)
         return Response(_source_read_data(source), status=status.HTTP_201_CREATED)
+
+
+def _require_sinks_available() -> None:
+    if not env_str("REGISTRY__EMQX_API_URL"):
+        raise NotFound("Sinks are not available on this instance")
+
+
+def _get_sink_or_404(request, sink_id) -> Sink:
+    """A sink outside the caller's reach is reported as missing, not forbidden."""
+    try:
+        return request.user.visible_sinks.get(pk=sink_id)
+    except (Sink.DoesNotExist, ValueError, TypeError):
+        raise NotFound("Sink not found")
+
+
+def _sink_connections() -> dict[str, int] | None:
+    try:
+        return get_emqx_client().sink_connections()
+    except Exception as e:
+        log.warning("sink_connections_unavailable", error=str(e))
+        return None
+
+
+def _sink_read_data(sink: Sink, connections: dict[str, int] | None = None, password: str | None = None) -> dict:
+    if connections is None:
+        connections = _sink_connections()
+    sink.connections = None if connections is None else connections.get(str(sink.id), 0)
+    if password is None:
+        return SinkReadSerializer(sink).data
+    sink.password = password
+    return SinkCredentialsSerializer(sink).data
+
+
+def _require_sink_authorization(client) -> None:
+    """Refuse while the broker would let other clients read or write sink topics."""
+    try:
+        problem = client.sink_authorization_problem()
+    except Exception as e:
+        raise BadGateway(f"Failed to check the broker's authorization: {e}")
+    if problem:
+        raise BadGateway(f"The broker does not protect sinks yet: {problem}")
+
+
+def _link_sink(sink: Sink, mesh_ids, device_ids) -> None:
+    with transaction.atomic():
+        sink.mesh_links.exclude(mesh_id__in=list(mesh_ids)).delete()
+        sink.device_links.exclude(device_id__in=list(device_ids)).delete()
+        MeshSink.objects.bulk_create([MeshSink(sink=sink, mesh_id=i) for i in mesh_ids], ignore_conflicts=True)
+        DeviceSink.objects.bulk_create([DeviceSink(sink=sink, device_id=i) for i in device_ids], ignore_conflicts=True)
+
+
+def _publish_sink_targets(meshes, devices) -> None:
+    for mesh in meshes:
+        sinks.publish_mesh(mesh)
+    for device in devices:
+        sinks.publish_device(device)
+
+
+def _set_sink_targets(sink: Sink, owner: Owner, meshes=None, devices=None) -> None:
+    """Replace the sink's meshes and devices and publish each one that changed.
+
+    None keeps the current list. The previous attachments are restored, and
+    BadGateway raised, when the pipeline cannot be told.
+    """
+    old_meshes = {link.mesh_id: link.mesh for link in sink.mesh_links.select_related("mesh__owner")}
+    old_devices = {link.device_id: link.device for link in sink.device_links.select_related("device__mesh__owner")}
+    new_meshes = old_meshes if meshes is None else {mesh.id: mesh for mesh in meshes}
+    new_devices = old_devices if devices is None else {device.id: device for device in devices}
+    changed_meshes = {m: m.id in new_meshes for m in {**old_meshes, **new_meshes}.values() if (m.id in old_meshes) != (m.id in new_meshes)}
+    changed_devices = {
+        d: d.id in new_devices for d in {**old_devices, **new_devices}.values() if (d.id in old_devices) != (d.id in new_devices)
+    }
+    if not changed_meshes and not changed_devices:
+        return
+    _link_sink(sink, new_meshes, new_devices)
+    try:
+        _publish_sink_targets(changed_meshes, changed_devices)
+    except Exception as e:
+        _link_sink(sink, old_meshes, old_devices)
+        try:
+            _publish_sink_targets(changed_meshes, changed_devices)
+        except Exception as restore_error:
+            log.error("sink_targets_restore_failed", sink_id=str(sink.id), error=str(restore_error))
+        raise BadGateway(f"Failed to publish the sink's meshes and devices, rolled back: {e}")
+    sinks.record_sink_instructions(sink, owner, changed_meshes, changed_devices)
+
+
+def _discard_sink(sink: Sink) -> None:
+    """Undo a sink whose setup failed, as far as the broker and the pipeline allow."""
+    try:
+        get_emqx_client().delete_sink(str(sink.id))
+    except Exception as e:
+        log.error("sink_discard_failed", sink_id=str(sink.id), error=str(e))
+    try:
+        get_publisher().publish_sink(sink.id, None)
+    except Exception as e:
+        log.error("sink_discard_failed", sink_id=str(sink.id), error=str(e))
+    sink.delete()
+
+
+class SinkTermsView(APIView):
+    permission_classes = [IsVerifiedOwner]
+
+    @extend_schema(
+        parameters=[_query("locale", "`en` or `es`. Defaults to `en`; unknown locales fall back to it.")],
+        responses=TermsSerializer,
+    )
+    def get(self, request):
+        """Return the terms an operator must accept to create a sink. Operators only.
+
+        Every statement must be accepted. Send the returned `version` back as
+        `terms_version` when creating the sink. Answers `404` on an instance that
+        does not enforce terms or has no sinks.
+
+        Args:
+            locale: `en` or `es`. Defaults to `en`, which is also used for any
+                other value.
+        """
+        _require_sinks_available()
+        _require_operator(request, "sinks")
+        _require_terms_enforced()
+        return Response(TermsSerializer(current_terms(TermsKind.SINK, request.query_params.get("locale"))).data)
+
+
+class SinkListCreateView(APIView):
+    permission_classes = [IsVerifiedOwner]
+
+    @extend_schema(responses=SinkReadSerializer(many=True))
+    def get(self, request):
+        """List the sinks the caller created, or every sink for a superuser. Operators only.
+
+        Each carries how many consumers are connected, null for all of them when
+        the broker cannot be asked. Passwords are never included.
+        """
+        _require_sinks_available()
+        _require_operator(request, "sinks")
+        sinks_qs = list(request.user.visible_sinks.order_by("created_at"))
+        connections = _sink_connections()
+        for sink in sinks_qs:
+            sink.connections = None if connections is None else connections.get(str(sink.id), 0)
+        return Response(SinkReadSerializer(sinks_qs, many=True).data)
+
+    @extend_schema(request=SinkCreateSerializer, responses={201: SinkCredentialsSerializer})
+    def post(self, request):
+        """Create a sink and return the credentials its consumer subscribes with. Operators only.
+
+        The consumer connects to `broker` over TLS as `username` with the returned
+        password and subscribes under `topic_filter`, where each message is one
+        reading or alarm as JSON. The password is shown in this response only.
+        The caller must first accept the current sink terms. Nothing is kept if
+        the broker or the pipeline cannot be set up, or if the broker does not
+        yet keep sink topics private.
+
+        Args:
+            label: Name for the sink.
+            streams: Which readings are sent: `decoded`, `derived` and `alarms`.
+                Defaults to `decoded`. Derived readings are sent only by
+                instances that run postprocessing, and alarms only by those that
+                run quality checks.
+            mesh_ids: Meshes whose every node is sent, including nodes that
+                appear later. Each must be one the caller may edit, owned by an
+                operator.
+            device_ids: Registrations of single devices to send, under the same
+                conditions.
+            terms_version: The `version` of the sink terms the caller accepted.
+                Required unless the instance does not enforce terms.
+            terms_locale: Locale the terms were shown in, `en` or `es`. Defaults
+                to `en`.
+        """
+        _require_sinks_available()
+        _require_operator(request, "sinks")
+        serializer = SinkCreateSerializer(data=request.data, context={"owner": request.user})
+        serializer.is_valid(raise_exception=True)
+        data = serializer.validated_data
+        client = get_emqx_client()
+        _require_sink_authorization(client)
+        password = secrets.token_urlsafe(24)
+        sink = Sink.objects.create(
+            label=data.get("label") or None, streams=data.get("streams") or ["decoded"], created_by=request.user
+        )
+        try:
+            client.apply_sink_namespace()
+            client.apply_sink(str(sink.id), password)
+            get_publisher().publish_sink(sink.id, sink.streams)
+            _set_sink_targets(sink, request.user, data.get("mesh_ids", []), data.get("device_ids", []))
+            record_acceptance(TermsKind.SINK, request.user, data["terms_locale"], sink=sink)
+        except Exception as e:
+            _discard_sink(sink)
+            raise BadGateway(f"Failed to set up the sink, sink NOT created: {e}")
+        return Response(_sink_read_data(sink, password=password), status=status.HTTP_201_CREATED)
+
+
+class SinkDetailView(APIView):
+    permission_classes = [IsVerifiedOwner]
+
+    @extend_schema(responses=SinkReadSerializer)
+    def get(self, request, sink_id):
+        """Return one sink and how many consumers are connected to it. Operators only.
+
+        An operator can read only the sinks they created; a superuser can read
+        any. The password is never included.
+        """
+        _require_sinks_available()
+        _require_operator(request, "sinks")
+        return Response(_sink_read_data(_get_sink_or_404(request, sink_id)))
+
+    @extend_schema(request=SinkWriteSerializer, responses=SinkReadSerializer)
+    def put(self, request, sink_id):
+        """Update a sink. Operators only, on the sinks they created.
+
+        Any subset of the create fields may be sent, except the terms. A list
+        sent replaces the current one, so an empty `mesh_ids` detaches every
+        mesh. Changes the pipeline cannot be told about are rolled back.
+        """
+        _require_sinks_available()
+        _require_operator(request, "sinks")
+        sink = _get_sink_or_404(request, sink_id)
+        serializer = SinkWriteSerializer(data=request.data, context={"owner": request.user})
+        serializer.is_valid(raise_exception=True)
+        data = serializer.validated_data
+        previous_streams = sink.streams
+        if "label" in data:
+            sink.label = data["label"] or None
+        if "streams" in data:
+            sink.streams = data["streams"]
+        sink.save()
+        if sink.streams != previous_streams and sink.paused_at is None:
+            try:
+                get_publisher().publish_sink(sink.id, sink.streams)
+            except Exception as e:
+                sink.streams = previous_streams
+                sink.save(update_fields=["streams"])
+                raise BadGateway(f"Failed to publish the sink's streams, rolled back: {e}")
+        _set_sink_targets(sink, request.user, data.get("mesh_ids"), data.get("device_ids"))
+        return Response(_sink_read_data(sink))
+
+    @extend_schema(responses={204: NO_CONTENT})
+    def delete(self, request, sink_id):
+        """Delete a sink, revoke its credentials and disconnect its consumers. Operators only.
+
+        A sink with meshes or devices attached cannot be deleted. Nothing is
+        removed if the broker cannot be told. Its terms acceptances are kept.
+        """
+        _require_sinks_available()
+        _require_operator(request, "sinks")
+        sink = _get_sink_or_404(request, sink_id)
+        if sink.mesh_links.exists() or sink.device_links.exists():
+            raise Conflict("Sink has meshes or devices attached; detach them first")
+        try:
+            get_emqx_client().delete_sink(str(sink.id))
+        except Exception as e:
+            raise BadGateway(f"Failed to revoke the sink's credentials, sink NOT deleted: {e}")
+        try:
+            get_publisher().publish_sink(sink.id, None)
+        except Exception as e:
+            # Harmless: with nothing attached the dispatcher sends nothing for it.
+            log.warning("sink_unpublish_failed", sink_id=str(sink.id), error=str(e))
+        sink.delete()
+        return Response(status=status.HTTP_204_NO_CONTENT)
+
+
+class SinkCredentialsView(APIView):
+    permission_classes = [IsVerifiedOwner]
+
+    @extend_schema(request=None, responses=SinkCredentialsSerializer)
+    def post(self, request, sink_id):
+        """Replace a sink's password and disconnect its consumers. Operators only, on the sinks they created.
+
+        The new password is shown in this response only. The old one is kept if
+        the broker cannot be told.
+        """
+        _require_sinks_available()
+        _require_operator(request, "sinks")
+        sink = _get_sink_or_404(request, sink_id)
+        client = get_emqx_client()
+        password = secrets.token_urlsafe(24)
+        try:
+            client.set_sink_password(str(sink.id), password)
+        except Exception as e:
+            raise BadGateway(f"Failed to change the password, credentials NOT changed: {e}")
+        try:
+            client.kick_sink_clients(str(sink.id))
+        except Exception as e:
+            log.warning("sink_kick_failed", sink_id=str(sink.id), error=str(e))
+        return Response(_sink_read_data(sink, password=password))
+
+
+class SinkTermsAcceptanceView(APIView):
+    permission_classes = [IsVerifiedOwner]
+
+    @extend_schema(request=SinkTermsAcceptanceSerializer, responses={201: SinkReadSerializer})
+    def post(self, request, sink_id):
+        """Accept the current sink terms again, renewing the sink. Only the operator who created it.
+
+        With a retention period configured, an acceptance lapses after that
+        period and the sink is paused: nothing is sent and its consumers are
+        refused. Renewing a paused sink resumes it with the same credentials.
+        Answers `404` on an instance that does not enforce terms.
+
+        Args:
+            terms_version: The `version` of the sink terms accepted. Required.
+            terms_locale: Locale the terms were shown in, `en` or `es`. Defaults
+                to `en`.
+        """
+        _require_sinks_available()
+        _require_terms_enforced()
+        _require_operator(request, "sinks")
+        sink = _get_sink_or_404(request, sink_id)
+        if sink.created_by_id != request.user.id:
+            raise PermissionDenied("Only the operator who created this sink can accept its terms")
+        serializer = SinkTermsAcceptanceSerializer(data=request.data)
+        serializer.is_valid(raise_exception=True)
+        try:
+            resume_sink(sink)
+        except Exception as e:
+            raise BadGateway(f"Failed to resume the sink, terms NOT renewed: {e}")
+        record_acceptance(TermsKind.SINK, request.user, serializer.validated_data["terms_locale"], sink=sink)
+        return Response(_sink_read_data(sink), status=status.HTTP_201_CREATED)
 
 
 class DataDeletionListView(APIView):

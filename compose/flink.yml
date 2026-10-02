@@ -6,17 +6,27 @@ x-flink-image: &flink-image
     context: ../meshtastic_things
     dockerfile: flink/Dockerfile
 
+# jobmanager deletes expired checkpoints that taskmanager wrote, and submitters
+# pick the checkpoint to resume from, so all of them must see the same files.
+x-flink-state-volumes: &flink-state-volumes
+  - flink_checkpoints:/opt/flink/checkpoints
+  - flink_savepoints:/opt/flink/savepoints
+
 x-flink-state-properties: &flink-state-properties |
   state.backend: rocksdb
   state.checkpoints.dir: file:///opt/flink/checkpoints
   state.savepoints.dir: file:///opt/flink/savepoints
   execution.checkpointing.interval: 10s
   execution.checkpointing.mode: EXACTLY_ONCE
+  execution.checkpointing.externalized-checkpoint-retention: RETAIN_ON_CANCELLATION
 
   taskmanager.numberOfTaskSlots: 6
 
   jobmanager.memory.process.size: 1024m
-  taskmanager.memory.process.size: 1280m
+  taskmanager.memory.process.size: 1536m
+  # PyFlink's gRPC channel to the Python workers allocates direct memory. With no
+  # task budget, restoring every job at once exceeds the limit and the taskmanager dies.
+  taskmanager.memory.task.off-heap.size: 128m
 
 x-flink-client-properties: &flink-client-properties |
   state.backend: rocksdb
@@ -24,6 +34,7 @@ x-flink-client-properties: &flink-client-properties |
   state.savepoints.dir: file:///opt/flink/savepoints
   execution.checkpointing.interval: 10s
   execution.checkpointing.mode: EXACTLY_ONCE
+  execution.checkpointing.externalized-checkpoint-retention: RETAIN_ON_CANCELLATION
   rest.address: jobmanager
 
 services:
@@ -32,6 +43,7 @@ services:
     profiles: ["full"]
     mem_limit: 1600m
     <<: *flink-image
+    volumes: *flink-state-volumes
     container_name: jobmanager
     command: jobmanager
     restart: unless-stopped
@@ -51,6 +63,7 @@ services:
     profiles: ["full"]
     mem_limit: 3600m
     <<: *flink-image
+    volumes: *flink-state-volumes
     container_name: taskmanager
     command: taskmanager
     restart: unless-stopped
@@ -73,6 +86,7 @@ services:
     container_name: flink-job
     env_file: "../.env"
     <<: *flink-image
+    volumes: *flink-state-volumes
     restart: "no"
     command: ["./submit-job.sh", "decode_job.py", "mesh-decode-decrypt"]
     environment:
@@ -89,14 +103,15 @@ services:
         condition: service_healthy
 
   # full-only
-  calibration-job:
+  postprocessing-job:
     profiles: ["full"]
     mem_limit: 1024m
-    container_name: calibration-job
+    container_name: postprocessing-job
     env_file: "../.env"
     <<: *flink-image
+    volumes: *flink-state-volumes
     restart: "no"
-    command: ["./submit-job.sh", "calibration_job.py", "mesh-calibration"]
+    command: ["./submit-job.sh", "postprocessing_job.py", "mesh-postprocessing"]
     environment:
       JOB_MANAGER_RPC_ADDRESS: jobmanager
       FLINK_PROPERTIES: *flink-client-properties
@@ -116,6 +131,7 @@ services:
     container_name: pattern-detection-job
     env_file: "../.env"
     <<: *flink-image
+    volumes: *flink-state-volumes
     restart: "no"
     command: ["./submit-job.sh", "pattern_detection_job.py", "mesh-pattern-detection"]
     environment:
@@ -128,7 +144,7 @@ services:
         condition: service_completed_successfully
       jobmanager:
         condition: service_healthy
-      calibration-job:
+      postprocessing-job:
         condition: service_completed_successfully
 
   absence-detection-job:
@@ -137,6 +153,7 @@ services:
     container_name: absence-detection-job
     env_file: "../.env"
     <<: *flink-image
+    volumes: *flink-state-volumes
     restart: "no"
     command: ["./submit-job.sh", "absence_detection_job.py", "mesh-absence-detection"]
     environment:
@@ -151,3 +168,33 @@ services:
         condition: service_healthy
       pattern-detection-job:
         condition: service_completed_successfully
+
+  # Resubmits any job that is no longer live, resuming from its checkpoint.
+  # Unlike the one-shot submitters above it restarts with the host, and it only
+  # starts once they have all finished, so the two never submit at once.
+  flink-watchdog:
+    profiles: ["full"]
+    mem_limit: 1024m
+    container_name: flink-watchdog
+    env_file: "../.env"
+    <<: *flink-image
+    volumes: *flink-state-volumes
+    restart: unless-stopped
+    command:
+      - ./watch-jobs.sh
+      - decode_job.py:mesh-decode-decrypt
+      - postprocessing_job.py:mesh-postprocessing
+      - pattern_detection_job.py:mesh-pattern-detection
+      - absence_detection_job.py:mesh-absence-detection
+    environment:
+      JOB_MANAGER_RPC_ADDRESS: jobmanager
+      FLINK_PROPERTIES: *flink-client-properties
+    depends_on:
+      jobmanager:
+        condition: service_healthy
+      absence-detection-job:
+        condition: service_completed_successfully
+
+volumes:
+  flink_checkpoints:
+  flink_savepoints:

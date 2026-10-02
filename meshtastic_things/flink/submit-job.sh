@@ -49,5 +49,34 @@ if [ "$count" -eq 1 ]; then
 	exit 0
 fi
 
+CHECKPOINTS_DIR="/opt/flink/checkpoints/$JOB_NAME"
+SAVEPOINTS_DIR="/opt/flink/savepoints/$JOB_NAME"
+mkdir -p "$CHECKPOINTS_DIR" "$SAVEPOINTS_DIR"
+
+# A checkpoint or savepoint is complete once Flink has written its _metadata.
+latest="$(ls -t "$CHECKPOINTS_DIR"/*/chk-*/_metadata "$SAVEPOINTS_DIR"/savepoint-*/_metadata 2>/dev/null | head -n 1 || true)"
+restore_args=()
+if [ -n "$latest" ]; then
+	restore_from="$(dirname "$latest")"
+	restore_args=(-s "$restore_from")
+	echo "submit-job: resuming '$JOB_NAME' from $restore_from"
+else
+	restore_from=""
+	echo "submit-job: no checkpoint or savepoint for '$JOB_NAME', starting fresh"
+fi
+
+# Retained checkpoints of earlier runs and old savepoints are never pruned by Flink.
+for run_dir in "$CHECKPOINTS_DIR"/*/ "$SAVEPOINTS_DIR"/savepoint-*/; do
+	[ -d "$run_dir" ] || continue
+	case "$restore_from/" in
+		"${run_dir}"*) ;;
+		*) rm -rf "$run_dir" ;;
+	esac
+done
+
 echo "submit-job: submitting '$JOB_NAME' from $JOB_FILE (detached)"
-exec flink run -d -py "$JOB_FILE"
+exec flink run -d \
+	-Dstate.checkpoints.dir="file://$CHECKPOINTS_DIR" \
+	-Dstate.savepoints.dir="file://$SAVEPOINTS_DIR" \
+	"${restore_args[@]}" \
+	-py "$JOB_FILE"

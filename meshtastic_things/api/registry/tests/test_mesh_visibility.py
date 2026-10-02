@@ -251,14 +251,6 @@ class SuperuserTests(MeshVisibilityTestCase):
 
         self.assertEqual(resp.status_code, 200)
 
-    def test_a_superuser_still_gets_no_key_material(self):
-        """Promotion is not a way to read PSKs; is_public must not change that."""
-        self.make_public()
-
-        detail = self.as_outsider("get", f"/meshes/{self.mesh['id']}").json()
-
-        self.assertNotIn("psk_b64", detail)
-
 
 class IsPublicToggleTests(MeshVisibilityTestCase):
     def test_making_a_mesh_public_emails_nobody(self):

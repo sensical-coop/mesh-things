@@ -190,7 +190,7 @@ def test_the_admin_ui_ports_are_not_published_by_default():
 # These are one-shot: they submit detached and exit. Two properties have to
 # hold together, and losing either silently reintroduces a real incident.
 
-FLINK_SUBMITTERS = ["flink-job", "calibration-job", "pattern-detection-job", "absence-detection-job"]
+FLINK_SUBMITTERS = ["flink-job", "postprocessing-job", "pattern-detection-job", "absence-detection-job"]
 
 
 @pytest.mark.parametrize("service", FLINK_SUBMITTERS)
@@ -239,6 +239,22 @@ def test_submitted_job_names_match_what_the_jobs_register():
             f"{service} submits '{job_name}' but {job_file} registers "
             f"'{registered.group(1)}' - the idempotency check would never match"
         )
+
+def test_watchdog_watches_exactly_the_submitted_jobs():
+    """A job missing here is never resubmitted after a jobmanager restart or a reboot."""
+    services = _services(BASE_FILES)
+    watchdog = services["flink-watchdog"]
+    submitted = {
+        f"{services[s]['command'][1]}:{services[s]['command'][2]}" for s in FLINK_SUBMITTERS
+    }
+
+    assert watchdog["command"][0] == "./watch-jobs.sh"
+    assert set(watchdog["command"][1:]) == submitted
+    assert watchdog.get("restart") == "unless-stopped", "the watchdog must come back with the host"
+    last = (watchdog.get("depends_on") or {}).get(FLINK_SUBMITTERS[-1]) or {}
+    assert last.get("condition") == "service_completed_successfully", (
+        "the watchdog must start after the submitters, or both can submit the same job"
+    )
 
 def test_flink_jvm_sizes_are_pinned():
     """Left at the image defaults these are 1600m/1728m, ~800 MB more than this workload needs
@@ -397,7 +413,7 @@ def test_services_sharing_a_dockerfile_share_one_image():
 # runtimes, one per tier, so a typo'd or missing profile tag can silently
 # drop decode from both, or run it twice.
 
-KNOWN_PROFILES = {"full", "lite", "quality", "bridge-pool"}
+KNOWN_PROFILES = {"full", "lite", "quality", "bridge-pool", "minio", "sinks"}
 
 def test_profiles_are_known_values():
     """A typo'd profile name silently drops a service from every real invocation - Compose
@@ -416,6 +432,10 @@ def test_decode_runtimes_are_mutually_exclusive_per_tier():
     assert not (flink_profiles & consumer_profiles), (
         "flink-job and decode_consumer share a profile - double decode"
     )
+
+def test_sinks_are_opt_in_on_lite():
+    """A plain lite install must not gain a service publishing readings for third parties."""
+    assert set(BASE_SERVICES["sink_dispatcher"]["profiles"]) == {"full", "sinks"}
 
 def test_ci_publishes_every_image_compose_builds():
     """A Dockerfile that compose builds but CI never pushes means a registry deployment
@@ -483,13 +503,13 @@ def test_the_dev_overlay_separates_every_bridge_member_from_prod():
         f"$share group and consume prod's messages"
     )
 
-def test_the_dev_overlay_keeps_dev_sources_apart_from_prod():
-    """registry_api names the EMQX bridges and the bridges read what they republish. On a
-    shared EMQX, a dev stack in prod's namespace would reconcile away prod's bridges and
-    read prod's source traffic."""
-    services = [*_bridge_services(), "registry_api"]
+def test_the_dev_overlay_keeps_dev_connectors_apart_from_prod():
+    """registry_api names the EMQX bridges and sinks, the bridges read what sources
+    republish, and sink_dispatcher publishes sink topics. On a shared EMQX, a dev stack in
+    prod's namespace would reconcile away prod's bridges and sinks and read prod's traffic."""
+    services = [*_bridge_services(), "registry_api", "sink_dispatcher"]
     namespaces = {
-        name: ((DEV_SERVICES.get(name) or {}).get("environment") or {}).get("MQTT_SOURCES__NAMESPACE")
+        name: ((DEV_SERVICES.get(name) or {}).get("environment") or {}).get("MQTT_CONNECTORS__NAMESPACE")
         for name in services
     }
 
@@ -599,3 +619,35 @@ def test_every_topic_created_at_startup_is_actually_used():
     assert not unused, (
         f"these topics are created at startup but no code reads the variable: {unused}"
     )
+
+
+def test_the_read_tier_gets_only_the_environment_it_needs():
+    """readings_api must not load the whole .env: that hands the read tier the MinIO root
+    credential, registry's database password and the EMQX keys."""
+    readings = BASE_SERVICES["readings_api"]
+    env = readings.get("environment") or {}
+
+    assert "env_file" not in readings
+    leaked = sorted(k for k in env if k.startswith(("S3_WRITER__", "REGISTRY__", "POSTGRES_", "MQTT_")))
+    assert not leaked, f"readings_api receives {leaked}"
+    assert "READINGS__DB_DSN" in env and "INFLUX__TOKEN" in env
+
+
+def test_the_archive_writer_runs_without_the_bundled_minio():
+    """With the archive on an external S3 the minio profile is off, so the writer may not
+    require it."""
+    minio = BASE_SERVICES["s3_writer"]["depends_on"]["minio"]
+
+    assert minio.get("required") is False
+    assert BASE_SERVICES["minio"]["profiles"] == ["minio"]
+    assert BASE_SERVICES["minio_init"]["profiles"] == ["minio"]
+
+
+def test_the_s3_api_is_proxied_without_basic_auth():
+    """S3 clients sign every request and cannot send a second Authorization header."""
+    caddyfile = CADDYFILE.read_text()
+    block = re.search(r"\{\$CADDY_S3_ADDRESS[^}]*\} \{(.*?)\n\}", caddyfile, re.S)
+
+    assert block, "no Caddy site block for CADDY_S3_ADDRESS"
+    assert "reverse_proxy minio:9000" in block.group(1)
+    assert "admin_ui" not in block.group(1) and "basic_auth" not in block.group(1)

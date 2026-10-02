@@ -60,3 +60,10 @@
 	import admin_ui
 	reverse_proxy minio:9001
 }
+
+# The bundled MinIO's S3 API, reached with archive credentials and download links.
+# No basic auth: S3 signs every request, and the signature covers the Host header,
+# which Caddy passes through unchanged.
+{$CADDY_S3_ADDRESS::8185} {
+	reverse_proxy minio:9000
+}

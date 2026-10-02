@@ -32,6 +32,11 @@ urlpatterns = [
     path("sources/terms", views.SourceTermsView.as_view()),
     path("sources/<uuid:source_id>", views.SourceDetailView.as_view()),
     path("sources/<uuid:source_id>/terms-acceptance", views.SourceTermsAcceptanceView.as_view()),
+    path("sinks", views.SinkListCreateView.as_view()),
+    path("sinks/terms", views.SinkTermsView.as_view()),
+    path("sinks/<uuid:sink_id>", views.SinkDetailView.as_view()),
+    path("sinks/<uuid:sink_id>/credentials", views.SinkCredentialsView.as_view()),
+    path("sinks/<uuid:sink_id>/terms-acceptance", views.SinkTermsAcceptanceView.as_view()),
     path("data-deletions", views.DataDeletionListView.as_view()),
     path("devices", views.DeviceListCreateView.as_view()),
     path("devices/<uuid:device_uuid>", views.DeviceDetailView.as_view()),
@@ -41,6 +46,26 @@ urlpatterns = [
         "devices/<uuid:device_uuid>/measurements/<uuid:measurement_id>",
         views.DeviceMeasurementDetailView.as_view(),
     ),
+    path("devices/<uuid:device_uuid>/postprocessings", views.DevicePostprocessingListView.as_view()),
+    path(
+        "devices/<uuid:device_uuid>/postprocessings/<uuid:postprocessing_id>",
+        views.DevicePostprocessingDetailView.as_view(),
+    ),
+    path(
+        "devices/<uuid:device_uuid>/postprocessings/<uuid:postprocessing_id>/calibrations",
+        views.DevicePostprocessingCalibrationsView.as_view(),
+    ),
+    path(
+        "devices/<uuid:device_uuid>/postprocessings/<uuid:postprocessing_id>/calibrations/<uuid:calibration_id>",
+        views.DevicePostprocessingCalibrationDetailView.as_view(),
+    ),
+    path(
+        "devices/<uuid:device_uuid>/postprocessings/<uuid:postprocessing_id>/backfills",
+        views.DevicePostprocessingBackfillsView.as_view(),
+    ),
+    path("postprocessing-backfills", views.PostprocessingBackfillListView.as_view()),
+    path("postprocessing-backfills/<uuid:backfill_id>", views.PostprocessingBackfillDetailView.as_view()),
+    path("postprocessing-backfills/<uuid:backfill_id>/claim", views.PostprocessingBackfillClaimView.as_view()),
     path("measurements", views.MeasurementTypeListCreateView.as_view()),
     path("measurements/<uuid:measurement_id>", views.MeasurementTypeDetailView.as_view()),
     path("telemetry-variants", views.TelemetryVariantListCreateView.as_view()),
@@ -57,4 +82,12 @@ urlpatterns = [
     path("detectors", views.DetectorListView.as_view()),
     path("postprocessing-blueprints", views.PostprocessingBlueprintListCreateView.as_view()),
     path("postprocessing-blueprints/<uuid:blueprint_id>", views.PostprocessingBlueprintDetailView.as_view()),
+    path(
+        "postprocessing-blueprints/<uuid:blueprint_id>/versions",
+        views.BlueprintVersionListCreateView.as_view(),
+    ),
+    path(
+        "postprocessing-blueprints/<uuid:blueprint_id>/versions/<int:number>",
+        views.BlueprintVersionDetailView.as_view(),
+    ),
 ]

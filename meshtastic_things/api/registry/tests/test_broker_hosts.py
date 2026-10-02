@@ -3,6 +3,8 @@ from unittest.mock import patch
 from django.test import SimpleTestCase, override_settings
 
 from registry import broker_hosts
+from registry.models import TermsKind
+from registry.terms import VERSIONS
 
 from .helpers import RegistryTestCase
 
@@ -79,7 +81,7 @@ class SourceServerTests(RegistryTestCase):
 
     def post(self, server):
         return self.client.post(
-            "/sources", {"server": server, "topic": "msh/EU/#", "terms_version": "sources-2026-09"}, format="json",
+            "/sources", {"server": server, "topic": "msh/EU/#", "terms_version": VERSIONS[TermsKind.SOURCE]}, format="json",
             **self.auth_headers(self.operator),
         )
 
@@ -102,3 +104,23 @@ class SourceServerTests(RegistryTestCase):
     @override_settings(SOURCES_ALLOW_PRIVATE_BROKERS=True)
     def test_a_lan_broker_is_accepted_when_allowed(self):
         self.assertEqual(self.post("192.168.1.20:1883").status_code, 201)
+
+
+class OwnBrokerTests(SimpleTestCase):
+    ADDRESSES = {"mqtt.example.org": ["203.0.113.7"], "alias.example.org": ["203.0.113.7"], "other.example.org": ["198.51.100.1"]}
+
+    def setUp(self):
+        patcher = patch.object(broker_hosts, "resolve", side_effect=lambda host: self.ADDRESSES.get(host, []))
+        patcher.start()
+        self.addCleanup(patcher.stop)
+
+    def test_the_same_name_however_it_is_spelled(self):
+        self.assertTrue(broker_hosts.is_own_broker("MQTT.example.org.", ["mqtt.example.org"]))
+
+    def test_an_address_or_another_name_for_the_same_broker(self):
+        self.assertTrue(broker_hosts.is_own_broker("203.0.113.7", ["mqtt.example.org"]))
+        self.assertTrue(broker_hosts.is_own_broker("alias.example.org", ["mqtt.example.org"]))
+
+    def test_another_broker_or_an_unresolvable_one(self):
+        self.assertFalse(broker_hosts.is_own_broker("other.example.org", ["mqtt.example.org"]))
+        self.assertFalse(broker_hosts.is_own_broker("unknown.example.org", ["mqtt.example.org", "", "nowhere.example.org"]))

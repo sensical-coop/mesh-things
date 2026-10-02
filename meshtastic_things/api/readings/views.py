@@ -245,9 +245,13 @@ class QualityView(ReadingsAPIView):
     """Return data-quality figures for a device over a time range.
 
     Covers the number of readings recorded, alarms raised per detector, the
-    share of readings within their configured range, and how complete each
-    channel was. Figures stay empty until the quality checks have run for the
-    device.
+    share of the hours the device reported in that stayed within its
+    configured ranges, and how complete each channel was. Figures stay empty
+    until the quality checks have run for the device.
+
+    Alarms are kept one by one for 30 days. A range reaching further back is
+    answered from daily counts, so it is rounded to whole days and does not
+    include the current day.
 
     Args:
         start: Start of the range, as a relative duration such as `-24h`, a date

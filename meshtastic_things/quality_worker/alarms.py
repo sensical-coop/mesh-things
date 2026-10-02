@@ -39,13 +39,15 @@ def build_alarm(
 
 
 class QualityPublisher:
-    """Two topics are published from here:
+    """Three topics are published from here:
     - alarms
-    - the sensor-discovery events that register a device's computed channels."""
+    - the sensor-discovery events that register a device's quality channels
+    - derived telemetry recomputed by backfills."""
 
-    def __init__(self, bootstrap_servers: str, alarms_topic: str, discovery_topic: str):
+    def __init__(self, bootstrap_servers: str, alarms_topic: str, discovery_topic: str, derived_topic: str):
         self._alarms_topic = alarms_topic
         self._discovery_topic = discovery_topic
+        self._derived_topic = derived_topic
         self._producer = KafkaProducer(
             bootstrap_servers=bootstrap_servers,
             value_serializer=lambda v: json.dumps(v).encode("utf-8"),
@@ -56,6 +58,12 @@ class QualityPublisher:
         key = f"{alarm['mesh_id']}:{alarm['device_id']}:{alarm['channel']}:{alarm['detector']}"
         self._producer.send(self._alarms_topic, key=key, value=alarm).get(timeout=10)
         log.info("published_alarm", key=key, detector=alarm["detector"])
+
+    def publish_derived(self, events: list[dict]) -> None:
+        """Hand backfilled derived events to the same topic the stream job writes."""
+        for event in events:
+            self._producer.send(self._derived_topic, key=f"{event['mesh_id']}:{event['node_id']}", value=event)
+        self._producer.flush(timeout=30)
 
     def publish_discovery(
         self,
@@ -94,5 +102,6 @@ def get_alarm_publisher() -> QualityPublisher:
             bootstrap_servers=os.environ["KAFKA_BOOTSTRAP"],
             alarms_topic=os.environ.get("PATTERN_DETECTION__ALARMS_TOPIC", "mesh.telemetry.alarms.v1"),
             discovery_topic=os.environ.get("REGISTRY__SENSOR_DISCOVERY_KAFKA_TOPIC", "mesh.sensor_discovery.v1"),
+            derived_topic=os.environ.get("POSTPROCESSING__DERIVED_KAFKA_TOPIC", "mesh.telemetry.derived.v1"),
         )
     return _publisher

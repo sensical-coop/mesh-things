@@ -68,3 +68,25 @@ def refusal(host: str) -> str | None:
         if reason is not None:
             return f"{name} resolves to {resolved}. {reason}"
     return None
+
+
+def _normalised(host: str) -> str:
+    return host.strip("[]").rstrip(".").lower()
+
+
+def _addresses(name: str) -> set[str]:
+    address = parse_ip(name)
+    return {str(address)} if address is not None else set(resolve(name))
+
+
+def is_own_broker(host: str, own_hosts) -> bool:
+    """Whether `host` names one of `own_hosts`, by name or by any address they share.
+
+    Comparing addresses also catches a raw IP, or another DNS name for the same broker.
+    """
+    name = _normalised(host)
+    own = {_normalised(h) for h in own_hosts if h}
+    if name in own:
+        return True
+    addresses = _addresses(name)
+    return bool(addresses) and any(addresses & _addresses(h) for h in own)

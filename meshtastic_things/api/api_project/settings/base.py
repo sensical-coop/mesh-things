@@ -20,6 +20,8 @@ if APP_ROLE not in (REGISTRY_ROLE, READINGS_ROLE):
 IS_READINGS = APP_ROLE == READINGS_ROLE
 
 ENV_PREFIX = APP_ROLE.upper()
+# Compose service name other containers use to reach this API directly.
+INTERNAL_HOST = f"{APP_ROLE}-api"
 
 SECRET_KEY = env_str(f"{ENV_PREFIX}__SECRET_KEY")
 if not SECRET_KEY:
@@ -40,7 +42,7 @@ INSTALLED_APPS = [
     "drf_spectacular",
 ]
 MIDDLEWARE = [
-    "django.middleware.security.SecurityMiddleware",
+    "api_project.middleware.InternalHostSecurityMiddleware",
     "django.contrib.sessions.middleware.SessionMiddleware",
     "django.middleware.common.CommonMiddleware",
     "django.contrib.auth.middleware.AuthenticationMiddleware",
@@ -53,7 +55,7 @@ if not IS_READINGS:
         "django.contrib.staticfiles",
     ]
     MIDDLEWARE = [
-        "django.middleware.security.SecurityMiddleware",
+        "api_project.middleware.InternalHostSecurityMiddleware",
         "whitenoise.middleware.WhiteNoiseMiddleware",
         "django.contrib.sessions.middleware.SessionMiddleware",
         "django.middleware.common.CommonMiddleware",
@@ -148,6 +150,7 @@ REST_FRAMEWORK = {
         "resend-verification": "3/hour",
         "request-password-reset": "5/hour",
         "operator-request": "3/day",
+        "archive-credentials": "20/hour",
     },
     "DEFAULT_SCHEMA_CLASS": "drf_spectacular.openapi.AutoSchema",
 }
@@ -162,6 +165,8 @@ SPECTACULAR_SETTINGS = {
         "DetectorEnum": "common.detectors.DETECTOR_CHOICES",
         "OperatorRequestStatusEnum": "registry.models.OperatorRequestStatus",
         "DataDeletionStatusEnum": "registry.models.DataDeletionStatus",
+        "BackfillStatusEnum": "registry.models.BackfillStatus",
+        "BackfillResultStatusEnum": [("done", "done"), ("failed", "failed")],
     },
 }
 
@@ -176,10 +181,10 @@ if CORS_ALLOWED_ORIGINS:
     # with credentials: 'include', which now applies to readings too since it
     # recognizes registry's session cookie (SessionAuthentication above).
     CORS_ALLOW_CREDENTIALS = True
-    if not IS_READINGS:
-        # readings has no CsrfViewMiddleware (its endpoints are read-only, so
-        # CSRF enforcement never triggers). This only matters for registry.
-        CSRF_TRUSTED_ORIGINS = CORS_ALLOWED_ORIGINS
+    # readings has no CsrfViewMiddleware, but SessionAuthentication still checks
+    # CSRF on its one write, POST /readings/archive/meshes/{id}/credentials, and
+    # that check rejects cross-origin requests from origins not listed here.
+    CSRF_TRUSTED_ORIGINS = CORS_ALLOWED_ORIGINS
 
 # Only registry sets cookies (login, CSRF)
 # Needed whenever the frontend and API live on different subdomains of the
@@ -200,6 +205,12 @@ SOURCES_BLOCKED_TOPICS = env_list("REGISTRY__SOURCES_BLOCKED_TOPICS", ["#"])
 # are too unless this is set, e.g. for a self-hosted instance bridging a broker on its LAN.
 SOURCES_ALLOW_PRIVATE_BROKERS = env_bool("REGISTRY__SOURCES_ALLOW_PRIVATE_BROKERS", False)
 
+# EMQX keeps an offline consumer's session, and queues its messages, by broker-wide limits
+# that are far too generous for a sink. Each lifecycle pass discards a sink session offline
+# longer than this, or holding more queued messages than this. 0 turns either check off.
+SINKS_MAX_OFFLINE_HOURS = env_int("REGISTRY__SINKS_MAX_OFFLINE_HOURS", 24)
+SINKS_MAX_QUEUED = env_int("REGISTRY__SINKS_MAX_QUEUED", 10000)
+
 # Off for an instance run by its own mesh owner, where there is no second party to
 # accept terms from. Turns off terms routes, recording, renewals, lapses and retention.
 TERMS_ENFORCED = env_bool("REGISTRY__TERMS_ENFORCED", True)
@@ -212,6 +223,32 @@ DATA_RETENTION_DAYS = int(_retention_days) if _retention_days else None
 DATA_DELETION_GRACE_DAYS = env_int("REGISTRY__DATA_DELETION_GRACE_DAYS", 30)
 TERMS_RENEWAL_NOTICE_DAYS = env_int("REGISTRY__TERMS_RENEWAL_NOTICE_DAYS", 30)
 DATA_LIFECYCLE_INTERVAL_SECONDS = env_int("REGISTRY__DATA_LIFECYCLE_INTERVAL_SECONDS", 3600)
+# Superusers are emailed, at most once a day, when the disk holding Docker's data is fuller
+# than this. 0 turns the check off. A full disk is what stops Postgres writing.
+DISK_ALERT_PERCENT = env_int("REGISTRY__DISK_ALERT_PERCENT", 80)
+DISK_ALERT_PATH = env_str("REGISTRY__DISK_ALERT_PATH", "/")
+
+# The Parquet archive as readings serves it, on the bundled MinIO or an external S3.
+# A blank bucket (lite) turns the archive routes off.
+ARCHIVE_BUCKET = env_str("READINGS__ARCHIVE_BUCKET")
+ARCHIVE_PREFIX = env_str("READINGS__ARCHIVE_PREFIX", "telemetry").strip("/")
+# Blank for AWS, where boto3 picks the regional endpoint.
+ARCHIVE_ENDPOINT_URL = env_str("READINGS__ARCHIVE_ENDPOINT_URL")
+# What callers reach, and what presigned links are signed for.
+ARCHIVE_PUBLIC_ENDPOINT_URL = env_str("READINGS__ARCHIVE_PUBLIC_ENDPOINT_URL") or ARCHIVE_ENDPOINT_URL
+ARCHIVE_REGION = env_str("READINGS__ARCHIVE_REGION")
+ARCHIVE_ACCESS_KEY = env_str("READINGS__ARCHIVE_ACCESS_KEY")
+ARCHIVE_SECRET_KEY = env_str("READINGS__ARCHIVE_SECRET_KEY")
+# `minio`, `aws`, or blank for a provider without STS, which turns the credentials route off.
+ARCHIVE_STS = env_str("READINGS__ARCHIVE_STS")
+ARCHIVE_ROLE_ARN = env_str("READINGS__ARCHIVE_ROLE_ARN")
+ARCHIVE_CREDENTIAL_TTL_S = env_int("READINGS__ARCHIVE_CREDENTIAL_TTL_S", 3600)
+if ARCHIVE_STS not in ("", "minio", "aws"):
+    raise ImproperlyConfigured(f"READINGS__ARCHIVE_STS is {ARCHIVE_STS!r}; expected minio, aws or blank")
+if ARCHIVE_STS == "aws" and not ARCHIVE_ROLE_ARN:
+    raise ImproperlyConfigured("READINGS__ARCHIVE_STS=aws needs READINGS__ARCHIVE_ROLE_ARN")
+if not 900 <= ARCHIVE_CREDENTIAL_TTL_S <= 43200:
+    raise ImproperlyConfigured("READINGS__ARCHIVE_CREDENTIAL_TTL_S must be between 900 and 43200 seconds")
 
 LOGGING = {
     "version": 1,
