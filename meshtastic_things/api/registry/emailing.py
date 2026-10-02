@@ -154,3 +154,21 @@ def send_mesh_terms_lapsed_email(mesh) -> None:
             "mesh_link": console_url("meshes", mesh.id),
         },
     )
+
+
+def send_disk_space_email(percent: float, free_bytes: int) -> None:
+    """Warn every active superuser with an email address that the disk is nearly full."""
+    recipients = Owner.objects.filter(is_superuser=True, is_active=True).exclude(email="")
+    for superuser in recipients:
+        send_templated_email(
+            to_email=superuser.email,
+            subject=f"Disk {percent:.0f}% full - Mesh Things",
+            template_name="disk_space",
+            context={
+                "name": superuser.name,
+                "percent": round(percent),
+                "free_gb": round(free_bytes / 1e9, 1),
+                "threshold": settings.DISK_ALERT_PERCENT,
+                "instance": getattr(settings, "PUBLIC_FRONTEND_URL", "") or "this instance",
+            },
+        )

@@ -1,0 +1,16 @@
+Hi {{ name }},
+
+The disk of {{ instance }} is {{ percent }}% full, over the {{ threshold }}% limit,
+with {{ free_gb }} GB left.
+
+When it fills up, Postgres cannot write and stops, and so does everything that
+depends on it. To see what is using the space, run on the server:
+
+  ./scripts/disk-usage.sh
+
+Old images and build cache are usually the quickest to free:
+
+  docker image prune -f
+  docker builder prune -f
+
+You will be reminded daily while it stays over the limit.

@@ -17,6 +17,7 @@ from django.db import transaction
 from django.utils import timezone
 
 from .data_store import get_data_store
+from .disk_alert import check_disk
 from .emailing import (
     send_mesh_terms_lapsed_email,
     send_mesh_terms_renewal_email,
@@ -284,4 +285,5 @@ def run_pass(now: datetime | None = None) -> dict:
         "paused_meshes": pause_lapsed_meshes(now),
         "resumed": resume_paused(),
         "deletions_done": purge_due_deletions(now),
+        "disk_alerts": int(check_disk()),
     }
