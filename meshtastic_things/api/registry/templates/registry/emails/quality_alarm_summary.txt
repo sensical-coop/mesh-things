@@ -12,4 +12,4 @@ triggered {{ total }} more time(s).
   {{ alarm.count }} time(s), first {{ alarm.first_triggered_at }}, last {{ alarm.last_triggered_at }}
   Latest: {{ alarm.last_message }}
 {% endfor %}
-The next alarm on this device will be emailed straight away.
+The next new problem on this device will be emailed straight away.
