@@ -1,4 +1,4 @@
-from rest_framework.permissions import BasePermission
+from rest_framework.permissions import SAFE_METHODS, BasePermission
 
 
 class IsVerifiedOwner(BasePermission):
@@ -19,3 +19,10 @@ class IsOperator(BasePermission):
 
     def has_permission(self, request, view):
         return bool(request.user and request.user.is_authenticated and request.user.is_operator)
+
+
+class ReadOnlyOrVerifiedOwner(BasePermission):
+    """Reads are open to anyone; writes need a verified owner."""
+
+    def has_permission(self, request, view):
+        return request.method in SAFE_METHODS or IsVerifiedOwner().has_permission(request, view)

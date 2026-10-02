@@ -133,6 +133,22 @@ class Owner(AbstractBaseUser, PermissionsMixin):
         }
 
 
+def visible_meshes_for(user):
+    """Meshes the caller may read; only public ones for an anonymous caller."""
+    if user.is_authenticated:
+        return user.visible_meshes
+    return Mesh.objects.filter(is_public=True)
+
+
+def can_view_mesh(user, mesh) -> bool:
+    """Whether the caller may read the mesh; anonymous callers read public meshes only."""
+    return mesh.is_public or (user.is_authenticated and user.can_view_mesh(mesh))
+
+
+def can_edit_mesh(user, mesh) -> bool:
+    return user.is_authenticated and user.can_edit_mesh(mesh)
+
+
 class OperatorRequestStatus(models.TextChoices):
     PENDING = "pending", "Pending"
     APPROVED = "approved", "Approved"
@@ -305,7 +321,7 @@ class Mesh(models.Model):
     psk_b64 = models.TextField()
     label = models.CharField(max_length=255, null=True, blank=True)
     owner = models.ForeignKey(Owner, on_delete=models.CASCADE, related_name="meshes")
-    # Readable by any verified owner. Never widens writes.
+    # Readable by anyone, including anonymous callers. Never widens writes.
     is_public = models.BooleanField(default=False)
     # Null means the traffic arrives on this instance's own broker topic.
     source = models.ForeignKey(Source, on_delete=models.PROTECT, null=True, blank=True, related_name="meshes")

@@ -13,6 +13,7 @@ from registry.models import (
     DeviceTelemetryVariant,
     Measurement,
     Mesh,
+    Source,
     TelemetryVariant,
 )
 
@@ -167,6 +168,66 @@ class ViewerSecretsTests(MeshVisibilityTestCase):
 
         self.assertEqual(mesh["psk_b64"], "AAAA")
         self.assertEqual(device["admin_keys_b64"], ["AAAA"])
+
+
+class AnonymousViewerTests(MeshVisibilityTestCase):
+    """A public mesh is readable without credentials, through the public fields only."""
+
+    PUBLIC_FIELDS = {"id", "channel_id", "label", "owner_id", "is_public", "created_at", "updated_at"}
+
+    def setUp(self):
+        super().setUp()
+        self.make_public()
+
+    def test_a_public_mesh_is_readable_without_credentials(self):
+        detail = self.client.get(f"/meshes/{self.mesh['id']}")
+        listed = self.client.get("/meshes")
+
+        self.assertEqual(detail.status_code, 200)
+        self.assertEqual(set(detail.json()), self.PUBLIC_FIELDS)
+        self.assertEqual([m["id"] for m in listed.json()], [self.mesh["id"]])
+        self.assertEqual(set(listed.json()[0]), self.PUBLIC_FIELDS)
+
+    def test_a_signed_in_viewer_gets_the_public_fields_too(self):
+        detail = self.as_outsider("get", f"/meshes/{self.mesh['id']}").json()
+
+        self.assertEqual(set(detail), self.PUBLIC_FIELDS)
+
+    def test_its_devices_are_readable_without_admin_keys(self):
+        self.create_node(self.owner, self.mesh, device_id=2, label="keyed", admin_keys_b64=["AAAA"])
+
+        on_mesh = self.client.get(f"/meshes/{self.mesh['id']}/devices")
+
+        self.assertEqual(on_mesh.status_code, 200)
+        self.assertEqual(len(on_mesh.json()), 2)
+        self.assertTrue(all("admin_keys_b64" not in d for d in on_mesh.json()))
+
+    def test_rejected_devices_stay_hidden(self):
+        Device.objects.filter(pk=self.node["uuid"]).update(is_allowed=False)
+
+        self.assertEqual(self.client.get(f"/meshes/{self.mesh['id']}/devices").json(), [])
+
+    def test_a_private_mesh_is_a_404(self):
+        Mesh.objects.filter(pk=self.mesh["id"]).update(is_public=False)
+
+        self.assertEqual(self.client.get(f"/meshes/{self.mesh['id']}").status_code, 404)
+        self.assertEqual(self.client.get(f"/meshes/{self.mesh['id']}/devices").status_code, 404)
+        self.assertEqual(self.client.get("/meshes").json(), [])
+
+    def test_the_owned_filter_is_empty(self):
+        self.assertEqual(self.client.get("/meshes?owned=true").json(), [])
+
+    def test_the_source_filter_does_not_reveal_a_viewers_source(self):
+        source = Source.objects.create(label="remote", server="mqtt.example.org", topic="msh/#")
+        Mesh.objects.filter(pk=self.mesh["id"]).update(source=source)
+
+        self.assertEqual(self.client.get(f"/meshes?source_id={source.id}").json(), [])
+        self.assertEqual(self.as_outsider("get", f"/meshes?source_id={source.id}").json(), [])
+
+    def test_writes_still_need_credentials(self):
+        self.assertEqual(self.client.put(f"/meshes/{self.mesh['id']}", {"label": "x"}, format="json").status_code, 401)
+        self.assertEqual(self.client.delete(f"/meshes/{self.mesh['id']}").status_code, 401)
+        self.assertEqual(self.client.post("/meshes", {"channel_id": "x", "psk_b64": ""}, format="json").status_code, 401)
 
 
 class ViewerCannotWriteTests(MeshVisibilityTestCase):

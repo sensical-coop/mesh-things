@@ -343,12 +343,16 @@ class _MeshTermsMixin(serializers.Serializer):
         self.accept_terms_locale = locale
         return attrs
 
-    def _hide_mesh_terms(self, data, instance):
-        # Like source_id: for the owner, and read-only for superusers.
-        if self.context.get("viewer_id") != instance.owner_id and not self.context.get("viewer_is_superuser"):
-            for field in ("terms_accepted_version", "terms_expires_at", "paused_at"):
-                data.pop(field, None)
-        return data
+
+class MeshPublicSerializer(serializers.ModelSerializer):
+    """A mesh as shown to anyone but its owner and superusers, without key material or account state."""
+
+    owner_id = serializers.UUIDField(read_only=True)
+
+    class Meta:
+        model = Mesh
+        fields = ["id", "channel_id", "label", "owner_id", "is_public", "created_at", "updated_at"]
+        read_only_fields = fields
 
 
 class MeshSerializer(_MeshTermsMixin, serializers.ModelSerializer):
@@ -388,13 +392,11 @@ class MeshSerializer(_MeshTermsMixin, serializers.ModelSerializer):
         return self._take_mesh_terms(super().validate(attrs), needed=attrs.get("source") is None)
 
     def to_representation(self, instance):
-        data = super().to_representation(instance)
         viewer_id = self.context.get("viewer_id")
         # The key is stored in plain text, so hiding it from superusers would protect nothing.
         if (viewer_id is None or viewer_id != instance.owner_id) and not self.context.get("viewer_is_superuser"):
-            for field in ("psk_b64", "source_id"):
-                data.pop(field, None)
-        return self._hide_mesh_terms(data, instance)
+            return MeshPublicSerializer(instance).data
+        return super().to_representation(instance)
 
 
 class MeshUpdateSerializer(_MeshTermsMixin, serializers.ModelSerializer):
