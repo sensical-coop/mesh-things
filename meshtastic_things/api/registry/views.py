@@ -1,4 +1,5 @@
 import secrets
+import uuid
 from datetime import timedelta
 
 import structlog
@@ -50,6 +51,7 @@ from .models import (
     DataDeletionStatus,
     Device,
     DeviceSink,
+    DeviceTelemetryVariant,
     DevicePostprocessing,
     Measurement,
     MeasurementType,
@@ -156,6 +158,13 @@ MESH_FILTER_PARAMS = [
     ),
 ]
 
+TELEMETRY_VARIANT_FILTER_PARAM = _query(
+    "telemetry_variant",
+    "Restrict by the telemetry variants a device has reported. "
+    "`has_any_of` matches devices that reported at least one of them, `has_all_of` those that reported "
+    "every one, and `has_none_of` those that reported none. Bare ids mean `has_any_of`.",
+)
+
 DEVICE_FILTER_PARAMS = [
     _query("mesh_id", "Restrict to devices on one mesh.", OpenApiTypes.UUID),
     _flag("is_gateway", "Restrict to gateways, or to plain nodes when false."),
@@ -164,6 +173,7 @@ DEVICE_FILTER_PARAMS = [
         "has_postprocessing",
         "Restrict to devices with a postprocessing attached, or to those without one when false.",
     ),
+    TELEMETRY_VARIANT_FILTER_PARAM,
 ]
 
 MEASUREMENT_FILTER_PARAMS = [
@@ -830,7 +840,7 @@ class OwnerChangePasswordView(APIView):
 def _devices_for_owner(owner: Owner) -> list[dict]:
     """Return the devices the given owner may access, or all of them for a superuser."""
     return DeviceReadSerializer(
-        owner.visible_devices.select_related("mesh").order_by("mesh_id", "device_id"),
+        owner.visible_devices.select_related("mesh").prefetch_related("telemetry_variants").order_by("mesh_id", "device_id"),
         many=True,
         context={"viewer_id": owner.id, "viewer_is_superuser": owner.is_superuser},
     ).data
@@ -1076,21 +1086,52 @@ class MeshDetailView(APIView):
         return Response(status=status.HTTP_204_NO_CONTENT)
 
 
+def _filter_by_telemetry_variants(devices, raw: str | None):
+    """Apply the `telemetry_variant` query parameter, raising a 400 when it is malformed."""
+    if not raw:
+        return devices
+    operator, _, values = raw.rpartition(":")
+    operator = operator or "has_any_of"
+    if operator not in ("has_any_of", "has_all_of", "has_none_of"):
+        raise ValidationError({"telemetry_variant": "Operator must be has_any_of, has_all_of or has_none_of."})
+    try:
+        variant_ids = {uuid.UUID(value) for value in values.split("|")}
+    except ValueError:
+        raise ValidationError({"telemetry_variant": "Each value must be a telemetry variant id."})
+
+    def reporting(ids):
+        return DeviceTelemetryVariant.objects.filter(telemetry_variant_id__in=ids).values("device_id")
+
+    if operator == "has_any_of":
+        return devices.filter(id__in=reporting(variant_ids))
+    if operator == "has_none_of":
+        return devices.exclude(id__in=reporting(variant_ids))
+    for variant_id in variant_ids:
+        devices = devices.filter(id__in=reporting([variant_id]))
+    return devices
+
+
 class MeshDevicesView(APIView):
     permission_classes = [AllowAny]
 
-    @extend_schema(responses=DeviceReadSerializer(many=True))
+    @extend_schema(parameters=[TELEMETRY_VARIANT_FILTER_PARAM], responses=DeviceReadSerializer(many=True))
     def get(self, request, mesh_id):
         """List every device registered on this mesh, gateways and nodes alike.
 
         A public mesh's devices are readable without credentials. Rejected
         registrations and admin keys are shown only to the mesh's owner.
+
+        Args:
+            telemetry_variant: Restrict by reported telemetry variants, as
+                `has_any_of`, `has_all_of` or `has_none_of` followed by `:` and
+                variant ids separated by `|`. Bare ids mean `has_any_of`.
         """
         mesh = _get_mesh_or_404(mesh_id)
         _require_mesh_visible(mesh, request.user)
-        devices = mesh.devices.select_related("mesh").all()
+        devices = mesh.devices.select_related("mesh").prefetch_related("telemetry_variants")
         if not can_edit_mesh(request.user, mesh):
             devices = devices.filter(is_allowed=True)
+        devices = _filter_by_telemetry_variants(devices, request.query_params.get("telemetry_variant"))
         return Response(
             DeviceReadSerializer(devices, many=True, context=_viewer_context(request)).data
         )
@@ -1113,8 +1154,11 @@ class DeviceListCreateView(APIView):
                 when false.
             has_postprocessing: Restrict to devices with a postprocessing
                 attached, or to those without one when false.
+            telemetry_variant: Restrict by reported telemetry variants, as
+                `has_any_of`, `has_all_of` or `has_none_of` followed by `:` and
+                variant ids separated by `|`. Bare ids mean `has_any_of`.
         """
-        qs = Device.objects.select_related("mesh")
+        qs = Device.objects.select_related("mesh").prefetch_related("telemetry_variants")
         qs = qs.all() if request.user.is_superuser else qs.filter(mesh__in=request.user.visible_meshes)
         qs = _hide_rejected_from_viewers(qs, request.user)
         mesh_id = request.query_params.get("mesh_id")
@@ -1128,6 +1172,7 @@ class DeviceListCreateView(APIView):
         if has_postprocessing is not None:
             with_any = DevicePostprocessing.objects.values("device_id")
             qs = qs.filter(id__in=with_any) if has_postprocessing.lower() in ("true", "1") else qs.exclude(id__in=with_any)
+        qs = _filter_by_telemetry_variants(qs, request.query_params.get("telemetry_variant"))
         return Response(DeviceReadSerializer(qs, many=True, context=_viewer_context(request)).data)
 
     @extend_schema(request=DeviceCreateSerializer, responses={201: DeviceReadSerializer})
