@@ -1,7 +1,10 @@
 import uuid
 
+from django.db import connection
+from django.test.utils import CaptureQueriesContext
+
 from registry.management.commands.consume_device_sightings import Command as SightingsCommand
-from registry.models import Device
+from registry.models import Device, DeviceTelemetryVariant, TelemetryVariant
 from registry.serializers import DeviceReadSerializer
 
 from .helpers import RegistryTestCase
@@ -987,3 +990,67 @@ class OwnerDeviceIdsTests(RegistryTestCase):
         self.assertEqual(resp.status_code, 200)
         pairs = {(d["mesh_id"], d["node_id"]) for d in resp.json()["devices"]}
         self.assertEqual(pairs, {(mesh_a["id"], 111), (mesh_b["id"], 111)})
+
+
+class DeviceTelemetryVariantIdsTests(RegistryTestCase):
+    def setUp(self):
+        super().setUp()
+        self.owner = self.create_owner()
+        self.mesh = self.create_mesh(self.owner)
+        self.env = TelemetryVariant.objects.create(payload_kind="telemetry:environment_metrics")
+        self.air = TelemetryVariant.objects.create(payload_kind="telemetry:air_quality_metrics")
+        self.both = self.create_node(self.owner, self.mesh, device_id=1)
+        self.env_only = self.create_node(self.owner, self.mesh, device_id=2)
+        self.neither = self.create_node(self.owner, self.mesh, device_id=3)
+        for device, variant in ((self.both, self.env), (self.both, self.air), (self.env_only, self.env)):
+            DeviceTelemetryVariant.objects.create(device_id=device["uuid"], telemetry_variant=variant)
+
+    def _node_ids(self, path, **params):
+        resp = self.client.get(path, params, **self.auth_headers(self.owner))
+        self.assertEqual(resp.status_code, 200, resp.content)
+        return {d["node_id"] for d in resp.json()}
+
+    def test_list_records_carry_reported_variant_ids_in_first_seen_order(self):
+        for path in ("/devices", f"/meshes/{self.mesh['id']}/devices"):
+            by_node = {d["node_id"]: d for d in self.client.get(path, **self.auth_headers(self.owner)).json()}
+            self.assertEqual(by_node[1]["telemetry_variant_ids"], [str(self.env.id), str(self.air.id)])
+            self.assertEqual(by_node[2]["telemetry_variant_ids"], [str(self.env.id)])
+            self.assertEqual(by_node[3]["telemetry_variant_ids"], [])
+
+    def test_detail_record_carries_reported_variant_ids(self):
+        resp = self.client.get(f"/devices/{self.env_only['uuid']}", **self.auth_headers(self.owner))
+        self.assertEqual(resp.json()["telemetry_variant_ids"], [str(self.env.id)])
+
+    def test_list_fetches_variant_links_in_one_query_regardless_of_device_count(self):
+        def queries():
+            with CaptureQueriesContext(connection) as captured:
+                self.client.get("/devices", **self.auth_headers(self.owner))
+            return len(captured)
+
+        before = queries()
+        for device_id in (4, 5, 6):
+            node = self.create_node(self.owner, self.mesh, device_id=device_id)
+            DeviceTelemetryVariant.objects.create(device_id=node["uuid"], telemetry_variant=self.env)
+        self.assertEqual(queries(), before)
+
+    def test_filter_operators_on_both_list_endpoints(self):
+        env, air, unknown = str(self.env.id), str(self.air.id), str(uuid.uuid4())
+        cases = [
+            (env, {1, 2}),
+            (f"has_any_of:{air}|{unknown}", {1}),
+            (f"has_all_of:{env}|{air}", {1}),
+            (f"has_all_of:{env}|{unknown}", set()),
+            (f"has_none_of:{env}", {3}),
+            (f"has_none_of:{air}|{unknown}", {2, 3}),
+        ]
+        for path in ("/devices", f"/meshes/{self.mesh['id']}/devices"):
+            for value, expected in cases:
+                with self.subTest(path=path, value=value):
+                    self.assertEqual(self._node_ids(path, telemetry_variant=value), expected)
+
+    def test_malformed_filter_is_rejected(self):
+        for value in (f"has_some_of:{self.env.id}", "has_any_of:not-a-uuid", "has_any_of:"):
+            with self.subTest(value=value):
+                resp = self.client.get("/devices", {"telemetry_variant": value}, **self.auth_headers(self.owner))
+                self.assertEqual(resp.status_code, 400)
+                self.assertIn("telemetry_variant", resp.json())

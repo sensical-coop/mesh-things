@@ -840,6 +840,9 @@ class DeviceReadSerializer(serializers.ModelSerializer):
     node_id = serializers.IntegerField(source="device_id", read_only=True)
     mesh_id = serializers.UUIDField(read_only=True)
     admin_keys_b64 = serializers.ListField(child=serializers.CharField(), read_only=True)
+    telemetry_variant_ids = serializers.SerializerMethodField(
+        help_text="Telemetry variants this device has been seen reporting."
+    )
 
     class Meta:
         model = Device
@@ -866,10 +869,17 @@ class DeviceReadSerializer(serializers.ModelSerializer):
             "archive_enabled_at",
             "archive_enabled_by",
             "last_seen",
+            "telemetry_variant_ids",
             "created_at",
             "updated_at",
         ]
         read_only_fields = fields
+
+    @extend_schema_field(serializers.ListField(child=serializers.UUIDField()))
+    def get_telemetry_variant_ids(self, instance) -> list[str]:
+        # Sorted in Python so a list view's prefetch of the links is reused.
+        links = sorted(instance.telemetry_variants.all(), key=lambda link: link.first_seen)
+        return [str(link.telemetry_variant_id) for link in links]
 
     def to_representation(self, instance):
         data = super().to_representation(instance)
