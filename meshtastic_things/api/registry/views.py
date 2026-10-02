@@ -1201,8 +1201,10 @@ class DeviceDetailView(APIView):
         `archive_enabled` stores the device's readings in the Parquet archive from
         then on. It is accepted only on a mesh owned by an operator and on
         instances that run the archive. Turning it off stops storing new readings
-        and keeps those already stored. The setting is rolled back if the
-        pipeline cannot be told about it.
+        and keeps those already stored.
+
+        Nothing in the request is applied if the pipeline cannot be told about a
+        change to `archive_enabled` or `is_allowed`.
         """
         device = _get_device_or_404(device_uuid)
         _require_mesh_ownership(device.mesh, request.user)
@@ -1218,25 +1220,63 @@ class DeviceDetailView(APIView):
             device, data=request.data, partial=True, context={"archive_available": sinks.archive_available()}
         )
         serializer.is_valid(raise_exception=True)
+        sinks_published = False
         try:
-            updated = serializer.save()
+            with transaction.atomic():
+                updated = serializer.save()
+
+                override_fields = []
+                if location_keys_present:
+                    pinned = updated.latitude is not None or updated.longitude is not None
+                    if updated.location_overridden != pinned:
+                        updated.location_overridden = pinned
+                        override_fields.append("location_overridden")
+                if nodeinfo_keys_present:
+                    cleared = nodeinfo_keys_all_present and all(getattr(updated, f) is None for f in nodeinfo_fields)
+                    pinned = not cleared
+                    if updated.nodeinfo_overridden != pinned:
+                        updated.nodeinfo_overridden = pinned
+                        override_fields.append("nodeinfo_overridden")
+                if override_fields:
+                    updated.save(update_fields=override_fields)
+
+                archive_changed = updated.archive_enabled != previous_archive
+                if archive_changed:
+                    try:
+                        sinks.publish_device(updated)
+                    except Exception as e:
+                        raise BadGateway(f"Failed to publish the archive setting, nothing changed: {e}")
+                    sinks_published = True
+
+                allowed_changed = changing_allowed and updated.is_allowed != previous_allowed
+                if allowed_changed:
+                    publisher = get_publisher()
+                    try:
+                        if updated.is_gateway:
+                            if updated.is_allowed:
+                                publish_gateway_state(publisher, updated, updated.mesh)
+                            else:
+                                publisher.publish_gateway_delete(updated)
+                        elif updated.is_allowed:
+                            publisher.publish_node_unreject(updated)
+                        else:
+                            publisher.publish_node_reject(updated)
+                    except Exception as e:
+                        action = "allow" if updated.is_allowed else "reject"
+                        raise BadGateway(f"Failed to publish device {action}, nothing changed: {e}")
         except IntegrityError:
             raise Conflict(f"Device with device_id {device.device_id} already has an allowed registration")
+        except BadGateway:
+            if sinks_published:
+                # The pipeline already holds the new archive setting; send it the restored one.
+                try:
+                    sinks.publish_device(_get_device_or_404(device_uuid))
+                except Exception as e:
+                    log.error("device_sinks_restore_failed", device_id=str(device_uuid), error=str(e))
+            raise
 
-        override_fields = []
-        if location_keys_present:
-            pinned = updated.latitude is not None or updated.longitude is not None
-            if updated.location_overridden != pinned:
-                updated.location_overridden = pinned
-                override_fields.append("location_overridden")
-        if nodeinfo_keys_present:
-            cleared = nodeinfo_keys_all_present and all(getattr(updated, f) is None for f in nodeinfo_fields)
-            pinned = not cleared
-            if updated.nodeinfo_overridden != pinned:
-                updated.nodeinfo_overridden = pinned
-                override_fields.append("nodeinfo_overridden")
-        if override_fields:
-            updated.save(update_fields=override_fields)
+        if archive_changed:
+            sinks.record_archive_instruction(updated, request.user)
 
         if any(
             k in request.data
@@ -1257,40 +1297,12 @@ class DeviceDetailView(APIView):
             except Exception as e:
                 log.warning("postprocessing_publish_failed", device_id=str(updated.id), error=str(e))
 
-        if updated.archive_enabled != previous_archive:
+        if allowed_changed and not archive_changed and (updated.archive_enabled or updated.sink_links.exists()):
+            # Only an allowed registration is sent to a sink.
             try:
                 sinks.publish_device(updated)
             except Exception as e:
-                updated.archive_enabled = previous_archive
-                updated.save(update_fields=["archive_enabled"])
-                raise BadGateway(f"Failed to publish the archive setting, rolled back: {e}")
-            sinks.record_archive_instruction(updated, request.user)
-
-        if changing_allowed and updated.is_allowed != previous_allowed:
-            attempted_allowed = updated.is_allowed
-            publisher = get_publisher()
-            try:
-                if updated.is_gateway:
-                    if attempted_allowed:
-                        publish_gateway_state(publisher, updated, updated.mesh)
-                    else:
-                        publisher.publish_gateway_delete(updated)
-                else:
-                    if attempted_allowed:
-                        publisher.publish_node_unreject(updated)
-                    else:
-                        publisher.publish_node_reject(updated)
-            except Exception as e:
-                updated.is_allowed = previous_allowed
-                updated.save(update_fields=["is_allowed"])
-                action = "allow" if attempted_allowed else "reject"
-                raise BadGateway(f"Failed to publish device {action}, rolled back: {e}")
-            if updated.archive_enabled or updated.sink_links.exists():
-                # Only an allowed registration is sent to a sink.
-                try:
-                    sinks.publish_device(updated)
-                except Exception as e:
-                    log.warning("device_sinks_publish_failed", device_id=str(updated.id), error=str(e))
+                log.warning("device_sinks_publish_failed", device_id=str(updated.id), error=str(e))
         return Response(DeviceReadSerializer(updated, context=_viewer_context(request)).data)
 
     @extend_schema(responses={204: NO_CONTENT})

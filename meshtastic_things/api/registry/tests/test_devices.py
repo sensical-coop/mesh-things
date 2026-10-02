@@ -571,6 +571,19 @@ class DeviceNodeRejectionTests(RegistryTestCase):
         get_resp = self.client.get(f"/devices/{node['uuid']}", **self.auth_headers(owner))
         self.assertTrue(get_resp.json()["is_allowed"])
 
+    def test_a_failed_reject_keeps_the_rest_of_the_request_unsaved(self):
+        owner = self.create_owner()
+        mesh = self.create_mesh(owner)
+        node = self.create_node(owner, mesh, device_id=1, label="before")
+        self.fake_publisher.publish_node_reject.side_effect = RuntimeError("kafka down")
+
+        resp = self.client.put(
+            f"/devices/{node['uuid']}", {"is_allowed": False, "label": "after"}, format="json", **self.auth_headers(owner)
+        )
+
+        self.assertEqual(resp.status_code, 502)
+        self.assertEqual(Device.objects.get(pk=node["uuid"]).label, "before")
+
     def test_delete_rejected_node_publishes_unreject_to_clear_state(self):
         owner = self.create_owner()
         mesh = self.create_mesh(owner)
