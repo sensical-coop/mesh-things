@@ -1,4 +1,12 @@
+# Docker keeps every container's log unless capped: 3 files of 10 MB each.
+x-logging: &logging
+  driver: json-file
+  options:
+    max-size: "10m"
+    max-file: "3"
+
 x-quality-worker-image: &quality-worker-image
+  logging: *logging
   image: meshtastic-things/quality-worker:latest
   # Prebuilt alternative, disabled. See compose/api.yml.
   # image: ghcr.io/sensical-coop/meshtastic-kafka/quality-worker:${TAG:-latest}
