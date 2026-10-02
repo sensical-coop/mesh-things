@@ -3,6 +3,7 @@ import uuid
 from django.contrib.auth.base_user import AbstractBaseUser, BaseUserManager
 from django.contrib.auth.models import PermissionsMixin
 from django.db import models
+from django.utils import timezone
 from django.utils.functional import cached_property
 
 from common import node_ids
@@ -29,6 +30,12 @@ class OwnerManager(BaseUserManager):
         return self.create_user(email, name, password, **extra_fields)
 
 
+class OwnerRole(models.TextChoices):
+    MEMBER = "member", "Member"
+    # Manages shared ingest infrastructure such as sources, without being a superuser.
+    OPERATOR = "operator", "Operator"
+
+
 class Owner(AbstractBaseUser, PermissionsMixin):
     """A registered account"""
 
@@ -48,6 +55,7 @@ class Owner(AbstractBaseUser, PermissionsMixin):
     password_reset_sent_at = models.DateTimeField(null=True, blank=True)
     # Length of a device's alarm-email window, in seconds. Null uses the server default.
     alarm_email_cooldown_seconds = models.PositiveIntegerField(null=True, blank=True)
+    role = models.CharField(max_length=16, choices=OwnerRole.choices, default=OwnerRole.MEMBER)
 
     objects = OwnerManager()
 
@@ -59,6 +67,10 @@ class Owner(AbstractBaseUser, PermissionsMixin):
 
     def __str__(self) -> str:
         return self.email
+
+    @property
+    def is_operator(self) -> bool:
+        return self.is_superuser or self.role == OwnerRole.OPERATOR
 
     @property
     def visible_meshes(self):
@@ -74,6 +86,20 @@ class Owner(AbstractBaseUser, PermissionsMixin):
         if self.is_superuser:
             return Device.objects.all()
         return Device.objects.filter(mesh__in=self.visible_meshes)
+
+    @property
+    def current_account_acceptance(self):
+        return self.terms_acceptances.filter(kind="account").order_by("-accepted_at").first()
+
+    @property
+    def visible_sources(self):
+        """Sources this owner may see: every one for a superuser, their own for an
+        operator, none otherwise."""
+        if self.is_superuser:
+            return Source.objects.all()
+        if self.role == OwnerRole.OPERATOR:
+            return Source.objects.filter(created_by_id=self.id)
+        return Source.objects.none()
 
     def can_view_mesh(self, mesh) -> bool:
         """Reads."""
@@ -95,6 +121,164 @@ class Owner(AbstractBaseUser, PermissionsMixin):
         }
 
 
+class OperatorRequestStatus(models.TextChoices):
+    PENDING = "pending", "Pending"
+    APPROVED = "approved", "Approved"
+    REJECTED = "rejected", "Rejected"
+
+
+class OperatorRequest(models.Model):
+    """An owner's request for the operator role, decided by a superuser."""
+
+    id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
+    owner = models.ForeignKey(Owner, on_delete=models.CASCADE, related_name="operator_requests")
+    reason = models.TextField(max_length=2000)
+    status = models.CharField(
+        max_length=16, choices=OperatorRequestStatus.choices, default=OperatorRequestStatus.PENDING
+    )
+    decided_by = models.ForeignKey(
+        Owner, on_delete=models.SET_NULL, null=True, blank=True, related_name="decided_operator_requests"
+    )
+    decision_note = models.TextField(blank=True, default="")
+    decided_at = models.DateTimeField(null=True, blank=True)
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        db_table = "operator_requests"
+        constraints = [
+            models.UniqueConstraint(
+                fields=["owner"],
+                condition=models.Q(status="pending"),
+                name="uq_operator_request_pending_per_owner",
+            )
+        ]
+
+    def __str__(self) -> str:
+        return f"{self.owner.email} ({self.status})"
+
+
+class Source(models.Model):
+    """A remote MQTT broker and topic filter, bridged into this instance by EMQX."""
+
+    id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
+    label = models.CharField(max_length=255, null=True, blank=True)
+    # host:port
+    server = models.CharField(max_length=255)
+    ssl = models.BooleanField(default=True)
+    username = models.CharField(max_length=255, null=True, blank=True)
+    # Write-only over the API, never returned to anyone.
+    password = models.TextField(null=True, blank=True)
+    topic = models.CharField(max_length=1024)
+    qos = models.PositiveSmallIntegerField(default=1)
+    created_by = models.ForeignKey(
+        Owner, on_delete=models.SET_NULL, null=True, blank=True, related_name="created_sources"
+    )
+    # Set when its terms acceptance lapsed: the EMQX bridge is removed until renewed.
+    paused_at = models.DateTimeField(null=True, blank=True)
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        db_table = "sources"
+
+    def __str__(self) -> str:
+        return self.label or f"{self.server} {self.topic}"
+
+    @property
+    def current_terms_acceptance(self):
+        return self.terms_acceptances.order_by("-accepted_at").first()
+
+
+class TermsKind(models.TextChoices):
+    # Accepted at signup; covers the account only, which stores no mesh data. Never lapses.
+    ACCOUNT = "account", "Account"
+    # Accepted per mesh on the default broker by its owner, as controller of its traffic.
+    MESH = "mesh", "Mesh"
+    # Accepted per source by the operator, as controller of the bridged traffic.
+    SOURCE = "source", "Source"
+
+
+class TermsAcceptance(models.Model):
+    """Append-only proof that an owner accepted a version of the terms (GDPR Art. 5(2)).
+
+    Kept after the source or owner is deleted, so the acceptor is snapshotted.
+    """
+
+    id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
+    kind = models.CharField(max_length=16, choices=TermsKind.choices)
+    owner = models.ForeignKey(
+        Owner, on_delete=models.SET_NULL, null=True, blank=True, related_name="terms_acceptances"
+    )
+    # Set for mesh and source terms respectively.
+    mesh = models.ForeignKey(
+        "Mesh", on_delete=models.SET_NULL, null=True, blank=True, related_name="terms_acceptances"
+    )
+    source = models.ForeignKey(
+        Source, on_delete=models.SET_NULL, null=True, blank=True, related_name="terms_acceptances"
+    )
+    acceptor_name = models.CharField(max_length=255)
+    acceptor_email = models.EmailField()
+    terms_version = models.CharField(max_length=64)
+    locale = models.CharField(max_length=8)
+    # sha256 of the exact text served for this version and locale.
+    text_hash = models.CharField(max_length=64)
+    accepted_at = models.DateTimeField(default=timezone.now)
+    # Null when no retention period is configured.
+    expires_at = models.DateTimeField(null=True, blank=True)
+    renewal_notice_sent_at = models.DateTimeField(null=True, blank=True)
+
+    class Meta:
+        db_table = "terms_acceptances"
+        indexes = [models.Index(fields=["kind", "owner", "accepted_at"])]
+
+    def __str__(self) -> str:
+        return f"{self.acceptor_email} {self.terms_version} ({self.accepted_at:%Y-%m-%d})"
+
+
+class DataDeletionReason(models.TextChoices):
+    MESH_DELETED = "mesh_deleted", "Mesh deleted"
+    SOURCE_DETACHED = "source_detached", "Mesh moved off its source"
+    TERMS_LAPSED = "terms_lapsed", "Source terms lapsed"
+
+
+class DataDeletionStatus(models.TextChoices):
+    PENDING = "pending", "Pending"
+    CANCELLED = "cancelled", "Cancelled"
+    DONE = "done", "Done"
+
+
+class DataDeletion(models.Model):
+    """A mesh's stored readings, scheduled for deletion after a grace period.
+
+    Holds ids rather than foreign keys, since the mesh is often gone by the time it runs.
+    """
+
+    id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
+    mesh_id = models.UUIDField()
+    source_id = models.UUIDField(null=True, blank=True)
+    reason = models.CharField(max_length=32, choices=DataDeletionReason.choices)
+    requested_by = models.ForeignKey(
+        Owner, on_delete=models.SET_NULL, null=True, blank=True, related_name="requested_data_deletions"
+    )
+    requested_at = models.DateTimeField(default=timezone.now)
+    delete_after = models.DateTimeField()
+    # Readings up to here are deleted. Null deletes every reading of the mesh.
+    data_until = models.DateTimeField(null=True, blank=True)
+    status = models.CharField(
+        max_length=16, choices=DataDeletionStatus.choices, default=DataDeletionStatus.PENDING
+    )
+    attempts = models.PositiveIntegerField(default=0)
+    last_error = models.TextField(blank=True, default="")
+    completed_at = models.DateTimeField(null=True, blank=True)
+
+    class Meta:
+        db_table = "data_deletions"
+        indexes = [models.Index(fields=["status", "delete_after"])]
+
+    def __str__(self) -> str:
+        return f"{self.mesh_id} {self.reason} ({self.status})"
+
+
 class Mesh(models.Model):
     """Physical Meshtastic network"""
 
@@ -106,6 +290,10 @@ class Mesh(models.Model):
     owner = models.ForeignKey(Owner, on_delete=models.CASCADE, related_name="meshes")
     # Readable by any verified owner. Never widens writes.
     is_public = models.BooleanField(default=False)
+    # Null means the traffic arrives on this instance's own broker topic.
+    source = models.ForeignKey(Source, on_delete=models.PROTECT, null=True, blank=True, related_name="meshes")
+    # Set when its mesh terms lapsed (default broker only): its gateways are deregistered until renewed.
+    paused_at = models.DateTimeField(null=True, blank=True)
     created_at = models.DateTimeField(auto_now_add=True)
     updated_at = models.DateTimeField(auto_now=True)
 
@@ -116,6 +304,17 @@ class Mesh(models.Model):
         if not self.label or self.label == self.channel_id:
             return self.channel_id
         return f"{self.label} ({self.channel_id})"
+
+    @property
+    def ingest_paused(self) -> bool:
+        """Whether lapsed terms stop this mesh's traffic: its source's terms, or its own on the default broker."""
+        if self.source_id is not None:
+            return self.source.paused_at is not None
+        return self.paused_at is not None
+
+    @property
+    def current_terms_acceptance(self):
+        return self.terms_acceptances.filter(kind="mesh").order_by("-accepted_at").first()
 
 
 def _max_three_admin_keys(value: list[str]) -> None:
@@ -207,8 +406,17 @@ class Device(models.Model):
     class Meta:
         db_table = "devices"
         constraints = [
+            # Node numbers may repeat across meshes, e.g. two sources hearing the same node.
             models.UniqueConstraint(
-                fields=["device_id"], condition=models.Q(is_allowed=True), name="uq_devices_device_id_allowed"
+                fields=["mesh", "device_id"],
+                condition=models.Q(is_allowed=True),
+                name="uq_devices_mesh_device_id_allowed",
+            ),
+            # Gateways may not: mesh.keys.v1 is keyed by the gateway node number alone.
+            models.UniqueConstraint(
+                fields=["device_id"],
+                condition=models.Q(is_allowed=True, is_gateway=True),
+                name="uq_devices_gateway_device_id_allowed",
             ),
         ]
 

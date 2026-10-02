@@ -42,7 +42,7 @@ def _udf_log_drop(reason: str) -> None:
 # UTF-8 corrupts protobuf packets, so we use ISO-8859-1
 RAW_BYTES_CHARSET = "ISO-8859-1"
 
-# Keyed by gateway_id, value {"psk_b64":..., "mesh_id":...}
+# Keyed by gateway_id, value {"psk_b64":..., "mesh_id":..., "source_id":...}
 GATEWAY_KEY_STATE = MapStateDescriptor("gateway-keys", Types.STRING(), Types.STRING())
 
 # Keyed by "mesh_id:device_id", presence means rejected
@@ -146,7 +146,13 @@ class DecodeWithBroadcastKey(KeyedBroadcastProcessFunction):
             if event.get("op") == "delete":
                 gateway_state_map.remove(key)
             else:
-                state_value = json.dumps({"psk_b64": event.get("psk_b64", ""), "mesh_id": event.get("mesh_id")})
+                state_value = json.dumps(
+                    {
+                        "psk_b64": event.get("psk_b64", ""),
+                        "mesh_id": event.get("mesh_id"),
+                        "source_id": event.get("source_id"),
+                    }
+                )
                 gateway_state_map.put(key, state_value)
         yield from ()  # this method only changes broadcast state
 

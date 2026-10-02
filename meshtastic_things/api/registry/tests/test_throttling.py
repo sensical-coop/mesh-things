@@ -2,6 +2,7 @@ from unittest.mock import patch
 
 from registry.throttling import AnonReadThrottle, OwnerRateThrottle, SignupThrottle
 from registry.tests.helpers import RegistryTestCase
+from .helpers import SIGNUP_TERMS
 
 
 class SignupThrottleTests(RegistryTestCase):
@@ -10,13 +11,13 @@ class SignupThrottleTests(RegistryTestCase):
             for i in range(2):
                 resp = self.client.post(
                     "/owners",
-                    {"name": f"O{i}", "email": f"o{i}@example.com", "password": self.DEFAULT_PASSWORD},
+                    {**SIGNUP_TERMS, "name": f"O{i}", "email": f"o{i}@example.com", "password": self.DEFAULT_PASSWORD},
                     format="json",
                 )
                 self.assertEqual(resp.status_code, 201, resp.content)
             resp = self.client.post(
                 "/owners",
-                {"name": "Too Many", "email": "toomany@example.com", "password": self.DEFAULT_PASSWORD},
+                {**SIGNUP_TERMS, "name": "Too Many", "email": "toomany@example.com", "password": self.DEFAULT_PASSWORD},
                 format="json",
             )
             self.assertEqual(resp.status_code, 429)

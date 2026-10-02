@@ -291,6 +291,7 @@ DJANGO_SERVICES = {
     "registry_device_consumer": "api_project.settings",
     "registry_sensor_discovery_consumer": "api_project.settings",
     "registry_quality_alarms_consumer": "api_project.settings",
+    "registry_data_lifecycle": "api_project.settings",
     "readings_api": "api_project.settings",
 }
 
@@ -302,6 +303,7 @@ APP_ROLES = {
     "registry_device_consumer": "registry",
     "registry_sensor_discovery_consumer": "registry",
     "registry_quality_alarms_consumer": "registry",
+    "registry_data_lifecycle": "registry",
     "readings_api": "readings",
 }
 
@@ -480,6 +482,20 @@ def test_the_dev_overlay_separates_every_bridge_member_from_prod():
         f"docker-compose.dev.yml: {sorted(without)}. Without it they join prod's "
         f"$share group and consume prod's messages"
     )
+
+def test_the_dev_overlay_keeps_dev_sources_apart_from_prod():
+    """registry_api names the EMQX bridges and the bridges read what they republish. On a
+    shared EMQX, a dev stack in prod's namespace would reconcile away prod's bridges and
+    read prod's source traffic."""
+    services = [*_bridge_services(), "registry_api"]
+    namespaces = {
+        name: ((DEV_SERVICES.get(name) or {}).get("environment") or {}).get("MQTT_SOURCES__NAMESPACE")
+        for name in services
+    }
+
+    assert all(ns and ns != "mt-sources" for ns in namespaces.values()), namespaces
+    assert len(set(namespaces.values())) == 1, f"registry and bridges disagree: {namespaces}"
+
 
 def _env_example() -> dict[str, str]:
     values = {}

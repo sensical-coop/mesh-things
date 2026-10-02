@@ -4,16 +4,20 @@ from django.contrib.auth.admin import UserAdmin
 from common import node_ids
 
 from .models import (
+    DataDeletion,
     Device,
     DeviceTelemetryVariant,
     Measurement,
     MeasurementType,
     Mesh,
+    OperatorRequest,
     Owner,
     PostprocessingBlueprint,
     PostprocessingStep,
+    Source,
     TelemetryVariant,
     TelemetryVariantMeasurement,
+    TermsAcceptance,
 )
 
 @admin.register(Owner)
@@ -22,11 +26,12 @@ class OwnerAdmin(UserAdmin):
     fieldsets = (
         (None, {"fields": ("email", "password")}),
         ("Profile", {"fields": ("name",)}),
-        ("Permissions", {"fields": ("is_active", "is_staff", "is_superuser", "groups", "user_permissions")}),
+        ("Permissions", {"fields": ("is_active", "role", "is_staff", "is_superuser", "groups", "user_permissions")}),
         ("Dates", {"fields": ("last_login",)}),
     )
     add_fieldsets = ((None, {"classes": ("wide",), "fields": ("email", "name", "password1", "password2")}),)
-    list_display = ("email", "name", "is_superuser", "is_staff", "created_at")
+    list_display = ("email", "name", "role", "is_superuser", "is_staff", "created_at")
+    list_filter = ("role", "is_superuser", "is_staff", "is_active")
     search_fields = ("email", "name")
     ordering = ("email",)
     readonly_fields = ("last_login",)
@@ -35,12 +40,70 @@ class OwnerAdmin(UserAdmin):
 @admin.register(Mesh)
 class MeshAdmin(admin.ModelAdmin):
     # psk_b64 is a password field
-    list_display = ("channel_id", "label", "owner", "is_public", "created_at")
-    list_select_related = ("owner",)
+    list_display = ("channel_id", "label", "owner", "source", "is_public", "created_at")
+    list_select_related = ("owner", "source")
     list_filter = ("is_public",)
     exclude = ("psk_b64",)
     readonly_fields = ("id", "created_at", "updated_at")
     search_fields = ("channel_id", "label")
+
+
+@admin.register(Source)
+class SourceAdmin(admin.ModelAdmin):
+    """Read-only: a source is only consistent with its EMQX bridge when written through the API."""
+
+    list_display = ("label", "server", "topic", "qos", "ssl", "created_by", "created_at")
+    list_select_related = ("created_by",)
+    exclude = ("password",)
+    search_fields = ("label", "server", "topic")
+
+    def has_add_permission(self, request):
+        return False
+
+    def has_change_permission(self, request, obj=None):
+        return False
+
+    def has_delete_permission(self, request, obj=None):
+        return False
+
+
+class _ReadOnlyAdmin(admin.ModelAdmin):
+    def has_add_permission(self, request):
+        return False
+
+    def has_change_permission(self, request, obj=None):
+        return False
+
+    def has_delete_permission(self, request, obj=None):
+        return False
+
+
+@admin.register(TermsAcceptance)
+class TermsAcceptanceAdmin(_ReadOnlyAdmin):
+    """Read-only: acceptances are append-only evidence."""
+
+    list_display = ("acceptor_email", "kind", "mesh", "source", "terms_version", "locale", "accepted_at", "expires_at")
+    list_filter = ("kind", "terms_version", "locale")
+    search_fields = ("acceptor_email", "acceptor_name")
+
+
+@admin.register(DataDeletion)
+class DataDeletionAdmin(_ReadOnlyAdmin):
+    """Read-only: the lifecycle job owns these rows."""
+
+    list_display = ("mesh_id", "reason", "status", "requested_at", "delete_after", "completed_at", "attempts")
+    list_filter = ("status", "reason")
+    search_fields = ("mesh_id", "source_id")
+
+
+@admin.register(OperatorRequest)
+class OperatorRequestAdmin(_ReadOnlyAdmin):
+    """Read-only: deciding through the API sets the role and emails the requester."""
+
+    list_display = ("owner", "status", "created_at", "decided_by", "decided_at")
+    list_filter = ("status",)
+    list_select_related = ("owner", "decided_by")
+    search_fields = ("owner__email", "owner__name")
 
 
 @admin.register(Device)

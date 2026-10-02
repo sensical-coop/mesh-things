@@ -10,6 +10,7 @@ from aiohttp import web
 from kafka import KafkaConsumer, KafkaProducer
 
 from common import decode
+from pipeline.config_state import apply_config_event
 from tools.healthcheck import KafkaConsumerHealth
 
 log = structlog.get_logger()
@@ -73,7 +74,7 @@ class DecodeConsumer(object):
             value_serializer=lambda v: json.dumps(v).encode('utf-8'),
         )
 
-        # gateway_id -> {"psk_b64", "mesh_id"}; presence in the set means rejected.
+        # gateway_id -> {"psk_b64", "mesh_id", "source_id"}; presence in the set means rejected.
         self.gateway_state = {}
         self.rejected_nodes = set()
 
@@ -96,20 +97,7 @@ class DecodeConsumer(object):
             await asyncio.sleep(0.1)
 
     def _apply_config_event(self, topic, value):
-        event = json.loads(value)
-        key = event.get("key")
-        if not key:
-            return
-        if topic == self.node_rejections_topic:
-            if event.get("op") == "delete":
-                self.rejected_nodes.discard(key)
-            else:
-                self.rejected_nodes.add(key)
-        else:
-            if event.get("op") == "delete":
-                self.gateway_state.pop(key, None)
-            else:
-                self.gateway_state[key] = {"psk_b64": event.get("psk_b64", ""), "mesh_id": event.get("mesh_id")}
+        apply_config_event(self.gateway_state, self.rejected_nodes, topic == self.node_rejections_topic, value)
 
     async def consume_decode(self):
         while True:

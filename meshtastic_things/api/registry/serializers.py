@@ -1,3 +1,9 @@
+from datetime import datetime
+from fnmatch import fnmatch
+from urllib.parse import urlsplit
+
+from django.conf import settings
+
 from django.contrib.auth.password_validation import validate_password
 from django.core.exceptions import ValidationError as DjangoValidationError
 from rest_framework import serializers
@@ -5,17 +11,25 @@ from rest_framework import serializers
 from common.algorithms import validate_step
 from common.channels import channel_name, origin_of
 from common.detectors import DETECTOR_CHOICES, MEASUREMENT_DETECTORS, enabled_detectors_for
+from common.env import env_str
 
+from .broker_hosts import refusal as broker_refusal
 from .emailing import ALARM_EMAIL_COOLDOWN_MAX_SECONDS
+from .terms import DEFAULT_LOCALE, LOCALES, VERSIONS, is_current, terms_enforced
 from .models import (
     Device,
     DeviceTelemetryVariant,
     Measurement,
     MeasurementType,
     Mesh,
+    OperatorRequest,
     Owner,
+    OwnerRole,
     PostprocessingBlueprint,
     PostprocessingStep,
+    DataDeletion,
+    Source,
+    TermsKind,
     TelemetryVariant,
     TelemetryVariantMeasurement,
 )
@@ -37,6 +51,35 @@ class MetricsResponseSerializer(serializers.Serializer):
     active_gateways = serializers.IntegerField()
 
 
+class _TermsAcceptanceInputMixin(serializers.Serializer):
+    """Accepting the current terms of `terms_kind`."""
+
+    terms_kind: str
+
+    terms_version = serializers.CharField(
+        write_only=True, help_text="Version of the terms accepted, as served by the terms endpoint."
+    )
+    terms_locale = serializers.ChoiceField(
+        choices=LOCALES,
+        write_only=True,
+        required=False,
+        default=DEFAULT_LOCALE,
+        help_text="Locale the terms were shown in.",
+    )
+
+    def __init__(self, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+        if not terms_enforced():
+            self.fields["terms_version"].required = False
+
+    def validate_terms_version(self, value):
+        if not terms_enforced():
+            return value
+        if value != VERSIONS[self.terms_kind]:
+            raise serializers.ValidationError("These terms are out of date. Load the current terms and accept them again.")
+        return value
+
+
 class OwnerReadSerializer(serializers.ModelSerializer):
     """The full record, for the owner themselves and for superusers.
 
@@ -52,23 +95,34 @@ class OwnerReadSerializer(serializers.ModelSerializer):
             "email",
             "is_superuser",
             "is_staff",
+            "role",
             "is_active",
             "email_verified_at",
             "email_verification_sent_at",
             "last_login",
             "created_at",
             "alarm_email_cooldown_seconds",
+            "terms_accepted_version",
         ]
         read_only_fields = fields
 
+    terms_accepted_version = serializers.SerializerMethodField()
 
-class OwnerCreateSerializer(serializers.ModelSerializer):
+    def get_terms_accepted_version(self, instance) -> str | None:
+        """Version of the account terms last accepted. Null if never accepted. They never lapse."""
+        acceptance = instance.current_account_acceptance
+        return acceptance.terms_version if acceptance else None
+
+
+class OwnerCreateSerializer(_TermsAcceptanceInputMixin, serializers.ModelSerializer):
+    terms_kind = TermsKind.ACCOUNT
+
     email = serializers.EmailField(validators=[])
     password = serializers.CharField(write_only=True)
 
     class Meta:
         model = Owner
-        fields = ["name", "email", "password"]
+        fields = ["name", "email", "password", "terms_version", "terms_locale"]
 
     def validate(self, attrs):
         try:
@@ -93,6 +147,44 @@ class OwnerUpdateSerializer(serializers.ModelSerializer):
                 "or null to use the server default."
             )
         return value
+
+
+class OwnerRoleSerializer(serializers.Serializer):
+    role = serializers.ChoiceField(choices=OwnerRole.choices)
+
+
+class OperatorRequestCreateSerializer(serializers.ModelSerializer):
+    class Meta:
+        model = OperatorRequest
+        fields = ["reason"]
+        extra_kwargs = {"reason": {"help_text": "Why the operator role is needed. Shown to superusers."}}
+
+
+class OperatorRequestSerializer(serializers.ModelSerializer):
+    """An operator request as its requester sees it."""
+
+    class Meta:
+        model = OperatorRequest
+        fields = ["id", "reason", "status", "decision_note", "decided_at", "created_at"]
+        read_only_fields = fields
+
+
+class OperatorRequestAdminSerializer(OperatorRequestSerializer):
+    """An operator request as a superuser sees it."""
+
+    owner_id = serializers.UUIDField(read_only=True)
+    owner_name = serializers.CharField(source="owner.name", read_only=True)
+    owner_email = serializers.EmailField(source="owner.email", read_only=True)
+    decided_by_id = serializers.UUIDField(read_only=True, allow_null=True)
+
+    class Meta(OperatorRequestSerializer.Meta):
+        fields = OperatorRequestSerializer.Meta.fields + ["owner_id", "owner_name", "owner_email", "decided_by_id"]
+        read_only_fields = fields
+
+
+class OperatorRequestDecisionSerializer(serializers.Serializer):
+    decision = serializers.ChoiceField(choices=["approve", "reject"])
+    note = serializers.CharField(required=False, allow_blank=True, default="", max_length=2000)
 
 
 class OwnerWithApiKeySerializer(OwnerReadSerializer):
@@ -160,30 +252,134 @@ class DetectorSerializer(serializers.Serializer):
 
 
 _PSK_HELP = "Base64-encoded channel PSK"
+_SOURCE_HELP = "Source the mesh's traffic is bridged from. Null for this instance's own broker."
 
 
-class MeshSerializer(serializers.ModelSerializer):
+def _validate_visible_source(serializer, source):
+    """Only a source the caller may see can be attached. Keeping the current one is always allowed."""
+    if source is None:
+        return source
+    current = getattr(serializer.instance, "source_id", None)
+    owner = serializer.context.get("owner")
+    if source.id == current:
+        return source
+    if owner is None or not owner.visible_sources.filter(pk=source.pk).exists():
+        raise serializers.ValidationError(f'Invalid pk "{source.pk}" - object does not exist.')
+    if source.paused_at is not None:
+        raise serializers.ValidationError("This source is paused until its terms are renewed.")
+    return source
+
+
+class _MeshTermsMixin(serializers.Serializer):
+    """Mesh terms, needed only for a mesh on the default broker; a source's terms cover the rest."""
+
+    terms_version = serializers.CharField(
+        write_only=True,
+        required=False,
+        help_text=(
+            "Version of the mesh terms accepted, from /meshes/terms. Required when the mesh uses "
+            "the default broker (no source) and has no current acceptance; ignored otherwise."
+        ),
+    )
+    terms_locale = serializers.ChoiceField(
+        choices=LOCALES, write_only=True, required=False, default=DEFAULT_LOCALE, help_text="Locale the terms were shown in."
+    )
+    terms_accepted_version = serializers.SerializerMethodField()
+    terms_expires_at = serializers.SerializerMethodField()
+    paused_at = serializers.DateTimeField(
+        read_only=True, allow_null=True, help_text="Set while its mesh terms have lapsed; the mesh stores no new data."
+    )
+
+    # The locale to record an acceptance in, once validated; None when none is recorded.
+    accept_terms_locale: str | None = None
+
+    def get_terms_accepted_version(self, instance) -> str | None:
+        """Mesh terms version accepted. Null on a source, whose terms apply instead."""
+        if instance.source_id is not None:
+            return None
+        acceptance = instance.current_terms_acceptance
+        return acceptance.terms_version if acceptance else None
+
+    def get_terms_expires_at(self, instance) -> datetime | None:
+        """When the mesh terms acceptance lapses. Null for no time limit, or on a source."""
+        if instance.source_id is not None:
+            return None
+        acceptance = instance.current_terms_acceptance
+        return acceptance.expires_at if acceptance else None
+
+    def _take_mesh_terms(self, attrs, needed: bool):
+        version = attrs.pop("terms_version", None)
+        locale = attrs.pop("terms_locale", DEFAULT_LOCALE)
+        if not needed or not terms_enforced():
+            return attrs
+        if not version:
+            raise serializers.ValidationError(
+                {"terms_version": ["A mesh on the default broker needs its terms accepted."]}
+            )
+        if version != VERSIONS[TermsKind.MESH]:
+            raise serializers.ValidationError(
+                {"terms_version": ["These terms are out of date. Load the current terms and accept them again."]}
+            )
+        self.accept_terms_locale = locale
+        return attrs
+
+    def _hide_mesh_terms(self, data, instance):
+        # Like source_id: for the owner, and read-only for superusers.
+        if self.context.get("viewer_id") != instance.owner_id and not self.context.get("viewer_is_superuser"):
+            for field in ("terms_accepted_version", "terms_expires_at", "paused_at"):
+                data.pop(field, None)
+        return data
+
+
+class MeshSerializer(_MeshTermsMixin, serializers.ModelSerializer):
 
     owner_id = serializers.UUIDField(read_only=True)
     # blank psk_b64 is mesh without encryption"
     psk_b64 = serializers.CharField(allow_blank=True, help_text=_PSK_HELP)
+    source_id = serializers.PrimaryKeyRelatedField(
+        source="source", queryset=Source.objects.all(), allow_null=True, required=False, help_text=_SOURCE_HELP
+    )
 
     class Meta:
         model = Mesh
-        fields = ["id", "channel_id", "psk_b64", "label", "owner_id", "is_public", "created_at", "updated_at"]
-        read_only_fields = ["id", "created_at", "updated_at"]
+        fields = [
+            "id",
+            "channel_id",
+            "psk_b64",
+            "label",
+            "owner_id",
+            "is_public",
+            "source_id",
+            "terms_version",
+            "terms_locale",
+            "terms_accepted_version",
+            "terms_expires_at",
+            "paused_at",
+            "created_at",
+            "updated_at",
+        ]
+        read_only_fields = ["id", "created_at", "updated_at", "paused_at"]
         extra_kwargs = {"is_public": {"required": False}}
+
+    def validate_source_id(self, value):
+        return _validate_visible_source(self, value)
+
+    def validate(self, attrs):
+        return self._take_mesh_terms(super().validate(attrs), needed=attrs.get("source") is None)
 
     def to_representation(self, instance):
         data = super().to_representation(instance)
         viewer_id = self.context.get("viewer_id")
         if viewer_id is None or viewer_id != instance.owner_id:
             data.pop("psk_b64", None)
-        return data
+            # Superusers see which source a mesh uses, read-only; nobody else but its owner does.
+            if not self.context.get("viewer_is_superuser"):
+                data.pop("source_id", None)
+        return self._hide_mesh_terms(data, instance)
 
 
-class MeshUpdateSerializer(serializers.ModelSerializer):
-    """PUT /meshes/{id}: channel_id, psk_b64, label and is_public are editable.
+class MeshUpdateSerializer(_MeshTermsMixin, serializers.ModelSerializer):
+    """PUT /meshes/{id}: channel_id, psk_b64, label, is_public and source_id are editable.
 
     channel_id/psk_b64 are a pair configured together on the physical
     devices, so both can change here the same way - the pipeline decrypts by
@@ -191,15 +387,202 @@ class MeshUpdateSerializer(serializers.ModelSerializer):
     """
 
     psk_b64 = serializers.CharField(write_only=True, required=False, allow_blank=True, help_text=_PSK_HELP)
+    source_id = serializers.PrimaryKeyRelatedField(
+        source="source", queryset=Source.objects.all(), allow_null=True, required=False, help_text=_SOURCE_HELP
+    )
 
     class Meta:
         model = Mesh
-        fields = ["channel_id", "psk_b64", "label", "is_public"]
+        fields = ["channel_id", "psk_b64", "label", "is_public", "source_id", "terms_version", "terms_locale"]
         extra_kwargs = {
             "label": {"required": False},
             "channel_id": {"required": False},
             "is_public": {"required": False},
         }
+
+    def validate(self, attrs):
+        attrs = super().validate(attrs)
+        mesh = self.instance
+        moving_to_default = "source" in attrs and attrs["source"] is None and mesh.source_id is not None
+        needed = moving_to_default and not is_current(mesh.current_terms_acceptance, TermsKind.MESH)
+        return self._take_mesh_terms(attrs, needed=needed)
+
+    def validate_source_id(self, value):
+        return _validate_visible_source(self, value)
+
+
+def _own_emqx_host() -> str:
+    return urlsplit(env_str("REGISTRY__EMQX_API_URL")).hostname or ""
+
+
+class SourceSerializer(serializers.ModelSerializer):
+    """A source. The remote password is accepted but never returned."""
+
+    password = serializers.CharField(
+        write_only=True,
+        required=False,
+        allow_blank=True,
+        allow_null=True,
+        help_text="Remote broker password. Never returned. An empty string or null removes it.",
+    )
+    qos = serializers.ChoiceField(choices=[(0, "0"), (1, "1")], default=1)
+    created_by_id = serializers.UUIDField(read_only=True, allow_null=True)
+
+    class Meta:
+        model = Source
+        fields = [
+            "id",
+            "label",
+            "server",
+            "ssl",
+            "username",
+            "password",
+            "topic",
+            "qos",
+            "created_by_id",
+            "created_at",
+            "updated_at",
+        ]
+        read_only_fields = ["id", "created_by_id", "created_at", "updated_at"]
+        extra_kwargs = {
+            "server": {"help_text": "Remote broker as host:port."},
+            "topic": {"help_text": "Remote topic filter, for example msh/EU_868/2/e/MyChannel/#."},
+        }
+
+    def validate_password(self, value):
+        return value or None
+
+    def validate_username(self, value):
+        return value or None
+
+    def validate(self, attrs):
+        attrs = super().validate(attrs)
+        username = attrs["username"] if "username" in attrs else getattr(self.instance, "username", None)
+        password = attrs["password"] if "password" in attrs else getattr(self.instance, "password", None)
+        # A broker may take a username alone, but never a password alone.
+        if password and not username:
+            raise serializers.ValidationError({"username": ["A password needs a username."]})
+        return attrs
+
+    def validate_server(self, value):
+        value = value.strip()
+        host, sep, port = value.rpartition(":")
+        if not sep or not host or not port.isdigit() or not 0 < int(port) < 65536:
+            raise serializers.ValidationError("Must be host:port.")
+        # Bridging our own broker into itself would loop through the republished topics.
+        if host.strip("[]").rstrip(".").lower() == _own_emqx_host().lower():
+            raise serializers.ValidationError("A source cannot point at this instance's own broker.")
+        reason = broker_refusal(host)
+        if reason:
+            raise serializers.ValidationError(reason)
+        if any(fnmatch(candidate, pattern.lower()) for pattern in settings.SOURCES_BLOCKED_BROKERS
+               for candidate in (host.lower(), value.lower())):
+            raise serializers.ValidationError("This broker is not allowed as a source.")
+        return value
+
+    def validate_topic(self, value):
+        value = value.strip()
+        if not value or value.startswith("$"):
+            raise serializers.ValidationError("Must be a plain topic filter; $share and $SYS topics are not accepted.")
+        if value in settings.SOURCES_BLOCKED_TOPICS:
+            raise serializers.ValidationError("This topic filter is not allowed as a source.")
+        return value
+
+
+
+class SourceCreateSerializer(_TermsAcceptanceInputMixin, SourceSerializer):
+    terms_kind = TermsKind.SOURCE
+
+    class Meta(SourceSerializer.Meta):
+        fields = SourceSerializer.Meta.fields + ["terms_version", "terms_locale"]
+
+    def create(self, validated_data):
+        validated_data.pop("terms_version", None)
+        validated_data.pop("terms_locale", None)
+        return super().create(validated_data)
+
+
+class SourceUpdateSerializer(SourceSerializer):
+    """Any subset of the create fields."""
+
+    qos = serializers.ChoiceField(choices=[(0, "0"), (1, "1")], required=False)
+
+    class Meta(SourceSerializer.Meta):
+        extra_kwargs = {
+            "server": {"help_text": "Remote broker as host:port.", "required": False},
+            "topic": {"help_text": "Remote topic filter, for example msh/EU_868/2/e/MyChannel/#.", "required": False},
+        }
+
+
+class SourceTermsAcceptanceSerializer(_TermsAcceptanceInputMixin):
+    terms_kind = TermsKind.SOURCE
+
+
+class AccountTermsAcceptanceSerializer(_TermsAcceptanceInputMixin):
+    terms_kind = TermsKind.ACCOUNT
+
+
+class MeshTermsAcceptanceSerializer(_TermsAcceptanceInputMixin):
+    terms_kind = TermsKind.MESH
+
+
+class SourceReadSerializer(SourceSerializer):
+    status = serializers.CharField(
+        read_only=True, help_text="The bridge's connection status, `paused`, or unknown when it cannot be checked."
+    )
+    paused_at = serializers.DateTimeField(
+        read_only=True, allow_null=True, help_text="When the source was paused because its terms lapsed."
+    )
+    terms_accepted_version = serializers.SerializerMethodField()
+    terms_expires_at = serializers.SerializerMethodField()
+
+    class Meta(SourceSerializer.Meta):
+        fields = SourceSerializer.Meta.fields + ["status", "paused_at", "terms_accepted_version", "terms_expires_at"]
+
+    def get_terms_accepted_version(self, instance) -> str | None:
+        acceptance = instance.current_terms_acceptance
+        return acceptance.terms_version if acceptance else None
+
+    def get_terms_expires_at(self, instance) -> datetime | None:
+        """When the terms acceptance lapses. Null when data is kept without a time limit."""
+        acceptance = instance.current_terms_acceptance
+        return acceptance.expires_at if acceptance else None
+
+
+class TermsStatementSerializer(serializers.Serializer):
+    id = serializers.CharField()
+    text = serializers.CharField()
+
+
+class TermsSerializer(serializers.Serializer):
+    version = serializers.CharField()
+    locale = serializers.CharField()
+    title = serializers.CharField()
+    description = serializers.CharField()
+    statements = TermsStatementSerializer(many=True)
+    footnote = serializers.CharField(help_text="Includes how long data is kept, from the server's retention settings.")
+
+
+class DataDeletionSerializer(serializers.ModelSerializer):
+    requested_by_id = serializers.UUIDField(read_only=True, allow_null=True)
+
+    class Meta:
+        model = DataDeletion
+        fields = [
+            "id",
+            "mesh_id",
+            "source_id",
+            "reason",
+            "requested_by_id",
+            "requested_at",
+            "delete_after",
+            "data_until",
+            "status",
+            "attempts",
+            "last_error",
+            "completed_at",
+        ]
+        read_only_fields = fields
 
 
 def _max_three_admin_keys(value):

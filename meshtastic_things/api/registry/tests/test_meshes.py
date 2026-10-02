@@ -1,7 +1,7 @@
 from registry.models import Mesh
 from registry.serializers import MeshSerializer
 
-from .helpers import RegistryTestCase
+from .helpers import MESH_TERMS, RegistryTestCase
 
 
 class MeshCrudTests(RegistryTestCase):
@@ -10,7 +10,7 @@ class MeshCrudTests(RegistryTestCase):
         # needs an explicit allow_blank=True on the serializer field.
         owner = self.create_owner()
         resp = self.client.post(
-            "/meshes", {"channel_id": "Plaintext", "psk_b64": ""}, format="json", **self.auth_headers(owner)
+            "/meshes", {**MESH_TERMS, "channel_id": "Plaintext", "psk_b64": ""}, format="json", **self.auth_headers(owner)
         )
         self.assertEqual(resp.status_code, 201, resp.content)
 
@@ -18,7 +18,7 @@ class MeshCrudTests(RegistryTestCase):
         owner = self.create_owner()
         create_resp = self.client.post(
             "/meshes",
-            {"channel_id": "TestChan", "psk_b64": "AAAA", "label": "initial"},
+            {**MESH_TERMS, "channel_id": "TestChan", "psk_b64": "AAAA", "label": "initial"},
             format="json",
             **self.auth_headers(owner),
         )
@@ -54,7 +54,7 @@ class MeshCrudTests(RegistryTestCase):
         self.assertEqual(resp.status_code, 404)
 
     def test_create_mesh_requires_auth(self):
-        resp = self.client.post("/meshes", {"channel_id": "X", "psk_b64": "AAAA"}, format="json")
+        resp = self.client.post("/meshes", {**MESH_TERMS, "channel_id": "X", "psk_b64": "AAAA"}, format="json")
         self.assertEqual(resp.status_code, 401)
 
     def test_mesh_owner_id_body_field_is_ignored_owner_comes_from_auth(self):
@@ -65,7 +65,7 @@ class MeshCrudTests(RegistryTestCase):
         # marks it read_only - owner_id can only come from the auth token.
         resp = self.client.post(
             "/meshes",
-            {"channel_id": "X", "psk_b64": "AAAA", "owner_id": owner_b["id"]},
+            {**MESH_TERMS, "channel_id": "X", "psk_b64": "AAAA", "owner_id": owner_b["id"]},
             format="json",
             **self.auth_headers(owner_a),
         )

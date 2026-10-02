@@ -12,3 +12,5 @@ redis==5.2.1
 # Only for its protobuf schema
 meshtastic
 influxdb-client==1.50.0
+# Deletes archived readings when a mesh ends its service
+boto3==1.43.102

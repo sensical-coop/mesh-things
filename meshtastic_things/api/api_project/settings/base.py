@@ -5,7 +5,7 @@ from pathlib import Path
 import dj_database_url
 from django.core.exceptions import ImproperlyConfigured
 
-from common.env import env_bool, env_list, env_str
+from common.env import env_bool, env_int, env_list, env_str
 from common.gateway import public_base_url
 
 BASE_DIR = Path(__file__).resolve().parent.parent.parent
@@ -141,6 +141,7 @@ REST_FRAMEWORK = {
         "registry.throttling.SignupThrottle",
         "registry.throttling.ResendVerificationThrottle",
         "registry.throttling.RequestPasswordResetThrottle",
+        "registry.throttling.OperatorRequestThrottle",
     ],
     "DEFAULT_THROTTLE_RATES": {
         "owner": "120/min",
@@ -148,6 +149,7 @@ REST_FRAMEWORK = {
         "owner-signup": "20/hour",
         "resend-verification": "3/hour",
         "request-password-reset": "5/hour",
+        "operator-request": "3/day",
     },
     "DEFAULT_SCHEMA_CLASS": "drf_spectacular.openapi.AutoSchema",
 }
@@ -158,7 +160,11 @@ SPECTACULAR_SETTINGS = {
     "SERVERS": [{"url": public_base_url()}],
     # The catalog default and the per-device override share one choice set, so
     # they share one enum component rather than generating a near-duplicate each.
-    "ENUM_NAME_OVERRIDES": {"DetectorEnum": "common.detectors.DETECTOR_CHOICES"},
+    "ENUM_NAME_OVERRIDES": {
+        "DetectorEnum": "common.detectors.DETECTOR_CHOICES",
+        "OperatorRequestStatusEnum": "registry.models.OperatorRequestStatus",
+        "DataDeletionStatusEnum": "registry.models.DataDeletionStatus",
+    },
 }
 
 # CORS: no origins allowed by default.
@@ -187,6 +193,27 @@ if COOKIE_DOMAIN:
 
 # Prefix under PUBLIC_FRONTEND_URL of the frontend's authenticated pages (meshes, devices, ...).
 FRONTEND_CONSOLE_PATH = env_str("REGISTRY__FRONTEND_CONSOLE_PATH", "/console")
+
+# Remote brokers and topic filters a source may not use. Brokers are host or host:port
+# patterns (`*` wildcards); topics must match exactly. An empty topic list still blocks `#`.
+SOURCES_BLOCKED_BROKERS = env_list("REGISTRY__SOURCES_BLOCKED_BROKERS")
+SOURCES_BLOCKED_TOPICS = env_list("REGISTRY__SOURCES_BLOCKED_TOPICS", ["#"])
+# Loopback, link-local and bare hostnames are always refused. Private network addresses
+# are too unless this is set, e.g. for a self-hosted instance bridging a broker on its LAN.
+SOURCES_ALLOW_PRIVATE_BROKERS = env_bool("REGISTRY__SOURCES_ALLOW_PRIVATE_BROKERS", False)
+
+# Off for an instance run by its own mesh owner, where there is no second party to
+# accept terms from. Turns off terms routes, recording, renewals, lapses and retention.
+TERMS_ENFORCED = env_bool("REGISTRY__TERMS_ENFORCED", True)
+
+# Blank keeps data indefinitely. When set, a terms acceptance (platform or source) lapses
+# after this long unless renewed, which pauses ingestion and schedules its readings for deletion.
+_retention_days = env_str("REGISTRY__DATA_RETENTION_DAYS")
+DATA_RETENTION_DAYS = int(_retention_days) if _retention_days else None
+# Data scheduled for deletion stays in place this long, so it can be exported or restored.
+DATA_DELETION_GRACE_DAYS = env_int("REGISTRY__DATA_DELETION_GRACE_DAYS", 30)
+TERMS_RENEWAL_NOTICE_DAYS = env_int("REGISTRY__TERMS_RENEWAL_NOTICE_DAYS", 30)
+DATA_LIFECYCLE_INTERVAL_SECONDS = env_int("REGISTRY__DATA_LIFECYCLE_INTERVAL_SECONDS", 3600)
 
 LOGGING = {
     "version": 1,

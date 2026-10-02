@@ -2,7 +2,7 @@ import asyncio
 import os
 import sys
 import argparse
-from bridge.mqtt_handler import MQTTHandler, retire_session
+from bridge.mqtt_handler import MQTTHandler, retire_session, subscription_filters
 from tools.env import get_bool_env
 from dotenv import load_dotenv
 
@@ -11,10 +11,12 @@ log = structlog.get_logger()
 
 async def create_tasks(mqtt_handler):
 
-    # queue = asyncio.Queue()
+    topics = subscription_filters(os.environ['MQTT_BRIDGE__TOPIC'])
+    await asyncio.to_thread(mqtt_handler.load_gateway_sources)
     log.info('Creating bridge tasks...')
     async with asyncio.TaskGroup() as tg:
-        tg.create_task(mqtt_handler.bridge_mqtt_kafka(topic=os.environ['MQTT_BRIDGE__TOPIC'], shared_sub=get_bool_env('MQTT_BRIDGE__SHARED_SUBS')))
+        tg.create_task(mqtt_handler.bridge_mqtt_kafka(topics=topics, shared_sub=get_bool_env('MQTT_BRIDGE__SHARED_SUBS')))
+        tg.create_task(mqtt_handler.follow_gateway_sources())
         tg.create_task(mqtt_handler.monitor_publish())
         tg.create_task(mqtt_handler.start_health_server())
         tg.create_task(mqtt_handler.producer_health.monitor())

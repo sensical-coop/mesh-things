@@ -8,7 +8,7 @@ from django.utils import timezone
 from registry.models import Owner
 from registry.views import LOGIN_FAILED_RATE_LIMIT
 
-from .helpers import RegistryTestCase
+from .helpers import SIGNUP_TERMS, RegistryTestCase
 
 def _extract_token(email) -> str:
     match = re.search(r"token=(\S+)", email.body)
@@ -18,7 +18,7 @@ def _extract_token(email) -> str:
 
 class SignupPasswordTests(RegistryTestCase):
     def test_signup_without_password_is_400(self):
-        resp = self.client.post("/owners", {"name": "Alice", "email": "login-nopass@example.com"}, format="json")
+        resp = self.client.post("/owners", {**SIGNUP_TERMS, "name": "Alice", "email": "login-nopass@example.com"}, format="json")
         self.assertEqual(resp.status_code, 400)
 
     def test_signup_with_password_creates_usable_password(self):
@@ -29,7 +29,7 @@ class SignupPasswordTests(RegistryTestCase):
     def test_signup_rejects_a_password_too_similar_to_the_email(self):
         resp = self.client.post(
             "/owners",
-            {"name": "Alice", "email": "similar@example.com", "password": "similar@example.com"},
+            {**SIGNUP_TERMS, "name": "Alice", "email": "similar@example.com", "password": "similar@example.com"},
             format="json",
         )
         self.assertEqual(resp.status_code, 400)
@@ -37,7 +37,7 @@ class SignupPasswordTests(RegistryTestCase):
 
     def test_signup_rejects_a_too_short_password(self):
         resp = self.client.post(
-            "/owners", {"name": "Alice", "email": "short-pw@example.com", "password": "abc123"}, format="json"
+            "/owners", {**SIGNUP_TERMS, "name": "Alice", "email": "short-pw@example.com", "password": "abc123"}, format="json"
         )
         self.assertEqual(resp.status_code, 400)
 
@@ -75,7 +75,7 @@ class LoginTests(RegistryTestCase):
     def test_login_before_verification_is_403(self):
         resp = self.client.post(
             "/owners",
-            {"name": "Bob", "email": "login-unverified@example.com", "password": self.DEFAULT_PASSWORD},
+            {**SIGNUP_TERMS, "name": "Bob", "email": "login-unverified@example.com", "password": self.DEFAULT_PASSWORD},
             format="json",
         )
         self.assertEqual(resp.status_code, 201)
