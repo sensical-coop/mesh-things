@@ -42,7 +42,7 @@ docker compose up -d --profile quality # lite with profile quality
 
 ### Local development
 
-For local development, a special compose configuration is used with: `docker-compose.dev.yml`. This publishes admin UI ports, and switches Django to `dev` settings). Edit `COMPOSE_FILE` in `env.example`.
+For local development, a special compose configuration is used with: `docker-compose.dev.yml`. This publishes admin UI ports, and switches Django to `dev` settings). Edit `COMPOSE_FILE` in `env.example` or:
 
 ```
 docker compose -f docker-compose.yml -f docker-compose.dev.yml up -d
