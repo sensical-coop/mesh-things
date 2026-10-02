@@ -84,6 +84,34 @@ class OptInTests(ArchiveSinkTestCase):
 
         self.assertFalse(Device.objects.get(pk=self.node["uuid"]).archive_enabled)
 
+    def test_a_failed_publish_applies_nothing_else_in_the_request(self):
+        """A 502 that claims a rollback must not leave the rest of the request saved or sent."""
+        self.fake_publisher.publish_device_sinks.side_effect = RuntimeError("kafka down")
+
+        response = self.put_device(
+            self.operator, {"archive_enabled": True, "label": "kitchen", "reading_interval_seconds": 600}
+        )
+
+        self.assertEqual(response.status_code, 502)
+        device = Device.objects.get(pk=self.node["uuid"])
+        self.assertNotEqual(device.label, "kitchen")
+        self.assertNotEqual(device.reading_interval_seconds, 600)
+        self.fake_publisher.publish_device_intervals.assert_not_called()
+        self.assertFalse(SinkInstruction.objects.exists())
+
+    def test_a_failed_reject_sends_the_archive_setting_back(self):
+        """The archive is published before the rejection, so the pipeline must be told it was undone."""
+        self.fake_publisher.publish_node_reject.side_effect = RuntimeError("kafka down")
+
+        response = self.put_device(self.operator, {"archive_enabled": True, "is_allowed": False})
+
+        self.assertEqual(response.status_code, 502)
+        device = Device.objects.get(pk=self.node["uuid"])
+        self.assertFalse(device.archive_enabled)
+        self.assertTrue(device.is_allowed)
+        self.assertEqual(self.published_sinks()[-1], (uuid.UUID(self.mesh["id"]), 42, []))
+        self.assertFalse(SinkInstruction.objects.exists())
+
     def test_a_disallowed_registration_is_not_archived(self):
         self.archive()
         self.fake_publisher.reset_mock()

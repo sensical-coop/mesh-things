@@ -142,6 +142,16 @@ def _without_db(chunks):
     yield from chunks
 
 
+def _rest_of_zip(first: bytes, rest, mesh_id):
+    """Once the 200 is sent, a storage failure can only abort the download, which the client sees as incomplete."""
+    yield first
+    try:
+        yield from rest
+    except (BotoCoreError, ClientError) as e:
+        log.warning("archive_zip_aborted", mesh_id=str(mesh_id), error=str(e))
+        raise
+
+
 def _zip_name(mesh_id, partitions) -> str:
     """By the mesh's short id: readings may not read mesh labels (provision_read_role)."""
     first, last = partitions[0]["dt"], partitions[-1]["dt"]
@@ -157,6 +167,7 @@ class ArchiveZipView(APIView):
                 OpenApiTypes.BINARY, description="The hourly Parquet files of the range, as one zip."
             ),
             404: OpenApiResponse(description="No such mesh, or nothing archived in the range."),
+            502: OpenApiResponse(description="The archive storage could not be reached."),
         },
     )
     def get(self, request, mesh_id):
@@ -164,9 +175,10 @@ class ArchiveZipView(APIView):
 
         Each hour is `YYYY-MM-DD/YYYY-MM-DD_HH.parquet` (UTC), so a day or the whole
         archive is one download. The zip streams as the files are read, and holds
-        what the file list shows at the time of the request. For querying in place,
-        issue credentials instead. Available to the mesh's owner while they are an
-        operator, and to superusers.
+        what the file list shows at the time of the request. If the storage fails
+        after the download has started, the download ends early and is incomplete,
+        so retry it. For querying in place, issue credentials instead. Available to
+        the mesh's owner while they are an operator, and to superusers.
 
         Args:
             start: Earliest day to include, as `YYYY-MM-DD`. Defaults to the first archived day.
@@ -178,8 +190,13 @@ class ArchiveZipView(APIView):
             partitions = archive.list_partitions(mesh_id, start, stop)
         if not partitions:
             raise NotFound("Nothing archived in that range")
+        chunks = archive.zip_partitions(mesh_id, partitions)
+        # The first file is read before answering, so unreachable storage is a 502, not a broken 200.
+        with _storage():
+            first = next(chunks)
         log.info("archive_zip_download", owner_id=str(request.user.id), mesh_id=str(mesh_id), files=len(partitions))
-        chunks = _without_db(archive.zip_partitions(mesh_id, partitions))
-        response = StreamingHttpResponse(chunks, content_type="application/zip")
+        response = StreamingHttpResponse(
+            _without_db(_rest_of_zip(first, chunks, mesh_id)), content_type="application/zip"
+        )
         response["Content-Disposition"] = f'attachment; filename="{_zip_name(mesh_id, partitions)}"'
         return response

@@ -47,6 +47,14 @@ class DiskAlertTests(RegistryTestCase):
 
         self.assertEqual(len(mail.outbox), 1)
 
+    def test_a_failed_email_is_retried_on_the_next_pass(self):
+        with patch("registry.disk_alert.send_disk_space_email", side_effect=RuntimeError("smtp down")):
+            with self.assertRaises(RuntimeError):
+                self._check(90)
+
+        self.assertTrue(self._check(90))
+        self.assertEqual(len(mail.outbox), 1)
+
     @override_settings(DISK_ALERT_PERCENT=0)
     def test_zero_turns_the_check_off(self):
         self.assertFalse(self._check(99))
