@@ -5,9 +5,9 @@ import base64
 import os
 
 from kafka import KafkaProducer
-from cryptography.hazmat.backends import default_backend
-from cryptography.hazmat.primitives.ciphers import Cipher, algorithms, modes
 from meshtastic.protobuf import mesh_pb2, mqtt_pb2, telemetry_pb2
+
+from common.codec import encrypt_packet
 
 
 def build_telemetry_data(battery_level=None, voltage=None, temperature=None) -> bytes:
@@ -50,14 +50,6 @@ def build_nodeinfo_data(long_name: str, short_name: str) -> bytes:
     return data.SerializeToString()
 
 
-def encrypt(data_bytes: bytes, packet_id: int, node_id: int, key_b64: str) -> bytes:
-    key_bytes = base64.b64decode(key_b64.encode("ascii"))
-    nonce = packet_id.to_bytes(8, "little") + node_id.to_bytes(8, "little")
-    cipher = Cipher(algorithms.AES(key_bytes), modes.CTR(nonce), backend=default_backend())
-    encryptor = cipher.encryptor()
-    return encryptor.update(data_bytes) + encryptor.finalize()
-
-
 def main():
     parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     parser.add_argument("--bootstrap", default=os.environ.get("KAFKA_BOOTSTRAP_LOCAL", "localhost:9092"))
@@ -98,7 +90,7 @@ def main():
     mp.hop_start = 1
 
     if args.key_b64:
-        mp.encrypted = encrypt(data_bytes, args.packet_id, args.node_id, args.key_b64)
+        mp.encrypted = encrypt_packet(data_bytes, args.packet_id, args.node_id, base64.b64decode(args.key_b64))
     else:
         data = mesh_pb2.Data()
         data.ParseFromString(data_bytes)

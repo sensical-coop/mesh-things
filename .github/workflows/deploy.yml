@@ -28,6 +28,8 @@ jobs:
 #            dockerfile: meshtastic_things/flink/Dockerfile
 #          - name: quality-worker
 #            dockerfile: meshtastic_things/quality_worker/Dockerfile
+#          - name: monitor
+#            dockerfile: meshtastic_things/monitor/Dockerfile
 #    steps:
 #      - uses: actions/checkout@v4
 #      - run: echo "REPO_LC=${GITHUB_REPOSITORY,,}" >> "$GITHUB_ENV"

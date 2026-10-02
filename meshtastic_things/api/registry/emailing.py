@@ -150,6 +150,39 @@ def send_sink_terms_lapsed_email(sink) -> None:
     )
 
 
+def send_source_disconnected_email(source, status: str, since) -> None:
+    operator = source.created_by
+    send_templated_email(
+        to_email=operator.email,
+        subject="Your source is not connected - Mesh Things",
+        template_name="source_disconnected",
+        context={
+            "name": operator.name,
+            "source": str(source),
+            "server": source.server,
+            "status": status,
+            "since": since,
+            "source_link": console_url("sources", source.id),
+        },
+    )
+
+
+def send_sink_unused_email(sink, since) -> None:
+    operator = sink.created_by
+    send_templated_email(
+        to_email=operator.email,
+        subject="Nobody is connected to your sink - Mesh Things",
+        template_name="sink_unused",
+        context={
+            "name": operator.name,
+            "sink": str(sink),
+            "since": since,
+            "max_offline_hours": settings.SINKS_MAX_OFFLINE_HOURS,
+            "sink_link": console_url("sinks", sink.id),
+        },
+    )
+
+
 def send_mesh_terms_renewal_email(mesh, acceptance) -> None:
     owner = mesh.owner
     send_templated_email(

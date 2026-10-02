@@ -126,6 +126,7 @@ class OwnerFullRecordFieldTests(RegistryTestCase):
         "last_login",
         "name",
         "role",
+        "status_alerts_enabled",
         "terms_accepted_version",
     ]
 

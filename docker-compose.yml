@@ -5,3 +5,4 @@ include:
   - compose/quality.yml
   - compose/flink.yml
   - compose/gateway.yml
+  - compose/monitor.yml

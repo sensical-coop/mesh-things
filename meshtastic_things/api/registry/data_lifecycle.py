@@ -11,7 +11,8 @@ and anything a lapse paused is resumed. Each step is idempotent, so `run_pass` c
 resume after a failure.
 
 Each pass also discards sink consumers' broker sessions that have been offline too long or
-queued too much, which the broker's own limits would let grow for weeks.
+queued too much, which the broker's own limits would let grow for weeks, and tells operators
+about sources that stay disconnected and sinks nobody is connected to.
 """
 from datetime import datetime, timedelta
 
@@ -45,6 +46,7 @@ from .models import (
     TermsAcceptance,
     TermsKind,
 )
+from .status_alerts import check_sinks, check_sources
 from .terms import terms, terms_enforced, text_hash
 
 log = structlog.get_logger()
@@ -388,5 +390,7 @@ def run_pass(now: datetime | None = None) -> dict:
         "resumed": resume_paused(),
         "deletions_done": purge_due_deletions(now),
         "sink_sessions_discarded": discard_stale_sink_sessions(now),
+        "source_alerts": check_sources(now),
+        "sink_alerts": check_sinks(now),
         "disk_alerts": int(check_disk()),
     }
