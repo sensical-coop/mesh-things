@@ -35,5 +35,13 @@ def check_disk() -> bool:
     if not first:
         return False
     log.warning("disk_nearly_full", percent=round(percent, 1), free_bytes=usage.free)
-    send_disk_space_email(percent, usage.free)
+    try:
+        send_disk_space_email(percent, usage.free)
+    except Exception:
+        # Retry on the next pass rather than staying silent for a day.
+        try:
+            cache.delete(ALERTED_KEY)
+        except Exception as e:
+            log.warning("disk_alert_cache_failed", error=str(e))
+        raise
     return True
