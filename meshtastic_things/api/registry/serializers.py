@@ -10,11 +10,14 @@ from django.utils import timezone
 from drf_spectacular.utils import extend_schema_field
 from rest_framework import serializers
 
+from common import sinks as sink_names
+from common import sources as source_names
 from common.algorithms import validate_calibration, validate_step
 from common.channels import channel_name, origin_of
 from common.detectors import DETECTOR_CHOICES, MEASUREMENT_DETECTORS, enabled_detectors_for
 from common.env import env_str
 
+from .broker_hosts import is_own_broker
 from .broker_hosts import refusal as broker_refusal
 from .emailing import ALARM_EMAIL_COOLDOWN_MAX_SECONDS
 from . import postprocessing
@@ -35,6 +38,7 @@ from .models import (
     PostprocessingStep,
     StepCalibration,
     DataDeletion,
+    Sink,
     Source,
     TermsKind,
     TelemetryVariant,
@@ -417,8 +421,13 @@ class MeshUpdateSerializer(_MeshTermsMixin, serializers.ModelSerializer):
         return _validate_visible_source(self, value)
 
 
-def _own_emqx_host() -> str:
-    return urlsplit(env_str("REGISTRY__EMQX_API_URL")).hostname or ""
+def _own_broker_hosts() -> list[str]:
+    """Every name this instance's broker goes by: its API, the bridge's and the sinks' address."""
+    return [
+        urlsplit(env_str("REGISTRY__EMQX_API_URL")).hostname or "",
+        env_str("MQTT_BRIDGE__BROKER"),
+        sinks_broker().rpartition(":")[0],
+    ]
 
 
 class SourceSerializer(serializers.ModelSerializer):
@@ -476,7 +485,7 @@ class SourceSerializer(serializers.ModelSerializer):
         if not sep or not host or not port.isdigit() or not 0 < int(port) < 65536:
             raise serializers.ValidationError("Must be host:port.")
         # Bridging our own broker into itself would loop through the republished topics.
-        if host.strip("[]").rstrip(".").lower() == _own_emqx_host().lower():
+        if is_own_broker(host, _own_broker_hosts()):
             raise serializers.ValidationError("A source cannot point at this instance's own broker.")
         reason = broker_refusal(host)
         if reason:
@@ -492,6 +501,10 @@ class SourceSerializer(serializers.ModelSerializer):
             raise serializers.ValidationError("Must be a plain topic filter; $share and $SYS topics are not accepted.")
         if value in settings.SOURCES_BLOCKED_TOPICS:
             raise serializers.ValidationError("This topic filter is not allowed as a source.")
+        if source_names.reaches_reserved_topics(value):
+            raise serializers.ValidationError(
+                "This topic filter could match the topics sources are republished and sinks are sent on."
+            )
         return value
 
 
@@ -553,6 +566,146 @@ class SourceReadSerializer(SourceSerializer):
         """When the terms acceptance lapses. Null when data is kept without a time limit."""
         acceptance = instance.current_terms_acceptance
         return acceptance.expires_at if acceptance else None
+
+
+def sinks_broker() -> str:
+    """The broker a sink's consumer connects to, as host:port."""
+    default = f"{env_str('MQTT_BRIDGE__BROKER')}:{env_str('MQTT_BRIDGE__PORT', '8883')}"
+    return env_str("REGISTRY__SINKS_BROKER", default)
+
+
+class SinkWriteSerializer(serializers.Serializer):
+    """Create or update a sink. Every field is optional on update; lists replace what is there."""
+
+    label = serializers.CharField(max_length=255, required=False, allow_null=True, allow_blank=True)
+    streams = serializers.ListField(
+        child=serializers.ChoiceField(choices=sink_names.STREAMS),
+        allow_empty=False,
+        required=False,
+        help_text="Which readings are sent: `decoded`, `derived`, `alarms`. Defaults to `decoded`.",
+    )
+    mesh_ids = serializers.ListField(
+        child=serializers.UUIDField(),
+        required=False,
+        help_text="Meshes whose every node is sent, including nodes that appear later.",
+    )
+    device_ids = serializers.ListField(
+        child=serializers.UUIDField(),
+        required=False,
+        help_text="Registrations (`uuid`) of single devices to send.",
+    )
+
+    def validate_streams(self, value):
+        return [stream for stream in sink_names.STREAMS if stream in value]
+
+    def _editable(self, obj, mesh: Mesh) -> None:
+        owner = self.context["owner"]
+        if not owner.can_edit_mesh(mesh):
+            raise serializers.ValidationError(f"{obj} not found.")
+        if not mesh.owner.is_operator:
+            raise serializers.ValidationError(f"{obj} is on a mesh not owned by an operator.")
+
+    def validate_mesh_ids(self, value):
+        meshes = {mesh.id: mesh for mesh in Mesh.objects.filter(pk__in=value).select_related("owner")}
+        for mesh_id in value:
+            if mesh_id not in meshes:
+                raise serializers.ValidationError(f"Mesh {mesh_id} not found.")
+            self._editable(f"Mesh {mesh_id}", meshes[mesh_id])
+        return list(meshes.values())
+
+    def validate_device_ids(self, value):
+        devices = {d.id: d for d in Device.objects.filter(pk__in=value).select_related("mesh__owner")}
+        for device_id in value:
+            if device_id not in devices:
+                raise serializers.ValidationError(f"Device {device_id} not found.")
+            self._editable(f"Device {device_id}", devices[device_id].mesh)
+        return list(devices.values())
+
+
+class SinkCreateSerializer(_TermsAcceptanceInputMixin, SinkWriteSerializer):
+    terms_kind = TermsKind.SINK
+
+
+class SinkTermsAcceptanceSerializer(_TermsAcceptanceInputMixin):
+    terms_kind = TermsKind.SINK
+
+
+class SinkReadSerializer(serializers.ModelSerializer):
+    # Declared because the model's JSONField would reach the schema untyped.
+    streams = serializers.ListField(
+        child=serializers.ChoiceField(choices=sink_names.STREAMS),
+        read_only=True,
+        help_text="Which readings are sent: `decoded`, `derived`, `alarms`.",
+    )
+    created_by_id = serializers.UUIDField(read_only=True, allow_null=True)
+    paused_at = serializers.DateTimeField(
+        read_only=True, allow_null=True, help_text="When the sink was paused because its terms lapsed."
+    )
+    terms_accepted_version = serializers.SerializerMethodField()
+    terms_expires_at = serializers.SerializerMethodField()
+    mesh_ids = serializers.SerializerMethodField()
+    device_ids = serializers.SerializerMethodField()
+    broker = serializers.SerializerMethodField(help_text="Broker the consumer connects to over TLS, as host:port.")
+    username = serializers.SerializerMethodField()
+    topic_filter = serializers.SerializerMethodField(help_text="Everything the consumer may subscribe to.")
+    connections = serializers.IntegerField(
+        read_only=True, allow_null=True, help_text="Consumers connected now. Null when the broker cannot be asked."
+    )
+
+    class Meta:
+        model = Sink
+        fields = [
+            "id",
+            "label",
+            "streams",
+            "mesh_ids",
+            "device_ids",
+            "broker",
+            "username",
+            "topic_filter",
+            "connections",
+            "paused_at",
+            "terms_accepted_version",
+            "terms_expires_at",
+            "created_by_id",
+            "created_at",
+            "updated_at",
+        ]
+        read_only_fields = fields
+
+    def get_terms_accepted_version(self, instance) -> str | None:
+        acceptance = instance.current_terms_acceptance
+        return acceptance.terms_version if acceptance else None
+
+    def get_terms_expires_at(self, instance) -> datetime | None:
+        """When the terms acceptance lapses. Null for no time limit."""
+        acceptance = instance.current_terms_acceptance
+        return acceptance.expires_at if acceptance else None
+
+    def get_mesh_ids(self, instance) -> list[str]:
+        return [str(mesh_id) for mesh_id in instance.mesh_links.order_by("created_at").values_list("mesh_id", flat=True)]
+
+    def get_device_ids(self, instance) -> list[str]:
+        return [
+            str(device_id) for device_id in instance.device_links.order_by("created_at").values_list("device_id", flat=True)
+        ]
+
+    def get_broker(self, instance) -> str:
+        return sinks_broker()
+
+    def get_username(self, instance) -> str:
+        return sink_names.username(instance.id)
+
+    def get_topic_filter(self, instance) -> str:
+        return sink_names.topic_filter(instance.id)
+
+
+class SinkCredentialsSerializer(SinkReadSerializer):
+    password = serializers.CharField(read_only=True, help_text="Shown only in this response.")
+
+    class Meta(SinkReadSerializer.Meta):
+        fields = SinkReadSerializer.Meta.fields + ["password"]
+        read_only_fields = fields
 
 
 class TermsStatementSerializer(serializers.Serializer):

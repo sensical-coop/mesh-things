@@ -205,6 +205,12 @@ SOURCES_BLOCKED_TOPICS = env_list("REGISTRY__SOURCES_BLOCKED_TOPICS", ["#"])
 # are too unless this is set, e.g. for a self-hosted instance bridging a broker on its LAN.
 SOURCES_ALLOW_PRIVATE_BROKERS = env_bool("REGISTRY__SOURCES_ALLOW_PRIVATE_BROKERS", False)
 
+# EMQX keeps an offline consumer's session, and queues its messages, by broker-wide limits
+# that are far too generous for a sink. Each lifecycle pass discards a sink session offline
+# longer than this, or holding more queued messages than this. 0 turns either check off.
+SINKS_MAX_OFFLINE_HOURS = env_int("REGISTRY__SINKS_MAX_OFFLINE_HOURS", 24)
+SINKS_MAX_QUEUED = env_int("REGISTRY__SINKS_MAX_QUEUED", 10000)
+
 # Off for an instance run by its own mesh owner, where there is no second party to
 # accept terms from. Turns off terms routes, recording, renewals, lapses and retention.
 TERMS_ENFORCED = env_bool("REGISTRY__TERMS_ENFORCED", True)

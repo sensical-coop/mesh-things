@@ -1,5 +1,5 @@
 """The terms owners accept: account terms at signup, mesh terms per default-broker mesh,
-and source terms per source.
+source terms per source and sink terms per sink.
 
 A version and its text change together: any edit to a statement needs a new version,
 so that each acceptance's `text_hash` still names the text it agreed to. The retention
@@ -21,6 +21,7 @@ VERSIONS = {
     TermsKind.ACCOUNT: "account-2026-10",
     TermsKind.MESH: "meshes-2026-10",
     TermsKind.SOURCE: "sources-2026-10",
+    TermsKind.SINK: "sinks-2026-10",
 }
 
 # The console mock (apps/api-mock/src/features/terms/terms.ts) carries a copy of this text
@@ -273,7 +274,108 @@ _SOURCE = {
     },
 }
 
-_COPY = {TermsKind.ACCOUNT: _ACCOUNT, TermsKind.MESH: _MESH, TermsKind.SOURCE: _SOURCE}
+# Placeholder wording, not reviewed: to be replaced before sinks are offered in production.
+# The operator is the controller of the readings a sink sends to a third party.
+_SINK = {
+    "en": {
+        "title": "Before you create a sink",
+        "description": (
+            "A sink lets a service you choose subscribe to readings from your meshes and devices, "
+            "with credentials only you hold. Those readings can include personal data from people "
+            "who never signed up here: node names, device IDs, positions and telemetry. You decide "
+            "who receives them and why, and Sensical sends them only on your instructions. Tick each "
+            "box to continue."
+        ),
+        "statements": [
+            (
+                "controller",
+                "I act as data controller for the readings this sink sends. I instruct Sensical, as "
+                "processor under the Data Processing Agreement ({dpa_url}), to make them available to "
+                "whoever holds the sink's credentials.",
+            ),
+            (
+                "recipient",
+                "I'll give the credentials only to recipients I trust with this data, and I'm "
+                "responsible for how they use it.",
+            ),
+            (
+                "lawfulBasis",
+                "I have a lawful basis for sharing these readings, and I tell the people whose nodes "
+                "appear in them who receives their data.",
+            ),
+            (
+                "minimisation",
+                "I'll attach only the meshes and devices the recipient needs, choose only the streams "
+                "it needs, and remove them when it no longer does.",
+            ),
+        ],
+        "footnote": (
+            "You can withdraw at any time: detach the sink's meshes and devices, then delete the "
+            "sink, and its credentials stop working. Questions or data requests: info@sensical.es."
+        ),
+        "retention_limited": (
+            "This acceptance is valid for {days} days. We'll email you before it lapses so you can "
+            "renew it. If you don't, the sink is paused: nothing more is sent and its credentials "
+            "are refused until you renew. A sink keeps no data of its own."
+        ),
+        "retention_unlimited": (
+            "A sink keeps no data of its own. It sends readings while it is in use and stops when you "
+            "delete it."
+        ),
+    },
+    "es": {
+        "title": "Antes de crear un destino",
+        "description": (
+            "Un destino permite que un servicio que tú eliges se suscriba a las lecturas de tus "
+            "mallas y dispositivos, con credenciales que solo tú tienes. Esas lecturas pueden incluir "
+            "datos personales de personas que nunca se han registrado aquí: nombres de nodo, "
+            "identificadores de dispositivo, posiciones y telemetría. Tú decides quién las recibe y "
+            "para qué, y Sensical las envía solo siguiendo tus instrucciones. Marca cada casilla para "
+            "continuar."
+        ),
+        "statements": [
+            (
+                "controller",
+                "Actúo como responsable del tratamiento de las lecturas que envía este destino. "
+                "Encargo a Sensical, como encargado del tratamiento según el Acuerdo de procesamiento de "
+                "los datos ({dpa_url}), ponerlas a disposición de quien tenga las credenciales del "
+                "destino.",
+            ),
+            (
+                "recipient",
+                "Daré las credenciales solo a destinatarios de confianza para estos datos, y soy "
+                "responsable del uso que hagan de ellos.",
+            ),
+            (
+                "lawfulBasis",
+                "Tengo una base jurídica para compartir estas lecturas, e informo a las personas cuyos "
+                "nodos aparecen en ellas de quién recibe sus datos.",
+            ),
+            (
+                "minimisation",
+                "Asociaré solo las mallas y dispositivos que el destinatario necesite, elegiré solo los "
+                "flujos que necesite y los quitaré cuando ya no los necesite.",
+            ),
+        ],
+        "footnote": (
+            "Puedes retirarte cuando quieras: quita las mallas y dispositivos del destino y después "
+            "elimínalo, y sus credenciales dejan de funcionar. Dudas o solicitudes sobre datos: "
+            "info@sensical.es."
+        ),
+        "retention_limited": (
+            "Esta aceptación es válida durante {days} días. Te avisaremos por correo antes de que "
+            "caduque para que puedas renovarla. Si no lo haces, el destino se pausa: no se envía nada "
+            "más y sus credenciales se rechazan hasta que renueves. Un destino no guarda datos propios."
+        ),
+        "retention_unlimited": (
+            "Un destino no guarda datos propios. Envía lecturas mientras está en uso y deja de hacerlo "
+            "cuando lo eliminas."
+        ),
+    },
+}
+
+_COPY = {TermsKind.ACCOUNT: _ACCOUNT, TermsKind.MESH: _MESH, TermsKind.SOURCE: _SOURCE, TermsKind.SINK: _SINK}
+
 
 def dpa_url() -> str:
     """The Data Processing Agreement the mesh, source and sink terms are accepted under."""
@@ -283,7 +385,8 @@ def dpa_url() -> str:
 def terms(kind: str, locale: str | None = None) -> dict:
     """The current terms of `kind` in `locale`, falling back to English.
 
-    Mesh and source terms end with how long data is kept; the account terms store none.
+    Mesh, source and sink terms end with how long data is kept, or for a sink how long the
+    acceptance lasts; the account terms store none.
     """
     locale = locale if locale in LOCALES else DEFAULT_LOCALE
     text = _COPY[kind][locale]

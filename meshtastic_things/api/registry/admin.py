@@ -18,6 +18,7 @@ from .models import (
     PostprocessingBlueprint,
     PostprocessingInputBinding,
     PostprocessingStep,
+    Sink,
     SinkInstruction,
     Source,
     StepCalibration,
@@ -83,11 +84,22 @@ class _ReadOnlyAdmin(admin.ModelAdmin):
         return False
 
 
+@admin.register(Sink)
+class SinkAdmin(_ReadOnlyAdmin):
+    """Read-only: a sink is only consistent with its EMQX user and the pipeline when written through the API."""
+
+    list_display = ("label", "streams", "created_by", "paused_at", "created_at")
+    list_select_related = ("created_by",)
+    search_fields = ("label",)
+
+
 @admin.register(TermsAcceptance)
 class TermsAcceptanceAdmin(_ReadOnlyAdmin):
     """Read-only: acceptances are append-only evidence."""
 
-    list_display = ("acceptor_email", "kind", "mesh", "source", "terms_version", "locale", "accepted_at", "expires_at")
+    list_display = (
+        "acceptor_email", "kind", "mesh", "source", "sink", "terms_version", "locale", "accepted_at", "expires_at"
+    )
     list_filter = ("kind", "terms_version", "locale")
     search_fields = ("acceptor_email", "acceptor_name")
 

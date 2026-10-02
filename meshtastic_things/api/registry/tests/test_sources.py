@@ -6,6 +6,7 @@ from unittest.mock import patch
 from django.core.management import CommandError, call_command
 from django.test import override_settings
 
+from registry import broker_hosts
 from registry.models import Mesh, Owner, Source, TermsKind
 from registry.terms import VERSIONS
 
@@ -134,6 +135,27 @@ class SourceValidationTests(RegistryTestCase):
         with patch.dict("os.environ", {"REGISTRY__EMQX_API_URL": "https://mqtt.sensical.es:18084/api/v5"}):
             self.assertEqual(self._post(server="MQTT.sensical.es:8883").status_code, 400)
         self.fake_emqx.apply_source.assert_not_called()
+
+    def test_our_own_broker_is_rejected_by_address_or_alias(self):
+        own = {"mqtt.sensical.es": ["2.29.16.246"], "alias.example.org": ["2.29.16.246"], "r.example.org": ["9.9.9.9"]}
+        env = {"REGISTRY__EMQX_API_URL": "https://mqtt.sensical.es:18084/api/v5"}
+        with patch.dict("os.environ", env), patch.object(broker_hosts, "resolve", side_effect=lambda h: own.get(h, [])):
+            self.assertEqual(self._post(server="2.29.16.246:8883").status_code, 400)
+            self.assertEqual(self._post(server="alias.example.org:1883").status_code, 400)
+            self.assertEqual(self._post(server="r.example.org:1883").status_code, 201)
+        self.fake_emqx.apply_source.assert_called_once()
+
+    def test_the_bridge_and_sinks_brokers_count_as_our_own(self):
+        env = {"MQTT_BRIDGE__BROKER": "bridge.example.org", "REGISTRY__SINKS_BROKER": "sinks.example.org:8884"}
+        with patch.dict("os.environ", env):
+            self.assertEqual(self._post(server="bridge.example.org:8883").status_code, 400)
+            self.assertEqual(self._post(server="sinks.example.org:1883").status_code, 400)
+
+    def test_topics_reaching_republished_sources_or_sinks_are_rejected(self):
+        for topic in ("+/#", "+/+/LongFast/#", "mt-sources/#", "mt-sources-sinks/abc/#", "mt-sources-dev/x/#"):
+            self.assertEqual(self._post(topic=topic).status_code, 400, topic)
+        self.assertEqual(self._post(topic="test/#").status_code, 201)
+        self.fake_emqx.apply_source.assert_called_once()
 
     @override_settings(SOURCES_BLOCKED_BROKERS=["*.meshtastic.org", "blocked.example.org:1883"])
     def test_blocked_brokers_are_rejected(self):

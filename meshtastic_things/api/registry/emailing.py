@@ -125,6 +125,31 @@ def send_source_terms_lapsed_email(source) -> None:
     )
 
 
+def send_sink_terms_renewal_email(sink, acceptance) -> None:
+    operator = sink.created_by
+    send_templated_email(
+        to_email=operator.email,
+        subject="Renew the terms for your sink - Mesh Things",
+        template_name="sink_terms_renewal",
+        context={
+            "name": operator.name,
+            "sink": str(sink),
+            "expires_at": acceptance.expires_at,
+            "sink_link": console_url("sinks", sink.id),
+        },
+    )
+
+
+def send_sink_terms_lapsed_email(sink) -> None:
+    operator = sink.created_by
+    send_templated_email(
+        to_email=operator.email,
+        subject="Your sink has been paused - Mesh Things",
+        template_name="sink_terms_lapsed",
+        context={"name": operator.name, "sink": str(sink), "sink_link": console_url("sinks", sink.id)},
+    )
+
+
 def send_mesh_terms_renewal_email(mesh, acceptance) -> None:
     owner = mesh.owner
     send_templated_email(

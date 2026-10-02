@@ -13,7 +13,7 @@ REMOTE = "msh/EU_868/2/e/LongFast/!aabbccdd"
 
 @pytest.fixture(autouse=True)
 def _production_namespace(monkeypatch):
-    monkeypatch.delenv("MQTT_SOURCES__NAMESPACE", raising=False)
+    monkeypatch.delenv("MQTT_CONNECTORS__NAMESPACE", raising=False)
 
 
 class _Record:
@@ -40,12 +40,28 @@ def test_the_own_topic_has_no_source():
 
 
 def test_the_namespace_separates_dev_from_production(monkeypatch):
-    monkeypatch.setenv("MQTT_SOURCES__NAMESPACE", "mt-sources-dev")
+    monkeypatch.setenv("MQTT_CONNECTORS__NAMESPACE", "mt-sources-dev")
 
     assert sources.source_id_from_topic(f"mt-sources/{SOURCE}/{REMOTE}") is None
     assert sources.source_id_from_topic(f"mt-sources-dev/{SOURCE}/{REMOTE}") == SOURCE
     assert sources.source_id_from_resource_name(f"mt-sources-src-{SOURCE}") is None
     assert sources.source_id_from_resource_name(sources.resource_name(SOURCE)) == SOURCE
+
+
+@pytest.mark.parametrize("topic", ["#", "+/#", "+/x/#", "mt-sources/#", "mt-sources-sinks/a/#", "mt-sources-dev/s/#"])
+def test_a_source_filter_reaching_republished_or_sinked_topics_is_reserved(topic):
+    assert sources.reaches_reserved_topics(topic)
+
+
+@pytest.mark.parametrize("topic", ["msh/#", "msh/EU_868/2/e/LongFast/#", "test/#", "+", "mt-sources"])
+def test_an_ordinary_source_filter_is_not_reserved(topic):
+    assert not sources.reaches_reserved_topics(topic)
+
+
+def test_the_default_namespace_stays_reserved_on_a_dev_stack(monkeypatch):
+    monkeypatch.setenv("MQTT_CONNECTORS__NAMESPACE", "dev-stack")
+    assert sources.reaches_reserved_topics("dev-stack-sinks/x/#")
+    assert sources.reaches_reserved_topics("mt-sources/#")
 
 
 def test_the_bridge_subscribes_to_its_own_topic_and_the_sources():

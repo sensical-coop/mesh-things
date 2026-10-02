@@ -1,6 +1,6 @@
 from datetime import datetime, timedelta, timezone as dt_timezone
 from io import StringIO
-from unittest.mock import MagicMock
+from unittest.mock import MagicMock, patch
 
 from django.core import mail
 from django.core.management import call_command
@@ -383,3 +383,58 @@ class DataStoreTests(SimpleTestCase):
 
         buckets = [c.kwargs["bucket"] for c in self.delete_api.delete.call_args_list]
         self.assertEqual(buckets, ["telemetry", ALARMS_BUCKET, ALARM_COUNTS_BUCKET])
+
+
+@override_settings(SINKS_MAX_OFFLINE_HOURS=24, SINKS_MAX_QUEUED=100)
+class SinkSessionTests(SimpleTestCase):
+    NOW = datetime(2026, 10, 1, 12, 0, tzinfo=dt_timezone.utc)
+
+    def setUp(self):
+        self.emqx = MagicMock()
+        for target in (
+            patch.object(data_lifecycle, "get_emqx_client", return_value=self.emqx),
+            patch.dict("os.environ", {"REGISTRY__EMQX_API_URL": "https://emqx.example.org/api/v5"}),
+        ):
+            target.start()
+            self.addCleanup(target.stop)
+
+    def session(self, clientid, connected=False, offline_hours=1, queued=0):
+        disconnected_at = None if connected else (self.NOW - timedelta(hours=offline_hours)).isoformat()
+        return {"clientid": clientid, "connected": connected, "disconnected_at": disconnected_at, "mqueue_len": queued}
+
+    def discarded(self):
+        return [c.args[0] for c in self.emqx.discard_session.call_args_list]
+
+    def test_sessions_offline_too_long_or_queueing_too_much_are_discarded(self):
+        self.emqx.sink_sessions.return_value = [
+            self.session("recent", offline_hours=2),
+            self.session("old", offline_hours=25),
+            self.session("full", offline_hours=1, queued=101),
+            self.session("slow-but-online", connected=True, queued=500),
+            self.session("online", connected=True, queued=5),
+        ]
+
+        self.assertEqual(data_lifecycle.discard_stale_sink_sessions(self.NOW), 3)
+        self.assertEqual(self.discarded(), ["old", "full", "slow-but-online"])
+
+    @override_settings(SINKS_MAX_OFFLINE_HOURS=0, SINKS_MAX_QUEUED=0)
+    def test_zero_turns_both_limits_off(self):
+        self.emqx.sink_sessions.return_value = [self.session("old", offline_hours=1000, queued=10**6)]
+
+        self.assertEqual(data_lifecycle.discard_stale_sink_sessions(self.NOW), 0)
+
+    def test_one_failure_does_not_stop_the_others(self):
+        self.emqx.sink_sessions.return_value = [self.session("a", offline_hours=30), self.session("b", offline_hours=30)]
+        self.emqx.discard_session.side_effect = [RuntimeError("emqx down"), None]
+
+        self.assertEqual(data_lifecycle.discard_stale_sink_sessions(self.NOW), 1)
+
+    def test_an_unreachable_broker_skips_the_step(self):
+        self.emqx.sink_sessions.side_effect = RuntimeError("emqx down")
+
+        self.assertEqual(data_lifecycle.discard_stale_sink_sessions(self.NOW), 0)
+
+    def test_nothing_runs_without_emqx(self):
+        with patch.dict("os.environ", {"REGISTRY__EMQX_API_URL": ""}):
+            self.assertEqual(data_lifecycle.discard_stale_sink_sessions(self.NOW), 0)
+        self.emqx.sink_sessions.assert_not_called()

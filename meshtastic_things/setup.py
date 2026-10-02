@@ -33,7 +33,8 @@ setup(
             'mqtt_kafka_bridge=bridge.mqtt_kafka_bridge:main',
             'kafka_influx_writer=writer.kafka_influx_writer:main',
             'kafka_s3_writer=writer.kafka_s3_writer:main',
-            'decode_consumer=pipeline.decode_consumer:main'
+            'decode_consumer=pipeline.decode_consumer:main',
+            'sink_dispatcher=pipeline.sink_dispatcher:main'
         ],
     },
 )

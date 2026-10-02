@@ -1,0 +1,9 @@
+Hi {{ name }},
+
+Your acceptance of the terms for the sink "{{ sink }}" lapses on
+{{ expires_at|date:"Y-m-d H:i" }} UTC. Renew it to keep the sink sending:
+
+{{ sink_link }}
+
+If it lapses, the sink is paused: nothing more is sent and its credentials are
+refused until you renew.
