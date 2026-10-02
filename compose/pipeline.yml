@@ -1,4 +1,12 @@
+# Docker keeps every container's log unless capped: 3 files of 10 MB each.
+x-logging: &logging
+  driver: json-file
+  options:
+    max-size: "10m"
+    max-file: "3"
+
 x-pipeline-image: &pipeline-image
+  logging: *logging
   image: meshtastic-things/pipeline:latest
   # Prebuilt alternative, disabled. See compose/api.yml.
   # image: ghcr.io/sensical-coop/meshtastic-kafka/pipeline:${TAG:-latest}
@@ -123,6 +131,7 @@ services:
 
   # The bundled object store; left out when the archive is on an external S3.
   minio:
+    logging: *logging
     profiles: ["minio"]
     mem_limit: 768m
     container_name: minio
