@@ -133,7 +133,7 @@ REST_FRAMEWORK = {
     if IS_READINGS
     else ["registry.permissions.IsVerifiedOwner"],
     "UNAUTHENTICATED_USER": "django.contrib.auth.models.AnonymousUser",
-    "DEFAULT_THROTTLE_CLASSES": ["registry.throttling.OwnerRateThrottle"]
+    "DEFAULT_THROTTLE_CLASSES": ["registry.throttling.OwnerRateThrottle", "registry.throttling.AnonReadThrottle"]
     if IS_READINGS
     else [
         "registry.throttling.OwnerRateThrottle",

@@ -12,6 +12,7 @@ from common.channels import (
     payload_kind_of_measurement,
     split_channel,
 )
+from registry.models import Device, visible_meshes_for
 from .influx_client import get_client
 from .measurement_catalog import get_measurement_types
 from .serializers import (
@@ -89,16 +90,25 @@ def _as_channels(measurement: str, series: list[dict]) -> list[dict]:
 def _require_visible_mesh(request, mesh_id) -> None:
     """Reject a mesh the caller may not read, without revealing whether it exists.
 
-    Readable means their own or public.
+    Readable means their own or public, and only public without credentials.
     """
     if request.user.is_superuser:
         return
-    if not request.user.visible_meshes.filter(pk=mesh_id).exists():
+    if not visible_meshes_for(request.user).filter(pk=mesh_id).exists():
         raise NotFound("Device not found")
 
 
 def _resolve_device_uuid(request, device_uuid) -> tuple[str, int]:
-    resolved = getattr(request.user, "devices_by_uuid", {}).get(str(device_uuid))
+    if request.user.is_authenticated:
+        resolved = request.user.devices_by_uuid.get(str(device_uuid))
+    else:
+        resolved = (
+            Device.objects.filter(pk=device_uuid, is_allowed=True, mesh__is_public=True)
+            .values_list("mesh_id", "device_id")
+            .first()
+        )
+        if resolved is not None:
+            resolved = (str(resolved[0]), resolved[1])
     if resolved is None:
         raise NotFound("Device not found")
     return resolved
@@ -186,7 +196,8 @@ class LatestView(ReadingsAPIView):
     """Return a device's most recent readings.
 
     Without `payload_kind`, every channel the device has reported comes back in
-    one call, each annotated with its unit from the measurement catalog.
+    one call, each annotated with its unit from the measurement catalog. A
+    device on a public mesh is readable without credentials.
 
     Args:
         payload_kind: Restrict to one family, for example
@@ -194,6 +205,8 @@ class LatestView(ReadingsAPIView):
         lookback: How far back to search for a value, as a relative duration, a
             date or a timestamp. Defaults to `-30d`.
     """
+
+    permission_classes = [AllowAny]
 
     @extend_schema(parameters=LATEST_PARAMS, responses={200: LATEST_RESPONSE})
     def get(self, request, mesh_id, node_id):
@@ -294,7 +307,11 @@ class DeviceReadingsView(ReadingsView):
 
 
 class DeviceLatestView(LatestView):
-    """Most recent readings, addressed by the device's registration ID."""
+    """Most recent readings, addressed by the device's registration ID.
+
+    A device on a public mesh is readable without credentials. Rejected
+    registrations are not.
+    """
 
     @extend_schema(parameters=LATEST_PARAMS, responses={200: LATEST_RESPONSE})
     def get(self, request, device_uuid):

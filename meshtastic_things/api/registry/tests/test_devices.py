@@ -652,12 +652,12 @@ class DeviceCatalogTests(RegistryTestCase):
         self.assertTrue(device.is_allowed)
         self.assertIsNotNone(device.last_seen)
 
-    def test_list_mesh_devices_requires_auth_and_is_owner_scoped(self):
+    def test_list_mesh_devices_is_owner_scoped(self):
         owner_a = self.create_owner(name="A", email="dev-owner-a@example.com")
         owner_b = self.create_owner(name="B", email="dev-owner-b@example.com")
         mesh = self.create_mesh(owner_a)
 
-        self.assertEqual(self.client.get(f"/meshes/{mesh['id']}/devices").status_code, 401)
+        self.assertEqual(self.client.get(f"/meshes/{mesh['id']}/devices").status_code, 404)
         self.assertEqual(
             self.client.get(f"/meshes/{mesh['id']}/devices", **self.auth_headers(owner_b)).status_code, 404
         )

@@ -66,8 +66,11 @@ from .models import (
     TermsKind,
     TelemetryVariant,
     TelemetryVariantMeasurement,
+    can_edit_mesh,
+    can_view_mesh,
+    visible_meshes_for,
 )
-from .permissions import IsOperator, IsSuperuser, IsVerifiedOwner
+from .permissions import IsOperator, IsSuperuser, IsVerifiedOwner, ReadOnlyOrVerifiedOwner
 from .serializers import (
     AlgorithmSerializer,
     BackfillClaimSerializer,
@@ -146,7 +149,11 @@ def _flag(name, description):
 
 MESH_FILTER_PARAMS = [
     _flag("owned", "Restrict to meshes the caller owns, excluding public ones."),
-    _query("source_id", "Restrict to meshes bridged from one source.", OpenApiTypes.UUID),
+    _query(
+        "source_id",
+        "Restrict to meshes bridged from one source. Matches only meshes the caller owns.",
+        OpenApiTypes.UUID,
+    ),
 ]
 
 DEVICE_FILTER_PARAMS = [
@@ -851,9 +858,9 @@ def _require_mesh_ownership(mesh: Mesh, owner: Owner) -> None:
         raise PermissionDenied("You do not own this mesh")
 
 
-def _require_mesh_visible(mesh: Mesh, owner: Owner) -> None:
+def _require_mesh_visible(mesh: Mesh, user) -> None:
     """404 rather than 403, so a private mesh doesn't confirm its own existence."""
-    if not owner.can_view_mesh(mesh):
+    if not can_view_mesh(user, mesh):
         raise NotFound("Mesh not found")
 
 
@@ -872,28 +879,33 @@ def _get_device_or_404(device_uuid) -> Device:
 
 
 class MeshListCreateView(APIView):
-    permission_classes = [IsVerifiedOwner]
+    permission_classes = [ReadOnlyOrVerifiedOwner]
 
     @extend_schema(parameters=MESH_FILTER_PARAMS, responses=MeshSerializer(many=True))
     def get(self, request):
         """List the meshes the caller may read, or every mesh for a superuser.
 
-        Alongside their own, this includes public meshes. The pre-shared key is
-        included only for meshes the caller owns.
+        Alongside their own, this includes public meshes. Without credentials,
+        only public meshes are listed. The pre-shared key, the source and the
+        terms status are included only for meshes the caller owns.
 
         Args:
             owned: Restrict to meshes the caller owns. Defaults to false.
-            source_id: Restrict to meshes bridged from one source.
+            source_id: Restrict to meshes bridged from one source. Matches
+                only meshes the caller owns, or any mesh for a superuser.
         """
-        qs = request.user.visible_meshes
+        qs = visible_meshes_for(request.user)
         if request.query_params.get("owned", "").lower() in ("true", "1"):
-            qs = qs.filter(owner=request.user)
+            qs = qs.filter(owner_id=request.user.id)
         source_id = request.query_params.get("source_id")
         if source_id:
             try:
                 qs = qs.filter(source_id=source_id)
             except (ValueError, DjangoValidationError):
                 raise ValidationError({"source_id": "Must be a UUID."})
+            # The source is hidden from viewers, so the filter must not reveal it either.
+            if not request.user.is_superuser:
+                qs = qs.filter(owner_id=request.user.id)
         return Response(MeshSerializer(qs, many=True, context=_viewer_context(request)).data)
 
     @extend_schema(request=MeshSerializer, responses={201: MeshSerializer})
@@ -953,11 +965,15 @@ def _publish_mesh_gateways(mesh: Mesh, previous: dict) -> None:
 
 
 class MeshDetailView(APIView):
-    permission_classes = [IsVerifiedOwner]
+    permission_classes = [ReadOnlyOrVerifiedOwner]
 
     @extend_schema(responses=MeshSerializer)
     def get(self, request, mesh_id):
-        """Return one mesh."""
+        """Return one mesh.
+
+        A public mesh is readable without credentials. The pre-shared key, the
+        source and the terms status are included only for the mesh's owner.
+        """
         mesh = _get_mesh_or_404(mesh_id)
         _require_mesh_visible(mesh, request.user)
         return Response(MeshSerializer(mesh, context=_viewer_context(request)).data)
@@ -1061,16 +1077,19 @@ class MeshDetailView(APIView):
 
 
 class MeshDevicesView(APIView):
-    """List every device registered on this mesh, gateways and nodes alike."""
-
-    permission_classes = [IsVerifiedOwner]
+    permission_classes = [AllowAny]
 
     @extend_schema(responses=DeviceReadSerializer(many=True))
     def get(self, request, mesh_id):
+        """List every device registered on this mesh, gateways and nodes alike.
+
+        A public mesh's devices are readable without credentials. Rejected
+        registrations and admin keys are shown only to the mesh's owner.
+        """
         mesh = _get_mesh_or_404(mesh_id)
         _require_mesh_visible(mesh, request.user)
         devices = mesh.devices.select_related("mesh").all()
-        if not request.user.can_edit_mesh(mesh):
+        if not can_edit_mesh(request.user, mesh):
             devices = devices.filter(is_allowed=True)
         return Response(
             DeviceReadSerializer(devices, many=True, context=_viewer_context(request)).data

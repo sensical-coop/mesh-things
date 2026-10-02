@@ -96,7 +96,8 @@ class AuthenticationTests(ReadingsTestCase):
     """The bearer key is checked against the owners table directly"""
 
     def test_missing_token_is_401(self):
-        self.assertEqual(self.client.get(self.node_url("latest")).status_code, 401)
+        self.assertEqual(self.client.get(self.node_url(), {"channel": "device_metrics.battery_level"}).status_code, 401)
+        self.assertEqual(self.client.get(self.node_url("quality")).status_code, 401)
 
     def test_valid_token_is_accepted(self):
         self.assertEqual(self.client.get(self.node_url("latest"), **self.auth_headers()).status_code, 200)
@@ -214,6 +215,41 @@ class DeviceScopingTests(ReadingsTestCase):
         resp = self.client.get(f"/readings/devices/{device.id}/latest", **self.auth_headers())
 
         self.assertEqual(resp.status_code, 200)
+
+
+class AnonymousLatestTests(ReadingsTestCase):
+    """Latest readings on a public mesh are open; everything else still needs credentials."""
+
+    def make_public(self):
+        self.mesh.is_public = True
+        self.mesh.save(update_fields=["is_public"])
+
+    def test_a_public_device_is_readable_without_credentials(self):
+        self.make_public()
+
+        by_node = self.client.get(self.node_url("latest"))
+        by_uuid = self.client.get(self.uuid_url("latest"))
+
+        self.assertEqual(by_node.status_code, 200)
+        self.assertEqual(by_uuid.status_code, 200)
+        self.assertEqual(by_uuid.json()["mesh_id"], self.mesh_id)
+        self.assertEqual(by_uuid.json()["node_id"], self.NODE_ID)
+
+    def test_a_private_device_is_a_404(self):
+        self.assertEqual(self.client.get(self.node_url("latest")).status_code, 404)
+        self.assertEqual(self.client.get(self.uuid_url("latest")).status_code, 404)
+
+    def test_a_rejected_device_is_not_reachable_by_uuid(self):
+        self.make_public()
+        Device.objects.filter(pk=self.device_uuid).update(is_allowed=False)
+
+        self.assertEqual(self.client.get(self.uuid_url("latest")).status_code, 404)
+
+    def test_timeseries_and_quality_still_need_credentials(self):
+        self.make_public()
+
+        self.assertEqual(self.client.get(self.uuid_url(), {"channel": "device_metrics.battery_level"}).status_code, 401)
+        self.assertEqual(self.client.get(self.uuid_url("quality")).status_code, 401)
 
 
 class ReadingsViewTests(ReadingsTestCase):

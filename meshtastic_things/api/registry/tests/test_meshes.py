@@ -92,12 +92,12 @@ class MeshCrudTests(RegistryTestCase):
         )
         self.assertEqual(own_update.status_code, 200)
 
-    def test_get_mesh_requires_auth_and_is_owner_scoped(self):
+    def test_get_mesh_is_owner_scoped(self):
         owner_a = self.create_owner(name="A", email="owner-a2@example.com")
         owner_b = self.create_owner(name="B", email="owner-b2@example.com")
         mesh = self.create_mesh(owner_a)
 
-        self.assertEqual(self.client.get(f"/meshes/{mesh['id']}").status_code, 401)
+        self.assertEqual(self.client.get(f"/meshes/{mesh['id']}").status_code, 404)
         # A read the caller may not perform is a 404: a 403 would confirm the mesh exists.
         self.assertEqual(self.client.get(f"/meshes/{mesh['id']}", **self.auth_headers(owner_b)).status_code, 404)
         self.assertEqual(self.client.get(f"/meshes/{mesh['id']}", **self.auth_headers(owner_a)).status_code, 200)
@@ -116,9 +116,13 @@ class MeshCrudTests(RegistryTestCase):
         self.assertEqual(len(resp_b.json()), 1)
         self.assertEqual(resp_b.json()[0]["channel_id"], "B")
 
-    def test_list_meshes_requires_auth(self):
+    def test_anonymous_list_omits_private_meshes(self):
+        self.create_mesh(self.create_owner(), channel_id="A")
+
         resp = self.client.get("/meshes")
-        self.assertEqual(resp.status_code, 401)
+
+        self.assertEqual(resp.status_code, 200)
+        self.assertEqual(resp.json(), [])
 
     def test_delete_mesh_cascades_gateways(self):
         owner = self.create_owner()
