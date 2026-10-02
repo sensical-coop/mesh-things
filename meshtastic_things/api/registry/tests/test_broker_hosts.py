@@ -3,6 +3,8 @@ from unittest.mock import patch
 from django.test import SimpleTestCase, override_settings
 
 from registry import broker_hosts
+from registry.models import TermsKind
+from registry.terms import VERSIONS
 
 from .helpers import RegistryTestCase
 
@@ -79,7 +81,7 @@ class SourceServerTests(RegistryTestCase):
 
     def post(self, server):
         return self.client.post(
-            "/sources", {"server": server, "topic": "msh/EU/#", "terms_version": "sources-2026-09"}, format="json",
+            "/sources", {"server": server, "topic": "msh/EU/#", "terms_version": VERSIONS[TermsKind.SOURCE]}, format="json",
             **self.auth_headers(self.operator),
         )
 
