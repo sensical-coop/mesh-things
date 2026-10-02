@@ -377,11 +377,10 @@ class MeshSerializer(_MeshTermsMixin, serializers.ModelSerializer):
     def to_representation(self, instance):
         data = super().to_representation(instance)
         viewer_id = self.context.get("viewer_id")
-        if viewer_id is None or viewer_id != instance.owner_id:
-            data.pop("psk_b64", None)
-            # Superusers see which source a mesh uses, read-only; nobody else but its owner does.
-            if not self.context.get("viewer_is_superuser"):
-                data.pop("source_id", None)
+        # The key is stored in plain text, so hiding it from superusers would protect nothing.
+        if (viewer_id is None or viewer_id != instance.owner_id) and not self.context.get("viewer_is_superuser"):
+            for field in ("psk_b64", "source_id"):
+                data.pop(field, None)
         return self._hide_mesh_terms(data, instance)
 
 
@@ -653,7 +652,7 @@ class DeviceCreateSerializer(serializers.Serializer):
 
 
 class DeviceReadSerializer(serializers.ModelSerializer):
-    """admin_keys_b64 is ONLY shown to the device's actual mesh owner (superusers can't see this).
+    """admin_keys_b64 and the archive fields are shown only to the mesh owner and superusers.
 
     `uuid` is the registration; `node_id` is the Meshtastic node number.
     The storage column is `device_id`.
@@ -697,12 +696,9 @@ class DeviceReadSerializer(serializers.ModelSerializer):
     def to_representation(self, instance):
         data = super().to_representation(instance)
         viewer_id = self.context.get("viewer_id")
-        if viewer_id is None or viewer_id != instance.mesh.owner_id:
-            data.pop("admin_keys_b64", None)
-            # Like the archive itself: for the owner and superusers.
-            if not self.context.get("viewer_is_superuser"):
-                for field in ("archive_enabled", "archive_enabled_at", "archive_enabled_by"):
-                    data.pop(field, None)
+        if (viewer_id is None or viewer_id != instance.mesh.owner_id) and not self.context.get("viewer_is_superuser"):
+            for field in ("admin_keys_b64", "archive_enabled", "archive_enabled_at", "archive_enabled_by"):
+                data.pop(field, None)
         return data
 
 
