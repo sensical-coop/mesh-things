@@ -24,7 +24,7 @@ VERSIONS = {
 }
 
 # The console mock (apps/api-mock/src/features/terms/terms.ts) carries a copy of this text
-# and must be kept in step. Draft wording pending the legal review listed in plans/sources.md.
+# and must be kept in step. Draft wording pending the legal review listed in plans/01a-mqtt-sources.md.
 _ACCOUNT = {
     "en": {
         "title": "Before you create your account",
