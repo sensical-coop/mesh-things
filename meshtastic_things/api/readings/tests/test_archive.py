@@ -266,6 +266,27 @@ class ArchiveZipTests(ArchiveTestCase):
             next(iter(response.streaming_content))
         connection.close.assert_called_once()
 
+    @patch.object(archive, "read_object", side_effect=EndpointConnectionError(endpoint_url="http://minio:9000"))
+    @patch.object(archive, "list_partitions", return_value=HOURS)
+    def test_unreachable_storage_is_a_bad_gateway_not_a_broken_zip(self, *_):
+        response, _ = self.download()
+
+        self.assertEqual(response.status_code, 502)
+
+    @patch.object(archive, "list_partitions", return_value=HOURS)
+    def test_a_failure_after_the_first_file_aborts_the_download(self, _):
+        def read_object(key):
+            # Reads run in parallel, so fail by key rather than by call order.
+            if "hour=05" in key:
+                raise EndpointConnectionError(endpoint_url="http://minio:9000")
+            return b"x"
+
+        with patch.object(archive, "read_object", side_effect=read_object):
+            response = self.client.get(self.url("zip"), **self.auth(self.operator))
+            self.assertEqual(response.status_code, 200)
+            with self.assertRaises(EndpointConnectionError):
+                b"".join(response.streaming_content)
+
     def test_objects_are_read_in_order_from_the_mesh_prefix(self):
         s3 = MagicMock()
         s3.get_object.side_effect = lambda Bucket, Key: {"Body": io.BytesIO(Key.encode())}
