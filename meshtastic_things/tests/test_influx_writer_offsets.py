@@ -5,6 +5,7 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
+from common.alarm_counts import ALARMS_BUCKET
 from tools.healthcheck import HealthState
 from writer.influx_writer import InfluxWriter
 
@@ -116,3 +117,19 @@ def test_rewind_covers_every_partition_in_the_batch(monkeypatch):
 
     assert sorted(c.args[1] for c in writer.kafka_consumer.seek.call_args_list) == [10, 40]
     writer.kafka_consumer.commit.assert_not_called()
+
+def test_alarms_are_written_to_their_own_bucket(monkeypatch):
+    writer = _make_writer(monkeypatch)
+    alarm = {"mesh_id": "m", "device_id": 1, "channel": "environment_metrics.temperature", "detector": "range",
+             "source": "stream", "value": 30.0, "message": "out of range",
+             "triggered_at": "2026-09-01T00:00:00+00:00", "repeat": True}
+    messages = {TOPIC_PARTITION: [_Record(10, _telemetry(1)), _Record(11, alarm)]}
+    client = _influx_client()
+
+    with patch("writer.influx_writer.InfluxDBClientAsync", return_value=client):
+        asyncio.run(writer.write_batch(messages))
+
+    writes = {c.kwargs["bucket"]: c.kwargs["record"] for c in client.write_api.return_value.write.call_args_list}
+    assert set(writes) == {"b", ALARMS_BUCKET}
+    assert len(writes[ALARMS_BUCKET]) == 1
+    assert ",repeat=true" in writes[ALARMS_BUCKET][0].to_line_protocol()

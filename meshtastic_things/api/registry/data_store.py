@@ -8,6 +8,7 @@ from datetime import datetime, timezone
 
 import structlog
 
+from common.alarm_counts import ALARM_COUNTS_BUCKET, ALARMS_BUCKET
 from common.env import env_str
 
 log = structlog.get_logger()
@@ -73,9 +74,10 @@ class DataStore:
         # The predicate takes the mesh id verbatim, so only accept a plain id.
         if not re.fullmatch(r"[0-9a-fA-F-]{36}", mesh_id):
             raise ValueError(f"Not a mesh id: {mesh_id!r}")
-        self._delete_api().delete(
-            start=EPOCH, stop=until, predicate=f'mesh_id="{mesh_id}"', bucket=self.influx_bucket, org=self.influx_org
-        )
+        for bucket in (self.influx_bucket, ALARMS_BUCKET, ALARM_COUNTS_BUCKET):
+            self._delete_api().delete(
+                start=EPOCH, stop=until, predicate=f'mesh_id="{mesh_id}"', bucket=bucket, org=self.influx_org
+            )
 
     def _delete_archive(self, mesh_id: str, partition_is_due) -> None:
         if not self.archive_bucket:

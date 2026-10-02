@@ -69,6 +69,9 @@ services:
       INFLUX__TOKEN: ${INFLUX__TOKEN:-}
       INFLUX__ORG: ${INFLUX__ORG:-}
       INFLUX__BUCKET: ${INFLUX__BUCKET:-}
+      INFLUX__ALARMS_BUCKET: ${INFLUX__ALARMS_BUCKET:-}
+      INFLUX__ALARM_COUNTS_BUCKET: ${INFLUX__ALARM_COUNTS_BUCKET:-}
+      INFLUX__ALARMS_RETENTION_DAYS: ${INFLUX__ALARMS_RETENTION_DAYS:-}
       READINGS__ARCHIVE_BUCKET: ${READINGS__ARCHIVE_BUCKET:-}
       READINGS__ARCHIVE_PREFIX: ${READINGS__ARCHIVE_PREFIX:-}
       READINGS__ARCHIVE_ENDPOINT_URL: ${READINGS__ARCHIVE_ENDPOINT_URL:-}
@@ -92,6 +95,8 @@ services:
     depends_on:
       influxdb:
         condition: service_healthy
+      influx_init:
+        condition: service_completed_successfully
       postgres:
         condition: service_healthy
       redis:
@@ -166,6 +171,8 @@ services:
         condition: service_healthy
       influxdb:
         condition: service_healthy
+      influx_init:
+        condition: service_completed_successfully
       registry_api:
         condition: service_healthy
     command: ["python", "manage.py", "run_data_lifecycle"]

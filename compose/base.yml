@@ -90,6 +90,32 @@ services:
       retries: 5
       start_period: 30s
 
+  # One-shot: the alarm buckets, and the retention of individual alarms. Idempotent,
+  # so it runs on every `up`. INFLUX__TOKEN must be allowed to create buckets.
+  influx_init:
+    mem_limit: 128m
+    container_name: influx-init
+    image: influxdb:2.7
+    restart: "no"
+    depends_on:
+      influxdb:
+        condition: service_healthy
+    env_file: "../.env"
+    entrypoint: ["/bin/sh", "-ec"]
+    command:
+      - |
+        export INFLUX_HOST="$$INFLUX__URL" INFLUX_TOKEN="$$INFLUX__TOKEN" INFLUX_ORG="$$INFLUX__ORG"
+        ensure_bucket() {
+          if id=$$(influx bucket list --name "$$1" --hide-headers 2>/dev/null | cut -f1) && [ -n "$$id" ]; then
+            influx bucket update --id "$$id" --retention "$$2" >/dev/null
+          else
+            influx bucket create --name "$$1" --retention "$$2" >/dev/null
+          fi
+          echo "bucket $$1: retention $$2"
+        }
+        ensure_bucket "$${INFLUX__ALARMS_BUCKET:-alarms}" "$${INFLUX__ALARMS_RETENTION_DAYS:-30}d"
+        ensure_bucket "$${INFLUX__ALARM_COUNTS_BUCKET:-alarm_counts}" 0
+
   postgres:
     logging: *logging
     mem_limit: 512m
