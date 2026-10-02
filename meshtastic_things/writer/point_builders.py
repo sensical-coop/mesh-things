@@ -5,6 +5,8 @@ from influxdb_client import Point
 
 from common.channels import (
     ALARMS,
+    DERIVED,
+    DERIVED_KIND,
     DEVICE,
     NODEINFO,
     NODEINFO_KIND,
@@ -13,10 +15,9 @@ from common.channels import (
     TELEMETRY,
     measurement_of,
 )
+from common.timestamps import resolve_timestamp
 
 log = structlog.get_logger()
-
-MIN_FEASIBLE_TIME = 1577836800  # 2020-01-01 in epoch (s)
 
 # payload_kind values that are intentionally not persisted (logged at debug though).
 SKIP_PAYLOAD_KINDS = {
@@ -29,18 +30,8 @@ def _convert_date(timestamp: int) -> str:
     return datetime.fromtimestamp(timestamp, tz=timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
 
 
-def _resolve_timestamp(event: dict) -> tuple[int, str]:
-    timestamp = event["rx_time"]
-    quality = "rx_time"
-    payload_time = (event.get("payload") or {}).get("time")
-    if payload_time and payload_time > MIN_FEASIBLE_TIME:
-        timestamp = payload_time
-        quality = "payload"
-    return timestamp, quality
-
-
 def _base_point_dict(event: dict, measurement: str) -> dict:
-    timestamp, quality = _resolve_timestamp(event)
+    timestamp, quality = resolve_timestamp(event)
     tags = {"node_id": event["node_id"]}
     if event.get("mesh_id"):
         # node_id alone is not unique
@@ -120,6 +111,26 @@ def build_generic_points(event: dict) -> list[Point]:
     return [Point.from_dict(point_dict)]
 
 
+def build_derived_points(event: dict) -> list[Point]:
+    """Channels computed by postprocessing, one point per event.
+
+    Tagged with the postprocessing that produced them. There is no packet_id:
+    a derived event can combine samples from several packets.
+    """
+    tags = {"node_id": event["node_id"], "postprocessing_id": event["postprocessing_id"]}
+    if event.get("mesh_id"):
+        tags["mesh_id"] = event["mesh_id"]
+    fields = {
+        field: float(value)
+        for field, value in ((event.get("payload") or {}).get(DERIVED) or {}).items()
+        if isinstance(value, (int, float)) and not isinstance(value, bool)
+    }
+    if not fields:
+        return []
+    point_dict = {"measurement": DERIVED, "tags": tags, "fields": fields, "time": _convert_date(event["rx_time"])}
+    return [Point.from_dict(point_dict)]
+
+
 def build_alarm_points(event: dict) -> list[Point]:
     """Quality alarm events have a different shape from decoded messages - no
     packet_id/rx_time/payload_kind - so they don't go through _base_point_dict
@@ -169,6 +180,8 @@ def get_points(event: dict) -> list[Point]:
         return []
     if payload_kind.startswith(TELEMETRY):
         return build_telemetry_points(event)
+    if payload_kind == DERIVED_KIND:
+        return build_derived_points(event)
     if payload_kind == POSITION_KIND:
         return build_position_points(event)
     if payload_kind == NODEINFO_KIND:

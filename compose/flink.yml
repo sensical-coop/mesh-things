@@ -109,16 +109,16 @@ services:
         condition: service_healthy
 
   # full-only
-  calibration-job:
+  postprocessing-job:
     profiles: ["full"]
     mem_limit: 1024m
-    container_name: calibration-job
+    container_name: postprocessing-job
     env_file: "../.env"
     <<: *flink-image
     volumes: *flink-state-volumes
     logging: *flink-logging
     restart: "no"
-    command: ["./submit-job.sh", "calibration_job.py", "mesh-calibration"]
+    command: ["./submit-job.sh", "postprocessing_job.py", "mesh-postprocessing"]
     environment:
       JOB_MANAGER_RPC_ADDRESS: jobmanager
       FLINK_PROPERTIES: *flink-client-properties
@@ -152,7 +152,7 @@ services:
         condition: service_completed_successfully
       jobmanager:
         condition: service_healthy
-      calibration-job:
+      postprocessing-job:
         condition: service_completed_successfully
 
   absence-detection-job:

@@ -1,7 +1,7 @@
 """Environmental corrections and derived meteorological quantities"""
 import math
 
-from . import POINTWISE, algorithm
+from . import POINTWISE, Param, algorithm
 
 # Most sensor datasheets quote coefficients relative to lab conditions.
 REFERENCE_TEMPERATURE_C = 20.0
@@ -11,8 +11,10 @@ REFERENCE_TEMPERATURE_C = 20.0
     name="linear_temperature_correction",
     inputs=("value", "temperature"),
     outputs=("corrected",),
-    params=("coefficient",),
-    optional_params=("reference_temperature",),
+    params=(
+        Param("coefficient", calibration=True, unit="1/degC", doc="Fractional change in reading per degree C."),
+        Param("reference_temperature", unit="degC"),
+    ),
     mode=POINTWISE,
     # Preserves units
     output_units={"corrected": "@value"},

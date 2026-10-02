@@ -2,15 +2,21 @@
 from django.contrib import admin
 from django.urls import reverse
 
+from django.utils import timezone
+
 from registry.models import (
+    BlueprintVersion,
     Device,
+    DevicePostprocessing,
     DeviceTelemetryVariant,
     Measurement,
     MeasurementType,
     Mesh,
     Owner,
     PostprocessingBlueprint,
+    PostprocessingInputBinding,
     PostprocessingStep,
+    StepCalibration,
     TelemetryVariant,
     TelemetryVariantMeasurement,
 )
@@ -32,6 +38,9 @@ class ModelStrTests(RegistryTestCase):
         link = TelemetryVariantMeasurement.objects.create(telemetry_variant=variant, measurement_type=measurement_type)
         dtv = DeviceTelemetryVariant.objects.create(device=device, telemetry_variant=variant)
         blueprint = PostprocessingBlueprint.objects.create(name="dew point", owner_id=self.owner["id"])
+        version = BlueprintVersion.objects.create(blueprint=blueprint, number=1)
+        measurement = Measurement.objects.create(device_telemetry_variant=dtv, measurement_type=measurement_type)
+        attached = DevicePostprocessing.objects.create(device=device, blueprint_version=version)
 
         instances = [
             self.mesh,
@@ -41,8 +50,14 @@ class ModelStrTests(RegistryTestCase):
             link,
             dtv,
             blueprint,
-            Measurement.objects.create(device_telemetry_variant=dtv, measurement_type=measurement_type),
-            PostprocessingStep.objects.create(blueprint=blueprint, order=1, function_name="dew_point"),
+            measurement,
+            version,
+            PostprocessingStep.objects.create(version=version, key="dew", order=1, function_name="dew_point"),
+            attached,
+            PostprocessingInputBinding.objects.create(device_postprocessing=attached, slot="t", measurement=measurement),
+            StepCalibration.objects.create(
+                device_postprocessing=attached, step_key="dew", function_name="dew_point", valid_from=timezone.now()
+            ),
         ]
 
         for instance in instances:
@@ -88,6 +103,8 @@ class AdminRegistrationTests(RegistryTestCase):
             DeviceTelemetryVariant,
             Measurement,
             PostprocessingBlueprint,
+            BlueprintVersion,
+            DevicePostprocessing,
         ):
             with self.subTest(model=model.__name__):
                 self.assertIn(model, registered)

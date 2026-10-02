@@ -190,7 +190,7 @@ def test_the_admin_ui_ports_are_not_published_by_default():
 # These are one-shot: they submit detached and exit. Two properties have to
 # hold together, and losing either silently reintroduces a real incident.
 
-FLINK_SUBMITTERS = ["flink-job", "calibration-job", "pattern-detection-job", "absence-detection-job"]
+FLINK_SUBMITTERS = ["flink-job", "postprocessing-job", "pattern-detection-job", "absence-detection-job"]
 
 
 @pytest.mark.parametrize("service", FLINK_SUBMITTERS)

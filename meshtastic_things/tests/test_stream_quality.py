@@ -151,7 +151,7 @@ class TestComputedChannelNames:
 
     def test_a_blueprint_scoped_payload_kind_would_not_match(self):
         # Why the measurement half is "derived" rather than the blueprint name:
-        # "computed:weather-v1" yields a measurement write_derived never writes.
+        # "computed:weather-v1" yields a measurement the derived writer never writes.
         assert channel_name("computed:weather-v1", "dew_point") != "derived.dew_point"
 
 

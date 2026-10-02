@@ -24,7 +24,10 @@ class InfluxWriter(object):
 
         )
         self.influx_url = influx_url
-        topics = [os.environ['PROTO_DECODE__KAFKA_TOPIC']]
+        topics = [
+            os.environ['PROTO_DECODE__KAFKA_TOPIC'],
+            os.environ.get('POSTPROCESSING__DERIVED_KAFKA_TOPIC', 'mesh.telemetry.derived.v1'),
+        ]
         # Optional: also persist pattern-detection alarms into the same bucket,
         # if that job is deployed
         alarms_topic = os.environ.get('PATTERN_DETECTION__ALARMS_TOPIC')

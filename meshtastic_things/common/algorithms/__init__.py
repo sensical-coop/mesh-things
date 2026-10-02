@@ -1,27 +1,31 @@
 """Registry of postprocessing algorithms, discovered by name.
 
-A `PostprocessingStep` (registry) names one of these functions, binds its
-`inputs` to channel names, and supplies `params` - see
-docs/architecture.md#postprocessing-blueprints. Writing a new algorithm means
-dropping a decorated function into a module in this package; nothing else
-needs editing.
+A blueprint step names one of these functions and binds its `inputs` to
+channels; a device attaching the blueprint supplies the step's calibration
+parameters. See docs/architecture.md#postprocessing-blueprints. Writing a new
+algorithm means dropping a decorated function into a module in this package;
+nothing else needs editing.
 
-Same name-dispatch shape as common/calibration.py's CALIBRATION_FUNCTIONS and
-common/detectors.py's DETECTORS, but with declared metadata (inputs/outputs/
-params/mode) so registry can reject a misconfigured step at write time instead
-of failing deep inside a worker hours later.
+Parameters come in two kinds, declared with `Param`:
+  - configuration describes the recipe (a molecular weight) and is set on the
+    blueprint step.
+  - calibration describes one physical sensor (an electrode's sensitivity) and
+    is set per device, so one blueprint can serve many units of the same build.
 
-`mode` decides *where* an algorithm can run:
-  - "pointwise": one aligned sample at a time, no history. Runnable by the
-    batch executor row-by-row AND (once wired) by Flink per-point.
-  - "windowed": needs a whole series (rolling baselines, drift, resampling).
-    Batch only - a stream tier would have to buffer, which is what the batch
-    tier is already for.
+A parameter's default is read from the function signature and never restated;
+a parameter without one is required.
+
+`mode` decides where an algorithm can run:
+  - "pointwise": one aligned sample at a time, no history. Runs in the stream
+    tier and in backfills.
+  - "windowed": needs a whole series. Declarable, but nothing runs it yet, so
+    registry rejects blueprints that use one.
 """
 import importlib
+import inspect
 import pkgutil
 from dataclasses import dataclass, field
-from typing import Callable
+from typing import Any, Callable
 
 import structlog
 
@@ -39,6 +43,35 @@ _VALID_MODES = (POINTWISE, WINDOWED)
 # honest declaration is a reference to its input, not a literal.
 INHERIT = "@"
 
+_NO_DEFAULT = inspect.Parameter.empty
+
+
+@dataclass(frozen=True)
+class Param:
+    """One keyword argument of an algorithm."""
+
+    name: str
+    calibration: bool = False
+    # Free text for documentation, e.g. "mV/ppb". Calibration units are rarely
+    # catalog units, so they are not checked against common.units.
+    unit: str | None = None
+    doc: str = ""
+    default: Any = _NO_DEFAULT
+
+    @property
+    def required(self) -> bool:
+        return self.default is _NO_DEFAULT
+
+    def as_dict(self) -> dict:
+        return {
+            "name": self.name,
+            "calibration": self.calibration,
+            "required": self.required,
+            "default": None if self.required else self.default,
+            "unit": self.unit,
+            "doc": self.doc,
+        }
+
 
 @dataclass(frozen=True)
 class AlgorithmSpec:
@@ -48,25 +81,28 @@ class AlgorithmSpec:
     func: Callable
     inputs: tuple[str, ...]
     outputs: tuple[str, ...]
-    params: tuple[str, ...] = ()
-    optional_params: tuple[str, ...] = ()
+    params: tuple[Param, ...] = ()
     mode: str = POINTWISE
     doc: str = ""
     # {output_name: unit}, where a unit may be "@<input_name>" - see INHERIT.
-    # Declared here because the algorithm is the only thing that knows: a
-    # channel produced by a blueprint has no protobuf field to inherit a unit
-    # from, so without this its catalog row is created bare and every consumer
-    # downstream (readings' /latest decoration, any plot axis) has nothing to
-    # label it with.
+    # A derived channel has no protobuf field to inherit a unit from, so the
+    # algorithm is the only thing that can say what it emits.
     output_units: dict[str, str] = field(default_factory=dict)
+
+    @property
+    def config_params(self) -> tuple[Param, ...]:
+        return tuple(p for p in self.params if not p.calibration)
+
+    @property
+    def calibration_params(self) -> tuple[Param, ...]:
+        return tuple(p for p in self.params if p.calibration)
 
     def unit_for(self, output_name: str, input_units: dict[str, str | None]) -> str | None:
         """This output's unit, resolving an "@<input>" reference against the
         units of the channels actually bound to this step's inputs.
 
         Returns None when undeclared, or when an inherited unit can't be
-        resolved because the upstream channel has no unit itself - unknown is
-        recorded as unknown rather than guessed.
+        resolved because the upstream channel has no unit itself.
         """
         declared = self.output_units.get(output_name)
         if not declared:
@@ -76,9 +112,9 @@ class AlgorithmSpec:
         return declared
 
     def call(self, inputs: dict, params: dict) -> dict:
-        """Invoke with inputs+params as keyword args, normalising the return
-        to {output_name: value}. A single-output algorithm may return a bare
-        value instead of a dict - the common case, and not worth the ceremony."""
+        """Invoke with inputs and params as keyword args, normalising the
+        return to {output_name: value}. A single-output algorithm may return a
+        bare value instead of a dict."""
         result = self.func(**inputs, **params)
         if isinstance(result, dict):
             return result
@@ -90,13 +126,12 @@ class AlgorithmSpec:
         )
 
     def as_dict(self) -> dict:
-        """Serializable form - what GET /algorithms returns."""
+        """Serializable form returned by GET /algorithms."""
         return {
             "name": self.name,
             "inputs": list(self.inputs),
             "outputs": list(self.outputs),
-            "params": list(self.params),
-            "optional_params": list(self.optional_params),
+            "params": [p.as_dict() for p in self.params],
             "mode": self.mode,
             "doc": self.doc,
             "output_units": dict(self.output_units),
@@ -106,24 +141,58 @@ class AlgorithmSpec:
 REGISTRY: dict[str, AlgorithmSpec] = {}
 
 
+def _bind_params(name: str, func: Callable, inputs: tuple[str, ...], declared: tuple) -> tuple[Param, ...]:
+    """Check the declaration against the signature and fill defaults from it.
+
+    Inputs must be the positional arguments and params the keyword-only ones,
+    so a declaration can never drift from what the function actually accepts.
+    """
+    signature = inspect.signature(func)
+    positional = [
+        p.name for p in signature.parameters.values() if p.kind in (p.POSITIONAL_ONLY, p.POSITIONAL_OR_KEYWORD)
+    ]
+    keyword = {p.name: p for p in signature.parameters.values() if p.kind == p.KEYWORD_ONLY}
+
+    if set(positional) != set(inputs):
+        raise ValueError(
+            f"Algorithm {name!r}: inputs {sorted(inputs)} don't match the function's "
+            f"positional arguments {sorted(positional)}"
+        )
+    params = tuple(p if isinstance(p, Param) else Param(p) for p in declared)
+    names = [p.name for p in params]
+    if len(set(names)) != len(names):
+        raise ValueError(f"Algorithm {name!r}: a param is declared twice in {names}")
+    if set(names) != set(keyword):
+        raise ValueError(
+            f"Algorithm {name!r}: params {sorted(names)} don't match the function's "
+            f"keyword-only arguments {sorted(keyword)}"
+        )
+    return tuple(
+        Param(p.name, calibration=p.calibration, unit=p.unit, doc=p.doc, default=keyword[p.name].default)
+        for p in params
+    )
+
+
 def algorithm(
     *,
     name: str,
     inputs: tuple[str, ...],
     outputs: tuple[str, ...],
-    params: tuple[str, ...] = (),
-    optional_params: tuple[str, ...] = (),
+    params: tuple[Param | str, ...] = (),
     mode: str = POINTWISE,
     output_units: dict[str, str] | None = None,
 ):
     """Register a function as a named, introspectable algorithm.
 
-    inputs           - channel-bound arguments (a step maps each to a channel name)
-    outputs          - names this produces (a step maps each to a derived channel name)
-    params           - required scalar configuration
-    optional_params  - configuration with a default in the function signature
-    output_units     - {output: unit}, unit being a literal ("degC") or
-                       "@<input>" for a unit-preserving algorithm
+    Args:
+        name: Name steps refer to the algorithm by.
+        inputs: Channel-bound arguments, the function's positional arguments.
+        outputs: Names this produces, each bound to a derived channel by a step.
+        params: Keyword-only arguments, as `Param` or a bare name for a
+            configuration parameter. Defaults come from the signature.
+        mode: `POINTWISE` or `WINDOWED`.
+        output_units: {output: unit}, the unit being a literal ("degC") or
+            "@<input>" for a unit-preserving algorithm.
     """
     if mode not in _VALID_MODES:
         raise ValueError(f"Algorithm {name!r}: mode must be one of {_VALID_MODES}, got {mode!r}")
@@ -131,9 +200,6 @@ def algorithm(
         raise ValueError(f"Algorithm {name!r}: must declare at least one input")
     if not outputs:
         raise ValueError(f"Algorithm {name!r}: must declare at least one output")
-    overlap = set(params) & set(optional_params)
-    if overlap:
-        raise ValueError(f"Algorithm {name!r}: {sorted(overlap)} declared both required and optional")
 
     units = dict(output_units or {})
     if unknown := set(units) - set(outputs):
@@ -162,8 +228,7 @@ def algorithm(
             func=func,
             inputs=tuple(inputs),
             outputs=tuple(outputs),
-            params=tuple(params),
-            optional_params=tuple(optional_params),
+            params=_bind_params(name, func, tuple(inputs), tuple(params)),
             mode=mode,
             doc=(func.__doc__ or "").strip(),
             output_units=units,
@@ -204,14 +269,22 @@ def get(function_name: str) -> AlgorithmSpec | None:
     return REGISTRY.get(function_name)
 
 
-def validate_step(function_name: str, inputs: dict | None, params: dict | None) -> list[str]:
-    """Check a step's config against the declared spec, returning human-readable
-    errors (empty list = valid). Used by registry's serializer so bad config fails
-    at write time - see PostprocessingStepSerializer."""
+def _unknown(function_name: str) -> list[str]:
+    known = ", ".join(sorted(REGISTRY)) or "none registered"
+    return [f"Unknown algorithm {function_name!r}. Available: {known}"]
+
+
+def validate_step(
+    function_name: str, inputs: dict | None, params: dict | None, outputs: dict | None = None
+) -> list[str]:
+    """Check a blueprint step against the algorithm's declaration.
+
+    Returns human-readable errors, empty when valid. Calibration parameters
+    are rejected here because they belong to each device, not to the recipe.
+    """
     spec = get(function_name)
     if spec is None:
-        known = ", ".join(sorted(REGISTRY)) or "none registered"
-        return [f"Unknown algorithm {function_name!r}. Available: {known}"]
+        return _unknown(function_name)
 
     errors = []
     given_inputs = set(inputs or {})
@@ -222,9 +295,45 @@ def validate_step(function_name: str, inputs: dict | None, params: dict | None) 
         errors.append(f"{function_name!r} does not accept input(s) {sorted(extra)}")
 
     given_params = set(params or {})
-    allowed_params = set(spec.params) | set(spec.optional_params)
-    if missing := set(spec.params) - given_params:
+    config = {p.name: p for p in spec.config_params}
+    calibration = {p.name for p in spec.calibration_params}
+    if missing := {n for n, p in config.items() if p.required} - given_params:
         errors.append(f"{function_name!r} requires param(s) {sorted(missing)}")
-    if extra := given_params - allowed_params:
+    if misplaced := given_params & calibration:
+        errors.append(
+            f"{function_name!r} param(s) {sorted(misplaced)} are calibration parameters, set per device"
+        )
+    if extra := given_params - set(config) - calibration:
         errors.append(f"{function_name!r} does not accept param(s) {sorted(extra)}")
+
+    if outputs is not None:
+        if not outputs:
+            errors.append(f"{function_name!r} step must bind at least one output")
+        elif extra := set(outputs) - set(spec.outputs):
+            errors.append(f"{function_name!r} has no output(s) {sorted(extra)}, only {list(spec.outputs)}")
+    return errors
+
+
+def validate_calibration(function_name: str, params: dict | None, *, complete: bool = True) -> list[str]:
+    """Check one step's per-device calibration against the declaration.
+
+    With `complete`, every required calibration parameter must be present,
+    which is what enabling a postprocessing needs.
+    """
+    spec = get(function_name)
+    if spec is None:
+        return _unknown(function_name)
+
+    errors = []
+    given = set(params or {})
+    calibration = {p.name: p for p in spec.calibration_params}
+    config = {p.name for p in spec.config_params}
+    if misplaced := given & config:
+        errors.append(
+            f"{function_name!r} param(s) {sorted(misplaced)} are configuration, set on the blueprint step"
+        )
+    if extra := given - set(calibration) - config:
+        errors.append(f"{function_name!r} does not accept param(s) {sorted(extra)}")
+    if complete and (missing := {n for n, p in calibration.items() if p.required} - given):
+        errors.append(f"{function_name!r} requires calibration param(s) {sorted(missing)}")
     return errors

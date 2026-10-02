@@ -85,12 +85,13 @@ class TestDecodedEventShape:
         assert event.get("payload_kind")
         assert isinstance(event.get("payload"), dict)
 
-    def test_calibration_keys_by_channel_id_and_device_id(self):
-        event = {"channel_id": "LongFast", "node_id": DEVICE_ID,
-                 "payload_kind": "telemetry:environment_metrics"}
+    def test_postprocessing_keys_by_mesh_id_and_node_id(self):
+        """The same key registry publishes a device's plans under."""
+        from common.postprocessing.stream import device_key
 
-        assert event["channel_id"]
-        assert event["payload_kind"].count(":") == 1, "a namespaced kind must not add a second colon"
+        event = {"mesh_id": MESH_ID, "node_id": DEVICE_ID, "payload_kind": "telemetry:environment_metrics"}
+
+        assert device_key(event["mesh_id"], event["node_id"]) == f"{MESH_ID}:{DEVICE_ID}"
 
 
 class TestSightingAndDiscoveryShape:
