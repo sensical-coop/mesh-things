@@ -18,10 +18,10 @@ DEFAULT_LOCALE = "en"
 LOCALES = ("en", "es")
 
 VERSIONS = {
-    TermsKind.ACCOUNT: "account-2026-09",
-    TermsKind.MESH: "meshes-2026-09",
-    TermsKind.SOURCE: "sources-2026-09",
-    TermsKind.SINK: "sinks-2026-09",
+    TermsKind.ACCOUNT: "account-2026-10",
+    TermsKind.MESH: "meshes-2026-10",
+    TermsKind.SOURCE: "sources-2026-10",
+    TermsKind.SINK: "sinks-2026-10",
 }
 
 # The console mock (apps/api-mock/src/features/terms/terms.ts) carries a copy of this text
@@ -372,6 +372,10 @@ _SINK = {
 
 _COPY = {TermsKind.ACCOUNT: _ACCOUNT, TermsKind.MESH: _MESH, TermsKind.SOURCE: _SOURCE, TermsKind.SINK: _SINK}
 
+
+def dpa_url() -> str:
+    """The Data Processing Agreement the mesh, source and sink terms are accepted under."""
+    return f"{settings.PUBLIC_FRONTEND_URL.rstrip('/')}/dpa"
 
 
 def dpa_url() -> str:
