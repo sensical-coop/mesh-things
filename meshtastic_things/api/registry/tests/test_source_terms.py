@@ -307,7 +307,7 @@ class MeshTermsTests(RegistryTestCase):
         body = self.client.get("/meshes/terms", **self.auth_headers(self.owner)).json()
 
         self.assertEqual(body["version"], MESH_VERSION)
-        self.assertEqual([s["id"] for s in body["statements"]], ["controller", "lawfulBasis", "sensitive"])
+        self.assertEqual([s["id"] for s in body["statements"]], ["controller", "lawfulBasis", "minimisation", "sensitive"])
 
     @override_settings(DATA_RETENTION_DAYS=180)
     def test_the_mesh_terms_state_the_period(self):

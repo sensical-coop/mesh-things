@@ -18,6 +18,7 @@ from .models import (
     PostprocessingBlueprint,
     PostprocessingInputBinding,
     PostprocessingStep,
+    SinkInstruction,
     Source,
     StepCalibration,
     TelemetryVariant,
@@ -92,6 +93,15 @@ class TermsAcceptanceAdmin(_ReadOnlyAdmin):
     search_fields = ("acceptor_email", "acceptor_name")
 
 
+@admin.register(SinkInstruction)
+class SinkInstructionAdmin(_ReadOnlyAdmin):
+    """Read-only: instructions are append-only evidence."""
+
+    list_display = ("given_by_email", "sink", "enabled", "mesh_id", "node_id", "given_at")
+    list_filter = ("sink", "enabled")
+    search_fields = ("given_by_email", "given_by_name")
+
+
 @admin.register(DataDeletion)
 class DataDeletionAdmin(_ReadOnlyAdmin):
     """Read-only: the lifecycle job owns these rows."""
@@ -132,7 +142,8 @@ class DeviceAdmin(admin.ModelAdmin):
     list_filter = ("is_gateway", "is_allowed")
     list_select_related = ("mesh",)
     exclude = ("admin_keys_b64",)
-    readonly_fields = ("id", "created_at", "updated_at")
+    # A write here would neither reach the pipeline nor be recorded; use PUT /devices/{uuid}.
+    readonly_fields = ("id", "created_at", "updated_at", "archive_enabled", "archive_enabled_at", "archive_enabled_by")
     search_fields = ("device_id", "label", "name", "short_name")
 
     @admin.display(description="Node ID", ordering="device_id")

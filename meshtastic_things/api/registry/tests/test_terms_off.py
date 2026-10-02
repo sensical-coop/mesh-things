@@ -87,8 +87,6 @@ class TermsOffTests(RegistryTestCase):
         result = data_lifecycle.run_pass()
 
         self.assertEqual((result["renewal_notices"], result["paused_meshes"], result["paused_sources"]), (0, 0, 0))
-        self.assertFalse(result["unowned_archive_expired"])
-        self.fake_store.delete_unknown_mesh_archive_before.assert_not_called()
         self.assertEqual(mail.outbox, [])
 
     def test_switching_terms_off_resumes_what_a_lapse_paused(self):

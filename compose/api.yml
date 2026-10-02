@@ -49,17 +49,46 @@ services:
 
   # Reads Postgres as readings_ro
   # Serves without registry_api
+  # Only what the read tier uses, never the whole .env: it must not hold registry's,
+  # the writer's or EMQX's secrets.
   readings_api:
     <<: *api-image
     environment:
       DJANGO_SETTINGS_MODULE: api_project.settings.prod
       APP_ROLE: readings
-    env_file: "../.env"
+      READINGS__SECRET_KEY: ${READINGS__SECRET_KEY:-}
+      READINGS__DEBUG: ${READINGS__DEBUG:-}
+      READINGS__ALLOWED_HOSTS: ${READINGS__ALLOWED_HOSTS:-}
+      READINGS__BEHIND_TLS: ${READINGS__BEHIND_TLS:-}
+      READINGS__CORS_ORIGINS: ${READINGS__CORS_ORIGINS:-}
+      READINGS__COOKIE_DOMAIN: ${READINGS__COOKIE_DOMAIN:-}
+      READINGS__DB_DSN: ${READINGS__DB_DSN:-}
+      READINGS__REDIS_URL: ${READINGS__REDIS_URL:-}
+      GATEWAY__PUBLIC_URL: ${GATEWAY__PUBLIC_URL:-}
+      INFLUX__URL: ${INFLUX__URL:-}
+      INFLUX__TOKEN: ${INFLUX__TOKEN:-}
+      INFLUX__ORG: ${INFLUX__ORG:-}
+      INFLUX__BUCKET: ${INFLUX__BUCKET:-}
+      READINGS__ARCHIVE_BUCKET: ${READINGS__ARCHIVE_BUCKET:-}
+      READINGS__ARCHIVE_PREFIX: ${READINGS__ARCHIVE_PREFIX:-}
+      READINGS__ARCHIVE_ENDPOINT_URL: ${READINGS__ARCHIVE_ENDPOINT_URL:-}
+      READINGS__ARCHIVE_PUBLIC_ENDPOINT_URL: ${READINGS__ARCHIVE_PUBLIC_ENDPOINT_URL:-}
+      READINGS__ARCHIVE_REGION: ${READINGS__ARCHIVE_REGION:-}
+      READINGS__ARCHIVE_ACCESS_KEY: ${READINGS__ARCHIVE_ACCESS_KEY:-}
+      READINGS__ARCHIVE_SECRET_KEY: ${READINGS__ARCHIVE_SECRET_KEY:-}
+      READINGS__ARCHIVE_STS: ${READINGS__ARCHIVE_STS:-}
+      READINGS__ARCHIVE_ROLE_ARN: ${READINGS__ARCHIVE_ROLE_ARN:-}
+      READINGS__ARCHIVE_CREDENTIAL_TTL_S: ${READINGS__ARCHIVE_CREDENTIAL_TTL_S:-}
     restart: unless-stopped
     mem_limit: 512m
     container_name: readings-api
+    # Threaded workers: an archive zip streams for as long as the client takes, which a
+    # sync worker would neither survive (--timeout) nor share with other requests.
     command:
-      ["gunicorn", "api_project.wsgi:application", "--bind", "0.0.0.0:${READINGS__PORT}", "--workers", "2"]
+      [
+        "gunicorn", "api_project.wsgi:application", "--bind", "0.0.0.0:${READINGS__PORT}",
+        "--workers", "2", "--worker-class", "gthread", "--threads", "8",
+      ]
     depends_on:
       influxdb:
         condition: service_healthy

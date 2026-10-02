@@ -4,7 +4,7 @@ Both are keyed by mesh: InfluxDB points carry a `mesh_id` tag, and the archive
 is partitioned as `{prefix}/mesh_id=<id>/dt=<YYYY-MM-DD>/hour=<HH>/`.
 """
 import re
-from datetime import datetime, timedelta, timezone
+from datetime import datetime, timezone
 
 import structlog
 
@@ -13,8 +13,6 @@ from common.env import env_str
 log = structlog.get_logger()
 
 EPOCH = datetime(1970, 1, 1, tzinfo=timezone.utc)
-# The archive's name for readings that arrived without a mesh.
-UNKNOWN_MESH = "unknown"
 _PARTITION = re.compile(r"/dt=(\d{4}-\d{2}-\d{2})/hour=(\d{2})/")
 
 
@@ -70,10 +68,6 @@ class DataStore:
         # later readings goes with it, rather than keeping earlier ones.
         self._delete_archive(mesh_id, lambda start: start < until)
         log.info("Deleted mesh readings", mesh_id=mesh_id, until=until.isoformat())
-
-    def delete_unknown_mesh_archive_before(self, cutoff: datetime) -> None:
-        """Archive readings that arrived without a mesh have no InfluxDB points to delete."""
-        self._delete_archive(UNKNOWN_MESH, lambda start: start + timedelta(hours=1) <= cutoff)
 
     def _delete_influx(self, mesh_id: str, until: datetime) -> None:
         # The predicate takes the mesh id verbatim, so only accept a plain id.

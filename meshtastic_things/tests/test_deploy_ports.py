@@ -397,7 +397,7 @@ def test_services_sharing_a_dockerfile_share_one_image():
 # runtimes, one per tier, so a typo'd or missing profile tag can silently
 # drop decode from both, or run it twice.
 
-KNOWN_PROFILES = {"full", "lite", "quality", "bridge-pool"}
+KNOWN_PROFILES = {"full", "lite", "quality", "bridge-pool", "minio"}
 
 def test_profiles_are_known_values():
     """A typo'd profile name silently drops a service from every real invocation - Compose
@@ -599,3 +599,35 @@ def test_every_topic_created_at_startup_is_actually_used():
     assert not unused, (
         f"these topics are created at startup but no code reads the variable: {unused}"
     )
+
+
+def test_the_read_tier_gets_only_the_environment_it_needs():
+    """readings_api must not load the whole .env: that hands the read tier the MinIO root
+    credential, registry's database password and the EMQX keys."""
+    readings = BASE_SERVICES["readings_api"]
+    env = readings.get("environment") or {}
+
+    assert "env_file" not in readings
+    leaked = sorted(k for k in env if k.startswith(("S3_WRITER__", "REGISTRY__", "POSTGRES_", "MQTT_")))
+    assert not leaked, f"readings_api receives {leaked}"
+    assert "READINGS__DB_DSN" in env and "INFLUX__TOKEN" in env
+
+
+def test_the_archive_writer_runs_without_the_bundled_minio():
+    """With the archive on an external S3 the minio profile is off, so the writer may not
+    require it."""
+    minio = BASE_SERVICES["s3_writer"]["depends_on"]["minio"]
+
+    assert minio.get("required") is False
+    assert BASE_SERVICES["minio"]["profiles"] == ["minio"]
+    assert BASE_SERVICES["minio_init"]["profiles"] == ["minio"]
+
+
+def test_the_s3_api_is_proxied_without_basic_auth():
+    """S3 clients sign every request and cannot send a second Authorization header."""
+    caddyfile = CADDYFILE.read_text()
+    block = re.search(r"\{\$CADDY_S3_ADDRESS[^}]*\} \{(.*?)\n\}", caddyfile, re.S)
+
+    assert block, "no Caddy site block for CADDY_S3_ADDRESS"
+    assert "reverse_proxy minio:9000" in block.group(1)
+    assert "admin_ui" not in block.group(1) and "basic_auth" not in block.group(1)

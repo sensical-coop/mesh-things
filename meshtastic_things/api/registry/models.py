@@ -416,6 +416,13 @@ class Device(models.Model):
     # The absence detector is device-wide rather than per channel, so it is
     # switched on here rather than in a Measurement's enabled_detectors.
     absence_detection_enabled = models.BooleanField(default=False)
+    # Opt-in to the Parquet archive, effective only while the mesh owner is an operator.
+    archive_enabled = models.BooleanField(default=False)
+    # Who switched it on and when, cleared when switched off. The history is in SinkInstruction.
+    archive_enabled_at = models.DateTimeField(null=True, blank=True)
+    archive_enabled_by = models.ForeignKey(
+        Owner, on_delete=models.SET_NULL, null=True, blank=True, related_name="+"
+    )
     latitude = models.FloatField(null=True, blank=True)
     longitude = models.FloatField(null=True, blank=True)
     location_overridden = models.BooleanField(default=False)
@@ -453,6 +460,34 @@ class Device(models.Model):
         if described:
             return f"{described} ({node_ids.to_hex(self.device_id)})"
         return f"{'gateway' if self.is_gateway else 'node'} {node_ids.to_hex(self.device_id)}"
+
+
+class SinkInstruction(models.Model):
+    """Append-only record of the controller's instruction to send a device's readings to a
+    sink or to stop (GDPR Art. 28(3)(a), Art. 5(2)).
+
+    Kept after the device or owner is deleted, so both are snapshotted.
+    """
+
+    id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
+    # "archive"; later "sink:<uuid>" for MQTT and Kafka sinks.
+    sink = models.CharField(max_length=64)
+    enabled = models.BooleanField()
+    device = models.ForeignKey(Device, on_delete=models.SET_NULL, null=True, blank=True, related_name="+")
+    mesh_id = models.UUIDField()
+    node_id = models.BigIntegerField()
+    given_by = models.ForeignKey(Owner, on_delete=models.SET_NULL, null=True, blank=True, related_name="+")
+    given_by_name = models.CharField(max_length=255)
+    given_by_email = models.EmailField()
+    given_at = models.DateTimeField(default=timezone.now)
+
+    class Meta:
+        db_table = "sink_instructions"
+        indexes = [models.Index(fields=["mesh_id", "node_id", "given_at"], name="sink_instr_mesh_node_at")]
+
+    def __str__(self) -> str:
+        state = "on" if self.enabled else "off"
+        return f"{self.sink} {state} for {node_ids.to_hex(self.node_id)} by {self.given_by_email} ({self.given_at:%Y-%m-%d})"
 
 
 class MeasurementType(models.Model):

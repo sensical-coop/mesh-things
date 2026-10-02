@@ -1,6 +1,6 @@
 from django.urls import path
 
-from . import views
+from . import archive_views, views
 
 # Mounted under `readings/`. A device can be addressed by its registration ID
 # or, store-natively, by mesh and node number.
@@ -11,4 +11,11 @@ urlpatterns = [
     path("meshes/<uuid:mesh_id>/nodes/<int:node_id>", views.ReadingsView.as_view()),
     path("meshes/<uuid:mesh_id>/nodes/<int:node_id>/latest", views.LatestView.as_view()),
     path("meshes/<uuid:mesh_id>/nodes/<int:node_id>/quality", views.QualityView.as_view()),
+    path("archive/meshes/<uuid:mesh_id>", archive_views.ArchiveManifestView.as_view()),
+    path("archive/meshes/<uuid:mesh_id>/credentials", archive_views.ArchiveCredentialsView.as_view()),
+    path("archive/meshes/<uuid:mesh_id>/zip", archive_views.ArchiveZipView.as_view()),
+    path(
+        "archive/meshes/<uuid:mesh_id>/partitions/<str:day>/<int:hour>",
+        archive_views.ArchivePartitionView.as_view(),
+    ),
 ]

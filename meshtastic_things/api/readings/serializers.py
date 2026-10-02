@@ -56,3 +56,30 @@ class DeviceQualityResponseSerializer(serializers.Serializer):
     channels = ChannelQualitySerializer(many=True)
 
 
+
+
+class ArchivePartitionSerializer(serializers.Serializer):
+    dt = serializers.DateField()
+    hour = serializers.IntegerField(min_value=0, max_value=23)
+    size = serializers.IntegerField(help_text="Object size in bytes.")
+    last_modified = serializers.DateTimeField()
+
+
+class ArchiveManifestSerializer(serializers.Serializer):
+    mesh_id = serializers.UUIDField()
+    prefix = serializers.CharField()
+    partitions = ArchivePartitionSerializer(many=True)
+
+
+class ArchiveCredentialsSerializer(serializers.Serializer):
+    access_key_id = serializers.CharField()
+    secret_access_key = serializers.CharField()
+    session_token = serializers.CharField()
+    expires_at = serializers.DateTimeField()
+    endpoint = serializers.CharField(
+        allow_null=True, help_text="S3 endpoint to connect to. Null means the provider's default (AWS)."
+    )
+    region = serializers.CharField()
+    bucket = serializers.CharField()
+    prefix = serializers.CharField()
+    s3_path = serializers.CharField()
