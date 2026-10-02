@@ -18,9 +18,9 @@ DEFAULT_LOCALE = "en"
 LOCALES = ("en", "es")
 
 VERSIONS = {
-    TermsKind.ACCOUNT: "account-2026-09",
-    TermsKind.MESH: "meshes-2026-09",
-    TermsKind.SOURCE: "sources-2026-09",
+    TermsKind.ACCOUNT: "account-2026-10",
+    TermsKind.MESH: "meshes-2026-10",
+    TermsKind.SOURCE: "sources-2026-10",
 }
 
 # The console mock (apps/api-mock/src/features/terms/terms.ts) carries a copy of this text
