@@ -413,7 +413,7 @@ def test_services_sharing_a_dockerfile_share_one_image():
 # runtimes, one per tier, so a typo'd or missing profile tag can silently
 # drop decode from both, or run it twice.
 
-KNOWN_PROFILES = {"full", "lite", "quality", "bridge-pool", "minio", "sinks", "monitor"}
+KNOWN_PROFILES = {"full", "lite", "quality", "bridge-pool", "minio", "sinks", "monitor", "kafka-ui"}
 
 def test_profiles_are_known_values():
     """A typo'd profile name silently drops a service from every real invocation - Compose

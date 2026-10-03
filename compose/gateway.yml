@@ -21,9 +21,10 @@ services:
       readings_api:
         condition: service_healthy
 
-  # full-only: Kafka topic browser, not needed for a minimal deployment
+  # Opt-in Kafka topic browser: `--profile kafka-ui`. Left out of full to keep its
+  # memory free on small hosts.
   kafbat-ui:
-    profiles: ["full"]
+    profiles: ["kafka-ui"]
     mem_limit: 1024m
     container_name: kafbat-ui
     image: ghcr.io/kafbat/kafka-ui
