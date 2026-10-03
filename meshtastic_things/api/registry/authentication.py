@@ -38,9 +38,14 @@ class OwnerBearerAuthentication(authentication.BaseAuthentication):
 
     def _record_failed_attempt(self, cache_key: str) -> None:
         try:
-            cache.incr(cache_key)
+            count = cache.incr(cache_key)
         except ValueError:
             cache.set(cache_key, 1, FAILED_AUTH_RATE_WINDOW_SECONDS)
+            return
+        # A key that expires between incr's existence check and the increment is
+        # recreated without a timeout, which would lock the caller out for good.
+        if count == 1:
+            cache.touch(cache_key, FAILED_AUTH_RATE_WINDOW_SECONDS)
 
     def _token_from_header(self, request) -> str | None:
         parts = authentication.get_authorization_header(request).split()

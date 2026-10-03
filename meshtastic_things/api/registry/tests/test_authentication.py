@@ -1,6 +1,9 @@
 from unittest.mock import patch
 
+from django.core.cache import cache
 from rest_framework.test import APIClient
+
+from registry.authentication import FAILED_AUTH_RATE_WINDOW_SECONDS, OwnerBearerAuthentication
 
 from registry.tests.helpers import SIGNUP_TERMS, RegistryTestCase
 
@@ -33,6 +36,20 @@ class FailedAuthGuardTests(RegistryTestCase):
             self.client.get("/owners/me", HTTP_AUTHORIZATION="Bearer bad-token", HTTP_X_FORWARDED_FOR="203.0.113.1")
             resp = self.client.get("/owners/me", HTTP_X_FORWARDED_FOR="203.0.113.2", **self.auth_headers(owner))
         self.assertEqual(resp.status_code, 200)
+
+    def test_counter_recreated_by_an_expiry_race_still_expires(self):
+        key = "registry:failed-auth:race"
+
+        def incr_after_expiry(cache_key):
+            # What Redis INCR does to a key that expired after Django checked it exists.
+            cache.set(cache_key, 1, None)
+            return 1
+
+        with patch.object(cache, "incr", side_effect=incr_after_expiry):
+            OwnerBearerAuthentication()._record_failed_attempt(key)
+        ttl = cache._cache.get_client(write=True).ttl(cache.make_and_validate_key(key))
+        self.assertGreater(ttl, 0)
+        self.assertLessEqual(ttl, FAILED_AUTH_RATE_WINDOW_SECONDS)
 
 
 class OwnerSessionAuthenticationTests(RegistryTestCase):
