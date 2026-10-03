@@ -24,3 +24,11 @@ class FailedAuthGuardTests(RegistryTestCase):
             for _ in range(5):
                 resp = self.client.get("/owners/me")
                 self.assertEqual(resp.status_code, 401)
+
+    def test_invalid_tokens_from_one_client_do_not_throttle_another_behind_the_proxy(self):
+        owner = self.create_owner()
+        with patch("registry.authentication.FAILED_AUTH_RATE_LIMIT", 1):
+            self.client.get("/owners/me", HTTP_AUTHORIZATION="Bearer bad-token", HTTP_X_FORWARDED_FOR="203.0.113.1")
+            resp = self.client.get("/owners/me", HTTP_X_FORWARDED_FOR="203.0.113.2", **self.auth_headers(owner))
+        self.assertEqual(resp.status_code, 200)
+

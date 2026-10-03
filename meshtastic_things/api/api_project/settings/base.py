@@ -133,6 +133,10 @@ REST_FRAMEWORK = {
     if IS_READINGS
     else ["registry.permissions.IsVerifiedOwner"],
     "UNAUTHENTICATED_USER": "django.contrib.auth.models.AnonymousUser",
+    # Caddy is the one hop in front of both roles and replaces any client-sent
+    # X-Forwarded-For, so its last entry is the caller. Without a forwarded
+    # header (direct access in dev) REMOTE_ADDR is used.
+    "NUM_PROXIES": 1,
     "DEFAULT_THROTTLE_CLASSES": ["registry.throttling.OwnerRateThrottle", "registry.throttling.AnonReadThrottle"]
     if IS_READINGS
     else [

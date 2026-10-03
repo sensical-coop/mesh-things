@@ -1,4 +1,10 @@
-from rest_framework.throttling import AnonRateThrottle, SimpleRateThrottle
+from rest_framework.throttling import AnonRateThrottle, BaseThrottle, SimpleRateThrottle
+
+
+def client_ident(request) -> str:
+    """Return the caller's address, read through the reverse proxy like every DRF throttle."""
+    return BaseThrottle().get_ident(request)
+
 
 class OwnerRateThrottle(SimpleRateThrottle):
     """Throttles authenticated traffic per Owner"""

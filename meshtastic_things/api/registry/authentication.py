@@ -8,6 +8,7 @@ from rest_framework import authentication, exceptions
 
 from .auth import hash_api_key
 from .models import Owner
+from .throttling import client_ident
 
 FAILED_AUTH_RATE_LIMIT = 30
 FAILED_AUTH_RATE_WINDOW_SECONDS = 60
@@ -28,7 +29,7 @@ class OwnerBearerAuthentication(authentication.BaseAuthentication):
         if not token:
             return None
 
-        cache_key = f"registry:failed-auth:{request.META.get('REMOTE_ADDR', 'unknown')}"
+        cache_key = f"registry:failed-auth:{client_ident(request)}"
         if (cache.get(cache_key) or 0) >= FAILED_AUTH_RATE_LIMIT:
             raise exceptions.Throttled(detail="Too many invalid credentials, slow down")
 
