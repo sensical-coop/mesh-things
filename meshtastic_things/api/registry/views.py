@@ -38,6 +38,7 @@ from .data_lifecycle import (
 from . import postprocessing, sinks
 from .emqx_client import get_emqx_client
 from .exceptions import BadGateway, Conflict
+from .gateways import save_gateway
 from .kafka_publisher import get_publisher, publish_gateway_state
 from common.algorithms import REGISTRY, discover
 from common.env import env_str
@@ -929,6 +930,10 @@ class MeshListCreateView(APIView):
             source_id: Source the mesh's traffic is bridged from, which must be
                 one the caller created, or any source for a superuser. Leave
                 unset for traffic on this instance's own broker.
+            discover_gateways: Register gateways automatically once one of their
+                packets decodes with this mesh's channel and pre-shared key.
+                Defaults to `false`. Only an operator may switch it on for a mesh
+                with a default or blank key.
             terms_version: The `version` of the mesh terms accepted. Required
                 without a source, ignored with one, and ignored on an instance
                 that does not enforce terms.
@@ -1003,6 +1008,13 @@ class MeshDetailView(APIView):
                 Null moves it to the default broker. Moving a mesh off a source
                 schedules the readings stored until then for deletion after the
                 grace period; moving it back within that period cancels it.
+            discover_gateways: Register gateways automatically once one of their
+                packets decodes with this mesh's channel and pre-shared key. A
+                gateway is skipped when another mesh shares the same source,
+                channel and key, when it is registered elsewhere, or when it was
+                rejected on this mesh. Switching it off keeps the gateways
+                already found. Only an operator may switch it on for a mesh with
+                a default or blank key.
             terms_version: The `version` of the mesh terms accepted. Required when
                 moving the mesh onto the default broker unless it already holds a
                 current acceptance, or the instance does not enforce terms;
@@ -1188,32 +1200,30 @@ class DeviceListCreateView(APIView):
         data = input_serializer.validated_data
         mesh = _get_mesh_or_404(data["mesh_id"])
         _require_mesh_ownership(mesh, request.user)
+        device = Device(
+            device_id=data["device_id"],
+            mesh=mesh,
+            is_gateway=data["is_gateway"],
+            label=data.get("label"),
+            admin_keys_b64=data.get("admin_keys_b64", []),
+            latitude=data.get("latitude"),
+            longitude=data.get("longitude"),
+            location_overridden=data.get("latitude") is not None,
+            name=data.get("name"),
+            short_name=data.get("short_name"),
+            hardware_type=data.get("hardware_type"),
+            role=data.get("role"),
+            nodeinfo_overridden=any(
+                data.get(f) for f in ("name", "short_name", "hardware_type", "role")
+            ),
+        )
         try:
-            device = Device.objects.create(
-                device_id=data["device_id"],
-                mesh=mesh,
-                is_gateway=data["is_gateway"],
-                label=data.get("label"),
-                admin_keys_b64=data.get("admin_keys_b64", []),
-                latitude=data.get("latitude"),
-                longitude=data.get("longitude"),
-                location_overridden=data.get("latitude") is not None,
-                name=data.get("name"),
-                short_name=data.get("short_name"),
-                hardware_type=data.get("hardware_type"),
-                role=data.get("role"),
-                nodeinfo_overridden=any(
-                    data.get(f) for f in ("name", "short_name", "hardware_type", "role")
-                ),
-            )
+            if device.is_gateway:
+                save_gateway(device)
+            else:
+                device.save()
         except IntegrityError:
             raise Conflict(f"Device with device_id {data['device_id']} already has an allowed registration")
-        if device.is_gateway:
-            try:
-                publish_gateway_state(get_publisher(), device, mesh)
-            except Exception as e:
-                device.delete()
-                raise BadGateway(f"Failed to publish gateway registration, rolled back: {e}")
         return Response(
             DeviceReadSerializer(device, context=_viewer_context(request)).data,
             status=status.HTTP_201_CREATED,

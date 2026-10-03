@@ -119,6 +119,21 @@ services:
         condition: service_healthy
     command: ["python", "manage.py", "consume_device_sightings"]
 
+  registry_gateway_discovery:
+    <<: *registry-role
+    mem_limit: 256m
+    container_name: registry-gateway-discovery
+    depends_on:
+      kafka:
+        condition: service_healthy
+      kafka-topics-init:
+        condition: service_completed_successfully
+      postgres:
+        condition: service_healthy
+      registry_api:
+        condition: service_healthy
+    command: ["python", "manage.py", "consume_gateway_candidates"]
+
   registry_sensor_discovery_consumer:
     <<: *registry-role
     mem_limit: 256m

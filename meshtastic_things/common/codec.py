@@ -114,3 +114,39 @@ def decode_psk(key_b64: str) -> bytes | None:
             return None
         return _DEFAULT_CHANNEL_KEY[:-1] + bytes([(_DEFAULT_CHANNEL_KEY[-1] + index - 1) & 0xFF])
     return raw
+
+
+def is_well_known_psk(key_b64: str | None) -> bool:
+    """Whether a PSK is blank or a one-byte index key, both of which anyone can decrypt."""
+    if not key_b64:
+        return True
+    try:
+        return len(base64.b64decode(key_b64.encode("ascii"))) <= 1
+    except ValueError:
+        return False
+
+
+def decodes_with(raw: bytes, key_b64: str | None) -> bool:
+    """Whether a ServiceEnvelope fully decodes with a channel PSK.
+
+    An encrypted packet must decrypt to a known portnum whose payload parses; a
+    plain one only matches a mesh without encryption. Parsing alone is not
+    enough, since a wrong key yields random bytes that sometimes parse as `Data`.
+    """
+    try:
+        mp = parse_service_envelope(raw)
+        key_bytes = decode_psk(key_b64)
+    except Exception:
+        return False
+    encrypted = mp.HasField("encrypted") and not mp.HasField("decoded")
+    if encrypted != (key_bytes is not None):
+        return False
+    if encrypted:
+        decrypted = decrypt_packet(mp, key_bytes)
+        if decrypted is None:
+            return False
+        mp.decoded.CopyFrom(decrypted)
+    try:
+        return decode_payload(mp) is not None
+    except Exception:
+        return False

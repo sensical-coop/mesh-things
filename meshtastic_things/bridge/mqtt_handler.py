@@ -10,6 +10,7 @@ from paho.mqtt.client import topic_matches_sub
 from paho.mqtt.packettypes import PacketTypes
 from paho.mqtt.properties import Properties
 
+from bridge import discovery
 from common import sources
 from pipeline.config_state import replay_consumer, replay_to_end
 from tools.healthcheck import HealthState, KakfaProducerHealth, MQTTHealth
@@ -118,6 +119,9 @@ class MQTTHandler(object):
         self.gateway_sources: dict[str, str | None] = {}
         self.source_mismatch_drops = 0
         self.config_consumer = None
+        self.discovery_pacer = discovery.DiscoveryPacer.from_env()
+        self.discovery_topic = discovery.candidate_topic()
+        self.discovery_candidates_sent = 0
 
     def _apply_gateway_record(self, record) -> None:
         event = json.loads(record.value)
@@ -157,6 +161,17 @@ class MQTTHandler(object):
             return True
         return self.gateway_sources[gateway_id] == sources.source_id_from_topic(topic)
 
+    def observe_candidate(self, topic: str, payload: bytes) -> None:
+        """Send a paced sample of an unregistered gateway's traffic to the registry for discovery."""
+        if topic.split('/')[-1] in self.gateway_sources:
+            return
+        candidate = discovery.parse_candidate(topic)
+        if candidate is None or not self.discovery_pacer.should_send(candidate):
+            return
+        key, event = discovery.candidate_event(*candidate, payload)
+        self.kafka_producer.send(self.discovery_topic, key=key.encode(), value=json.dumps(event).encode())
+        self.discovery_candidates_sent += 1
+
     async def bridge_mqtt_kafka(self, topics: list[str], shared_sub=False):
 
         if shared_sub:
@@ -195,6 +210,10 @@ class MQTTHandler(object):
                             log.debug('Dropping packet from a gateway outside its source', topic=message.topic.value)
                             continue
                         self.kafka_producer.send(os.environ['MQTT_BRIDGE__KAFKA_TOPIC'], key=_partition_key(message.topic), value=message.payload)
+                        try:
+                            self.observe_candidate(message.topic.value, message.payload)
+                        except Exception as e:
+                            log.warning('Gateway discovery sample not sent', topic=message.topic.value, error=str(e))
             except aiomqtt.MqttError as e:
                 self.mqtt_health.mark_disconnected()
                 log.warning(f"Connection lost ({e}); Reconnecting in {int(os.environ['MQTT_BRIDGE__RECONNECT'])} seconds ...")
@@ -223,7 +242,11 @@ class MQTTHandler(object):
         log.info(f'Health check. Kafka connected: {self.health_state.kafka_connected}')
         log.info(f'Health check. MQTT connected: {self.health_state.mqtt_connected}')
 
-        body = {"source_mismatch_drops": self.source_mismatch_drops}
+        body = {
+            "source_mismatch_drops": self.source_mismatch_drops,
+            "discovery_candidates_sent": self.discovery_candidates_sent,
+            "discovery_gateways_tracked": len(self.discovery_pacer),
+        }
         if self.health_state.is_healthy():
             return web.json_response({"status": "ok", **body})
         return web.json_response({"status": "unhealthy", **body}, status=503)
