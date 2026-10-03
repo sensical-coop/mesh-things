@@ -93,6 +93,9 @@ DATABASES = {
 }
 
 AUTH_USER_MODEL = "registry.Owner"
+# Unverified owners keep a session so the console can show them their own
+# account; IsVerifiedOwner still keeps them off everything else.
+AUTHENTICATION_BACKENDS = ["django.contrib.auth.backends.AllowAllUsersModelBackend"]
 
 CACHES = {
     "default": {
@@ -127,7 +130,9 @@ APPEND_SLASH = False
 REST_FRAMEWORK = {
     "DEFAULT_AUTHENTICATION_CLASSES": [
         "registry.authentication.OwnerBearerAuthentication",
-        "rest_framework.authentication.SessionAuthentication",
+        "rest_framework.authentication.SessionAuthentication"
+        if IS_READINGS
+        else "registry.authentication.OwnerSessionAuthentication",
     ],
     "DEFAULT_PERMISSION_CLASSES": ["rest_framework.permissions.IsAuthenticated"]
     if IS_READINGS

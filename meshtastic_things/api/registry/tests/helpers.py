@@ -57,6 +57,8 @@ class RegistryTestCase(APITestCase):
             format="json",
         )
         assert resp.status_code == 201, resp.content
+        # Signup also opens a session; tests authenticate explicitly with the key.
+        self.client.logout()
         body = resp.json()
         o = Owner.objects.get(pk=uuid.UUID(body["id"]))
         o.is_active = True

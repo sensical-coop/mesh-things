@@ -262,11 +262,13 @@ class OwnerListCreateView(APIView):
 
     @extend_schema(request=OwnerCreateSerializer, responses={201: OwnerWithApiKeySerializer})
     def post(self, request):
-        """Register an owner and return its API key.
+        """Register an owner, sign it in and return its API key.
 
         Signing up accepts the current account terms, which are recorded. The
-        key is shown in this response and cannot be retrieved again afterwards.
-        A new owner stays inactive until its email address is verified.
+        key is for scripts and is shown in this response only; it cannot be
+        retrieved again afterwards. A browser uses the session cookie set by
+        this response instead. A new owner stays inactive until its email
+        address is verified, and until then can only reach its own account.
 
         Args:
             terms_version: The `version` of the account terms accepted, as
@@ -293,6 +295,7 @@ class OwnerListCreateView(APIView):
                 record_acceptance(TermsKind.ACCOUNT, owner, serializer.validated_data["terms_locale"])
         except IntegrityError:
             raise Conflict(f"Owner with email {serializer.validated_data['email']} already exists")
+        auth_login(request, owner)
         # api_key is never persisted or retrievable again
         owner.api_key = api_key
         try:
@@ -509,6 +512,8 @@ LOGIN_FAILED_RATE_WINDOW_SECONDS = 300
 class OwnerLoginView(APIView):
     """Sign in with email and password, returning the owner profile and a session cookie.
 
+    An owner whose email is not verified yet is signed in too, with `is_active`
+    false in the profile, and can only reach its own account until it verifies.
     Repeated failures from the same address are rate limited.
     """
 
@@ -530,10 +535,8 @@ class OwnerLoginView(APIView):
             except ValueError:
                 cache.set(cache_key, 1, LOGIN_FAILED_RATE_WINDOW_SECONDS)
             raise AuthenticationFailed("Invalid email or password")
-        if not owner.is_active:
-            raise PermissionDenied("Email not verified - see POST /owners/me/resend-verification")
 
-        auth_login(request, owner, backend="django.contrib.auth.backends.ModelBackend")
+        auth_login(request, owner)
         data = OwnerReadSerializer(owner).data
         data["devices"] = _devices_for_owner(owner)
         return Response(data)

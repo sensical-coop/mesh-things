@@ -3,6 +3,7 @@ from datetime import timedelta
 from django.conf import settings
 from django.core.cache import cache
 from django.utils import timezone
+from drf_spectacular.authentication import SessionScheme
 from drf_spectacular.extensions import OpenApiAuthenticationExtension
 from rest_framework import authentication, exceptions
 
@@ -111,3 +112,24 @@ class OwnerResetPasswordAuthenticationScheme(OpenApiAuthenticationExtension):
 
     def get_security_definition(self, auto_schema):
         return {"type": "http", "scheme": "bearer", "bearerFormat": "Password reset token"}
+
+
+class OwnerSessionAuthentication(authentication.SessionAuthentication):
+    """Session authentication that also accepts unverified owners.
+
+    DRF's version drops inactive users, but an unverified owner still needs its
+    session to reach its own account. `IsVerifiedOwner` keeps it off the rest.
+    """
+
+    def authenticate(self, request):
+        user = getattr(request._request, "user", None)
+        if not user or not user.is_authenticated:
+            return None
+        self.enforce_csrf(request)
+        return (user, None)
+
+
+class OwnerSessionAuthenticationScheme(SessionScheme):
+    """Documents OwnerSessionAuthentication as the same session cookie DRF's class uses."""
+
+    target_class = OwnerSessionAuthentication

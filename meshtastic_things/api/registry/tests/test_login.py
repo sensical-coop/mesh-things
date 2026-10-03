@@ -42,6 +42,22 @@ class SignupPasswordTests(RegistryTestCase):
         self.assertEqual(resp.status_code, 400)
 
 
+class SignupSessionTests(RegistryTestCase):
+    def test_signup_signs_in_the_unverified_owner_with_a_session(self):
+        resp = self.client.post(
+            "/owners",
+            {**SIGNUP_TERMS, "name": "Alice", "email": "signup-session@example.com", "password": self.DEFAULT_PASSWORD},
+            format="json",
+        )
+        self.assertEqual(resp.status_code, 201)
+        self.assertIn("sessionid", resp.cookies)
+
+        me = self.client.get("/owners/me")
+        self.assertEqual(me.status_code, 200)
+        self.assertFalse(me.json()["is_active"])
+        self.assertEqual(self.client.get("/owners/me/devices").status_code, 403)
+
+
 class LoginTests(RegistryTestCase):
     def test_login_with_correct_credentials_returns_profile_and_sets_session(self):
         owner = self.create_owner(name="Alice", email="login-a@example.com")
@@ -72,13 +88,13 @@ class LoginTests(RegistryTestCase):
         )
         self.assertEqual(resp.status_code, 401)
 
-    def test_login_before_verification_is_403(self):
-        resp = self.client.post(
+    def test_login_before_verification_signs_in_an_unverified_owner(self):
+        self.client.post(
             "/owners",
             {**SIGNUP_TERMS, "name": "Bob", "email": "login-unverified@example.com", "password": self.DEFAULT_PASSWORD},
             format="json",
         )
-        self.assertEqual(resp.status_code, 201)
+        self.client.post("/owners/logout")
 
         login = self.client.post(
             "/owners/login",
@@ -86,7 +102,10 @@ class LoginTests(RegistryTestCase):
             format="json",
         )
 
-        self.assertEqual(login.status_code, 403)
+        self.assertEqual(login.status_code, 200)
+        self.assertFalse(login.json()["is_active"])
+        self.assertEqual(self.client.get("/owners/me").status_code, 200)
+        self.assertEqual(self.client.get("/owners/me/devices").status_code, 403)
 
     def test_failed_login_attempts_are_throttled_per_ip(self):
         self.create_owner(name="Alice", email="login-throttle@example.com")
