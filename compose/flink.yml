@@ -12,11 +12,13 @@ x-flink-state-volumes: &flink-state-volumes
   - flink_checkpoints:/opt/flink/checkpoints
   - flink_savepoints:/opt/flink/savepoints
 
+# Every sink is at-least-once, so the interval only bounds the replay after a
+# restart. A shorter one rewrites the whole RocksDB state to disk far more often.
 x-flink-state-properties: &flink-state-properties |
   state.backend: rocksdb
   state.checkpoints.dir: file:///opt/flink/checkpoints
   state.savepoints.dir: file:///opt/flink/savepoints
-  execution.checkpointing.interval: 10s
+  execution.checkpointing.interval: 60s
   execution.checkpointing.mode: EXACTLY_ONCE
   execution.checkpointing.externalized-checkpoint-retention: RETAIN_ON_CANCELLATION
 
@@ -32,7 +34,7 @@ x-flink-client-properties: &flink-client-properties |
   state.backend: rocksdb
   state.checkpoints.dir: file:///opt/flink/checkpoints
   state.savepoints.dir: file:///opt/flink/savepoints
-  execution.checkpointing.interval: 10s
+  execution.checkpointing.interval: 60s
   execution.checkpointing.mode: EXACTLY_ONCE
   execution.checkpointing.externalized-checkpoint-retention: RETAIN_ON_CANCELLATION
   rest.address: jobmanager
