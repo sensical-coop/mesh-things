@@ -168,6 +168,7 @@ class ResendVerificationTests(RegistryTestCase):
     def test_resend_requires_auth_but_not_verification(self):
         resp = self.client.post("/owners", {**SIGNUP_TERMS, "name": "Liam", "email": "verify-l@example.com", "password": "Correct-Horse-Battery-42"}, format="json")
         owner = resp.json()
+        self.client.logout()
 
         self.assertEqual(self.client.post("/owners/me/resend-verification").status_code, 401)
         self.assertEqual(

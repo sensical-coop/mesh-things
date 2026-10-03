@@ -6,7 +6,6 @@ import structlog
 from django.conf import settings
 from django.contrib.auth import login as auth_login, logout as auth_logout
 from django.contrib.auth.password_validation import validate_password
-from django.core.cache import cache
 from django.core.exceptions import ValidationError as DjangoValidationError
 from django.db import IntegrityError, transaction
 from django.db.models import Q, RestrictedError
@@ -14,13 +13,12 @@ from django.middleware.csrf import get_token as get_csrf_token
 from django.utils import timezone
 from drf_spectacular.utils import OpenApiParameter, OpenApiResponse, OpenApiTypes, extend_schema
 from rest_framework import status
-from rest_framework.exceptions import AuthenticationFailed, NotFound, ParseError, PermissionDenied, Throttled, ValidationError
+from rest_framework.exceptions import AuthenticationFailed, NotFound, ParseError, PermissionDenied, ValidationError
 from rest_framework.permissions import AllowAny, IsAuthenticated
 from rest_framework.response import Response
 from rest_framework.views import APIView
 
 from .auth import generate_api_key, hash_api_key
-from .authentication import OwnerResetPasswordAuthentication
 from .emailing import (
     send_operator_request_decided_email,
     send_operator_request_email,
@@ -262,11 +260,13 @@ class OwnerListCreateView(APIView):
 
     @extend_schema(request=OwnerCreateSerializer, responses={201: OwnerWithApiKeySerializer})
     def post(self, request):
-        """Register an owner and return its API key.
+        """Register an owner, sign it in and return its API key.
 
         Signing up accepts the current account terms, which are recorded. The
-        key is shown in this response and cannot be retrieved again afterwards.
-        A new owner stays inactive until its email address is verified.
+        key is for scripts and is shown in this response only; it cannot be
+        retrieved again afterwards. A browser uses the session cookie set by
+        this response instead. A new owner stays inactive until its email
+        address is verified, and until then can only reach its own account.
 
         Args:
             terms_version: The `version` of the account terms accepted, as
@@ -293,6 +293,7 @@ class OwnerListCreateView(APIView):
                 record_acceptance(TermsKind.ACCOUNT, owner, serializer.validated_data["terms_locale"])
         except IntegrityError:
             raise Conflict(f"Owner with email {serializer.validated_data['email']} already exists")
+        auth_login(request, owner)
         # api_key is never persisted or retrievable again
         owner.api_key = api_key
         try:
@@ -502,14 +503,13 @@ class CsrfCookieView(APIView):
         return Response({"detail": "CSRF cookie set"})
 
 
-LOGIN_FAILED_RATE_LIMIT = 10
-LOGIN_FAILED_RATE_WINDOW_SECONDS = 300
-
-
 class OwnerLoginView(APIView):
     """Sign in with email and password, returning the owner profile and a session cookie.
 
-    Repeated failures from the same address are rate limited.
+    An owner whose email is not verified yet is signed in too, with `is_active`
+    false in the profile, and can only reach its own account until it verifies.
+    Attempts are limited per email and source address; once the limit is
+    reached even the correct password is refused with `429` for about a minute.
     """
 
     permission_classes = [AllowAny]
@@ -519,21 +519,11 @@ class OwnerLoginView(APIView):
         serializer = OwnerLoginSerializer(data=request.data)
         serializer.is_valid(raise_exception=True)
 
-        cache_key = f"registry:failed-login:{request.META.get('REMOTE_ADDR', 'unknown')}"
-        if (cache.get(cache_key) or 0) >= LOGIN_FAILED_RATE_LIMIT:
-            raise Throttled(detail="Too many failed login attempts, slow down")
-
         owner = Owner.objects.filter(email=serializer.validated_data["email"]).first()
         if owner is None or not owner.check_password(serializer.validated_data["password"]):
-            try:
-                cache.incr(cache_key)
-            except ValueError:
-                cache.set(cache_key, 1, LOGIN_FAILED_RATE_WINDOW_SECONDS)
             raise AuthenticationFailed("Invalid email or password")
-        if not owner.is_active:
-            raise PermissionDenied("Email not verified - see POST /owners/me/resend-verification")
 
-        auth_login(request, owner, backend="django.contrib.auth.backends.ModelBackend")
+        auth_login(request, owner)
         data = OwnerReadSerializer(owner).data
         data["devices"] = _devices_for_owner(owner)
         return Response(data)
@@ -579,17 +569,28 @@ class OwnerRequestPasswordResetView(APIView):
 
 
 class OwnerResetPasswordView(APIView):
-    """Set a new password, authenticated by the reset token from the link's
-    email as an `Authorization: Bearer` credential."""
-
-    authentication_classes = [OwnerResetPasswordAuthentication]
-    permission_classes = [IsAuthenticated]
+    authentication_classes = []
+    permission_classes = [AllowAny]
 
     @extend_schema(request=OwnerResetPasswordSerializer, responses=DetailSerializer)
     def post(self, request):
+        """Set a new password using the token from the password reset link.
+
+        The token works once and expires after one hour by default. An invalid or
+        expired token is refused with `400`; request a new link to try again.
+
+        Args:
+            token: The token from the password reset link. Required.
+            new_password: The new password. Required.
+        """
         serializer = OwnerResetPasswordSerializer(data=request.data)
         serializer.is_valid(raise_exception=True)
-        owner = request.user
+        owner = Owner.objects.filter(
+            password_reset_token_hash=hash_api_key(serializer.validated_data["token"])
+        ).first()
+        ttl = timedelta(hours=settings.PASSWORD_RESET_TTL_HOURS)
+        if owner is None or owner.password_reset_sent_at is None or timezone.now() > owner.password_reset_sent_at + ttl:
+            raise ValidationError({"token": ["Invalid or expired reset link, request a new one"]})
         try:
             validate_password(serializer.validated_data["new_password"], user=owner)
         except DjangoValidationError as e:

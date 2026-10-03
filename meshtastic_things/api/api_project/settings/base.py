@@ -93,6 +93,9 @@ DATABASES = {
 }
 
 AUTH_USER_MODEL = "registry.Owner"
+# Unverified owners keep a session so the console can show them their own
+# account; IsVerifiedOwner still keeps them off everything else.
+AUTHENTICATION_BACKENDS = ["django.contrib.auth.backends.AllowAllUsersModelBackend"]
 
 CACHES = {
     "default": {
@@ -127,18 +130,25 @@ APPEND_SLASH = False
 REST_FRAMEWORK = {
     "DEFAULT_AUTHENTICATION_CLASSES": [
         "registry.authentication.OwnerBearerAuthentication",
-        "rest_framework.authentication.SessionAuthentication",
+        "rest_framework.authentication.SessionAuthentication"
+        if IS_READINGS
+        else "registry.authentication.OwnerSessionAuthentication",
     ],
     "DEFAULT_PERMISSION_CLASSES": ["rest_framework.permissions.IsAuthenticated"]
     if IS_READINGS
     else ["registry.permissions.IsVerifiedOwner"],
     "UNAUTHENTICATED_USER": "django.contrib.auth.models.AnonymousUser",
+    # Caddy is the one hop in front of both roles and replaces any client-sent
+    # X-Forwarded-For, so its last entry is the caller. Without a forwarded
+    # header (direct access in dev) REMOTE_ADDR is used.
+    "NUM_PROXIES": 1,
     "DEFAULT_THROTTLE_CLASSES": ["registry.throttling.OwnerRateThrottle", "registry.throttling.AnonReadThrottle"]
     if IS_READINGS
     else [
         "registry.throttling.OwnerRateThrottle",
         "registry.throttling.AnonReadThrottle",
         "registry.throttling.SignupThrottle",
+        "registry.throttling.LoginThrottle",
         "registry.throttling.ResendVerificationThrottle",
         "registry.throttling.RequestPasswordResetThrottle",
         "registry.throttling.OperatorRequestThrottle",
@@ -147,6 +157,7 @@ REST_FRAMEWORK = {
         "owner": "120/min",
         "anon": "60/min",
         "owner-signup": "20/hour",
+        "login": "10/min",
         "resend-verification": "3/hour",
         "request-password-reset": "5/hour",
         "operator-request": "3/day",

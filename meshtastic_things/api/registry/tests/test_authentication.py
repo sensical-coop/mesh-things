@@ -1,6 +1,8 @@
 from unittest.mock import patch
 
-from registry.tests.helpers import RegistryTestCase
+from rest_framework.test import APIClient
+
+from registry.tests.helpers import SIGNUP_TERMS, RegistryTestCase
 
 
 class FailedAuthGuardTests(RegistryTestCase):
@@ -24,3 +26,29 @@ class FailedAuthGuardTests(RegistryTestCase):
             for _ in range(5):
                 resp = self.client.get("/owners/me")
                 self.assertEqual(resp.status_code, 401)
+
+    def test_invalid_tokens_from_one_client_do_not_throttle_another_behind_the_proxy(self):
+        owner = self.create_owner()
+        with patch("registry.authentication.FAILED_AUTH_RATE_LIMIT", 1):
+            self.client.get("/owners/me", HTTP_AUTHORIZATION="Bearer bad-token", HTTP_X_FORWARDED_FOR="203.0.113.1")
+            resp = self.client.get("/owners/me", HTTP_X_FORWARDED_FOR="203.0.113.2", **self.auth_headers(owner))
+        self.assertEqual(resp.status_code, 200)
+
+
+class OwnerSessionAuthenticationTests(RegistryTestCase):
+    def test_unverified_session_writes_still_need_the_csrf_token(self):
+        client = APIClient(enforce_csrf_checks=True)
+        client.post(
+            "/owners",
+            {**SIGNUP_TERMS, "name": "Uma", "email": "session-csrf@example.com", "password": self.DEFAULT_PASSWORD},
+            format="json",
+        )
+
+        without_token = client.post("/owners/me/resend-verification")
+        client.get("/owners/csrf-cookie")
+        with_token = client.post(
+            "/owners/me/resend-verification", HTTP_X_CSRFTOKEN=client.cookies["csrftoken"].value
+        )
+
+        self.assertEqual(without_token.status_code, 403)
+        self.assertEqual(with_token.status_code, 200)

@@ -156,12 +156,12 @@ class OwnerFullRecordFieldTests(RegistryTestCase):
         self.assertTrue(body["is_superuser"])
         self.assertFalse(body["is_staff"])
 
-    def test_last_login_is_null_until_a_password_login(self):
-        """A bearer-key request never updates it."""
+    def test_last_login_moves_on_a_password_login_but_not_on_bearer_requests(self):
         owner = self.create_owner(name="Nia", email="nia-fields@example.com")
 
         before = self.client.get("/owners/me", **self.auth_headers(owner)).json()
-        self.assertIsNone(before["last_login"])
+        self.assertIsNotNone(before["last_login"])
+        self.assertEqual(self.client.get("/owners/me", **self.auth_headers(owner)).json()["last_login"], before["last_login"])
 
         self.client.post(
             "/owners/login",
@@ -170,7 +170,7 @@ class OwnerFullRecordFieldTests(RegistryTestCase):
         )
 
         after = self.client.get("/owners/me", **self.auth_headers(owner)).json()
-        self.assertIsNotNone(after["last_login"])
+        self.assertGreater(after["last_login"], before["last_login"])
 
     def test_email_verification_sent_at_is_set_at_signup(self):
         owner = self.create_owner(name="Ola", email="ola-fields@example.com")
