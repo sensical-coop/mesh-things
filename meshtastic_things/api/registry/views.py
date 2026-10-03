@@ -19,7 +19,6 @@ from rest_framework.response import Response
 from rest_framework.views import APIView
 
 from .auth import generate_api_key, hash_api_key
-from .authentication import OwnerResetPasswordAuthentication
 from .emailing import (
     send_operator_request_decided_email,
     send_operator_request_email,
@@ -570,17 +569,28 @@ class OwnerRequestPasswordResetView(APIView):
 
 
 class OwnerResetPasswordView(APIView):
-    """Set a new password, authenticated by the reset token from the link's
-    email as an `Authorization: Bearer` credential."""
-
-    authentication_classes = [OwnerResetPasswordAuthentication]
-    permission_classes = [IsAuthenticated]
+    authentication_classes = []
+    permission_classes = [AllowAny]
 
     @extend_schema(request=OwnerResetPasswordSerializer, responses=DetailSerializer)
     def post(self, request):
+        """Set a new password using the token from the password reset link.
+
+        The token works once and expires after one hour by default. An invalid or
+        expired token is refused with `400`; request a new link to try again.
+
+        Args:
+            token: The token from the password reset link. Required.
+            new_password: The new password. Required.
+        """
         serializer = OwnerResetPasswordSerializer(data=request.data)
         serializer.is_valid(raise_exception=True)
-        owner = request.user
+        owner = Owner.objects.filter(
+            password_reset_token_hash=hash_api_key(serializer.validated_data["token"])
+        ).first()
+        ttl = timedelta(hours=settings.PASSWORD_RESET_TTL_HOURS)
+        if owner is None or owner.password_reset_sent_at is None or timezone.now() > owner.password_reset_sent_at + ttl:
+            raise ValidationError({"token": ["Invalid or expired reset link, request a new one"]})
         try:
             validate_password(serializer.validated_data["new_password"], user=owner)
         except DjangoValidationError as e:
