@@ -110,8 +110,8 @@ class _TermsAcceptanceInputMixin(serializers.Serializer):
 class OwnerReadSerializer(serializers.ModelSerializer):
     """The full record, for the owner themselves and for superusers.
 
-    `last_login` tracks password logins only: a bearer-key request never
-    updates it, so it is null for an owner who has only ever used their API key.
+    `last_login` tracks session sign-ins (signup and password login) only: a
+    bearer-key request never updates it.
     """
 
     class Meta:
@@ -248,6 +248,7 @@ class OwnerRequestPasswordResetSerializer(serializers.Serializer):
 class OwnerResetPasswordSerializer(serializers.Serializer):
     """POST /owners/reset-password input"""
 
+    token = serializers.CharField(write_only=True)
     new_password = serializers.CharField(write_only=True)
 
 

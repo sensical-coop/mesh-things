@@ -1,4 +1,10 @@
-from rest_framework.throttling import AnonRateThrottle, SimpleRateThrottle
+from rest_framework.throttling import AnonRateThrottle, BaseThrottle, SimpleRateThrottle
+
+
+def client_ident(request) -> str:
+    """Return the caller's address, read through the reverse proxy like every DRF throttle."""
+    return BaseThrottle().get_ident(request)
+
 
 class OwnerRateThrottle(SimpleRateThrottle):
     """Throttles authenticated traffic per Owner"""
@@ -31,6 +37,19 @@ class SignupThrottle(SimpleRateThrottle):
         if request.method != "POST" or request.path != "/owners":
             return None
         return self.cache_format % {"scope": self.scope, "ident": self.get_ident(request)}
+
+
+class LoginThrottle(SimpleRateThrottle):
+    """POST /owners/login, per source IP and email"""
+
+    scope = "login"
+
+    def get_cache_key(self, request, view):
+        if request.method != "POST" or request.path != "/owners/login":
+            return None
+        email = request.data.get("email", "") if hasattr(request.data, "get") else ""
+        ident = f"{self.get_ident(request)}:{str(email).strip().lower()}"
+        return self.cache_format % {"scope": self.scope, "ident": ident}
 
 
 class ResendVerificationThrottle(SimpleRateThrottle):

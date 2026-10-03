@@ -6,7 +6,7 @@ from django.core import mail
 from django.utils import timezone
 
 from registry.models import Owner
-from registry.views import LOGIN_FAILED_RATE_LIMIT
+from registry.throttling import LoginThrottle
 
 from .helpers import SIGNUP_TERMS, RegistryTestCase
 
@@ -42,6 +42,22 @@ class SignupPasswordTests(RegistryTestCase):
         self.assertEqual(resp.status_code, 400)
 
 
+class SignupSessionTests(RegistryTestCase):
+    def test_signup_signs_in_the_unverified_owner_with_a_session(self):
+        resp = self.client.post(
+            "/owners",
+            {**SIGNUP_TERMS, "name": "Alice", "email": "signup-session@example.com", "password": self.DEFAULT_PASSWORD},
+            format="json",
+        )
+        self.assertEqual(resp.status_code, 201)
+        self.assertIn("sessionid", resp.cookies)
+
+        me = self.client.get("/owners/me")
+        self.assertEqual(me.status_code, 200)
+        self.assertFalse(me.json()["is_active"])
+        self.assertEqual(self.client.get("/owners/me/devices").status_code, 403)
+
+
 class LoginTests(RegistryTestCase):
     def test_login_with_correct_credentials_returns_profile_and_sets_session(self):
         owner = self.create_owner(name="Alice", email="login-a@example.com")
@@ -72,13 +88,13 @@ class LoginTests(RegistryTestCase):
         )
         self.assertEqual(resp.status_code, 401)
 
-    def test_login_before_verification_is_403(self):
-        resp = self.client.post(
+    def test_login_before_verification_signs_in_an_unverified_owner(self):
+        self.client.post(
             "/owners",
             {**SIGNUP_TERMS, "name": "Bob", "email": "login-unverified@example.com", "password": self.DEFAULT_PASSWORD},
             format="json",
         )
-        self.assertEqual(resp.status_code, 201)
+        self.client.post("/owners/logout")
 
         login = self.client.post(
             "/owners/login",
@@ -86,21 +102,63 @@ class LoginTests(RegistryTestCase):
             format="json",
         )
 
-        self.assertEqual(login.status_code, 403)
+        self.assertEqual(login.status_code, 200)
+        self.assertFalse(login.json()["is_active"])
+        self.assertEqual(self.client.get("/owners/me").status_code, 200)
+        self.assertEqual(self.client.get("/owners/me/devices").status_code, 403)
 
-    def test_failed_login_attempts_are_throttled_per_ip(self):
+    def test_login_attempts_are_throttled_per_ip_and_email(self):
         self.create_owner(name="Alice", email="login-throttle@example.com")
+        body = {"email": "login-throttle@example.com", "password": "wrong"}
+        with patch.object(LoginThrottle, "rate", "2/min", create=True):
+            for _ in range(2):
+                self.assertEqual(self.client.post("/owners/login", body, format="json").status_code, 401)
 
-        for _ in range(LOGIN_FAILED_RATE_LIMIT):
-            resp = self.client.post(
-                "/owners/login", {"email": "login-throttle@example.com", "password": "wrong"}, format="json"
+            throttled = self.client.post(
+                "/owners/login", {**body, "password": self.DEFAULT_PASSWORD}, format="json"
             )
-            self.assertEqual(resp.status_code, 401)
 
-        throttled = self.client.post(
-            "/owners/login", {"email": "login-throttle@example.com", "password": "wrong"}, format="json"
-        )
         self.assertEqual(throttled.status_code, 429)
+
+    def test_login_throttle_is_separate_per_client_behind_the_proxy(self):
+        self.create_owner(name="Alice", email="login-proxy@example.com")
+        with patch.object(LoginThrottle, "rate", "1/min", create=True):
+            self.client.post(
+                "/owners/login",
+                {"email": "login-proxy@example.com", "password": "wrong"},
+                format="json",
+                HTTP_X_FORWARDED_FOR="203.0.113.1",
+            )
+            resp = self.client.post(
+                "/owners/login",
+                {"email": "login-proxy@example.com", "password": self.DEFAULT_PASSWORD},
+                format="json",
+                HTTP_X_FORWARDED_FOR="203.0.113.2",
+            )
+
+        self.assertEqual(resp.status_code, 200)
+
+    def test_login_throttle_is_separate_per_email(self):
+        self.create_owner(name="Alice", email="login-typo@example.com")
+        self.create_owner(name="Bob", email="login-other@example.com")
+        with patch.object(LoginThrottle, "rate", "1/min", create=True):
+            self.client.post("/owners/login", {"email": "login-typo@example.com", "password": "wrong"}, format="json")
+            resp = self.client.post(
+                "/owners/login", {"email": "login-other@example.com", "password": self.DEFAULT_PASSWORD}, format="json"
+            )
+
+        self.assertEqual(resp.status_code, 200)
+
+    def test_spoofed_forwarded_entries_do_not_dodge_the_login_throttle(self):
+        self.create_owner(name="Alice", email="login-spoof@example.com")
+        body = {"email": "login-spoof@example.com", "password": "wrong"}
+        with patch.object(LoginThrottle, "rate", "1/min", create=True):
+            self.client.post("/owners/login", body, format="json", HTTP_X_FORWARDED_FOR="198.51.100.1, 203.0.113.1")
+            resp = self.client.post(
+                "/owners/login", body, format="json", HTTP_X_FORWARDED_FOR="198.51.100.2, 203.0.113.1"
+            )
+
+        self.assertEqual(resp.status_code, 429)
 
     def test_session_authenticates_a_gated_route_with_no_bearer_header(self):
         owner = self.create_owner(name="Alice", email="login-session@example.com")
@@ -168,9 +226,8 @@ class PasswordResetTests(RegistryTestCase):
 
         resp = self.client.post(
             "/owners/reset-password",
-            {"new_password": "N3w-Str0ng-Password!"},
+            {"token": token, "new_password": "N3w-Str0ng-Password!"},
             format="json",
-            **self.auth_headers(token),
         )
         self.assertEqual(resp.status_code, 200, resp.content)
 
@@ -186,36 +243,33 @@ class PasswordResetTests(RegistryTestCase):
         token = _extract_token(mail.outbox[0])
         self.client.post(
             "/owners/reset-password",
-            {"new_password": "N3w-Str0ng-Password!"},
+            {"token": token, "new_password": "N3w-Str0ng-Password!"},
             format="json",
-            **self.auth_headers(token),
         )
 
         reused = self.client.post(
             "/owners/reset-password",
-            {"new_password": "Another-Str0ng-1"},
+            {"token": token, "new_password": "Another-Str0ng-1"},
             format="json",
-            **self.auth_headers(token),
         )
 
-        self.assertEqual(reused.status_code, 401)
+        self.assertEqual(reused.status_code, 400)
 
-    def test_reset_with_invalid_token_is_401(self):
+    def test_reset_with_invalid_token_is_400(self):
         resp = self.client.post(
             "/owners/reset-password",
-            {"new_password": "N3w-Str0ng-Password!"},
+            {"token": "not-a-real-token", "new_password": "N3w-Str0ng-Password!"},
             format="json",
-            **self.auth_headers("not-a-real-token"),
         )
-        self.assertEqual(resp.status_code, 401)
+        self.assertEqual(resp.status_code, 400)
 
-    def test_reset_without_a_token_is_401(self):
+    def test_reset_without_a_token_is_400(self):
         resp = self.client.post(
             "/owners/reset-password", {"new_password": "N3w-Str0ng-Password!"}, format="json"
         )
-        self.assertEqual(resp.status_code, 401)
+        self.assertEqual(resp.status_code, 400)
 
-    def test_reset_with_expired_token_is_401(self):
+    def test_reset_with_expired_token_is_400(self):
         self.create_owner(name="Alice", email="reset-d@example.com")
         mail.outbox.clear()
         self.client.post("/owners/request-password-reset", {"email": "reset-d@example.com"}, format="json")
@@ -226,12 +280,11 @@ class PasswordResetTests(RegistryTestCase):
 
         resp = self.client.post(
             "/owners/reset-password",
-            {"new_password": "N3w-Str0ng-Password!"},
+            {"token": token, "new_password": "N3w-Str0ng-Password!"},
             format="json",
-            **self.auth_headers(token),
         )
 
-        self.assertEqual(resp.status_code, 401)
+        self.assertEqual(resp.status_code, 400)
 
     def test_reset_lets_an_owner_without_a_usable_password_set_one(self):
         owner_obj = Owner.objects.create_user(email="reset-legacy@example.com", name="Legacy", is_active=True)
@@ -241,9 +294,8 @@ class PasswordResetTests(RegistryTestCase):
         token = _extract_token(mail.outbox[0])
         resp = self.client.post(
             "/owners/reset-password",
-            {"new_password": "N3w-Str0ng-Password!"},
+            {"token": token, "new_password": "N3w-Str0ng-Password!"},
             format="json",
-            **self.auth_headers(token),
         )
 
         self.assertEqual(resp.status_code, 200)
