@@ -6,7 +6,6 @@ import structlog
 from django.conf import settings
 from django.contrib.auth import login as auth_login, logout as auth_logout
 from django.contrib.auth.password_validation import validate_password
-from django.core.cache import cache
 from django.core.exceptions import ValidationError as DjangoValidationError
 from django.db import IntegrityError, transaction
 from django.db.models import Q, RestrictedError
@@ -14,7 +13,7 @@ from django.middleware.csrf import get_token as get_csrf_token
 from django.utils import timezone
 from drf_spectacular.utils import OpenApiParameter, OpenApiResponse, OpenApiTypes, extend_schema
 from rest_framework import status
-from rest_framework.exceptions import AuthenticationFailed, NotFound, ParseError, PermissionDenied, Throttled, ValidationError
+from rest_framework.exceptions import AuthenticationFailed, NotFound, ParseError, PermissionDenied, ValidationError
 from rest_framework.permissions import AllowAny, IsAuthenticated
 from rest_framework.response import Response
 from rest_framework.views import APIView
@@ -136,7 +135,7 @@ from .serializers import (
 )
 from .terms import terms as current_terms
 from .terms import terms_enforced
-from .throttling import ResendVerificationThrottle, client_ident
+from .throttling import ResendVerificationThrottle
 
 log = structlog.get_logger()
 
@@ -505,16 +504,13 @@ class CsrfCookieView(APIView):
         return Response({"detail": "CSRF cookie set"})
 
 
-LOGIN_FAILED_RATE_LIMIT = 10
-LOGIN_FAILED_RATE_WINDOW_SECONDS = 300
-
-
 class OwnerLoginView(APIView):
     """Sign in with email and password, returning the owner profile and a session cookie.
 
     An owner whose email is not verified yet is signed in too, with `is_active`
     false in the profile, and can only reach its own account until it verifies.
-    Repeated failures from the same address are rate limited.
+    Attempts are limited per email and source address; once the limit is
+    reached even the correct password is refused with `429` for about a minute.
     """
 
     permission_classes = [AllowAny]
@@ -524,16 +520,8 @@ class OwnerLoginView(APIView):
         serializer = OwnerLoginSerializer(data=request.data)
         serializer.is_valid(raise_exception=True)
 
-        cache_key = f"registry:failed-login:{client_ident(request)}"
-        if (cache.get(cache_key) or 0) >= LOGIN_FAILED_RATE_LIMIT:
-            raise Throttled(detail="Too many failed login attempts, slow down")
-
         owner = Owner.objects.filter(email=serializer.validated_data["email"]).first()
         if owner is None or not owner.check_password(serializer.validated_data["password"]):
-            try:
-                cache.incr(cache_key)
-            except ValueError:
-                cache.set(cache_key, 1, LOGIN_FAILED_RATE_WINDOW_SECONDS)
             raise AuthenticationFailed("Invalid email or password")
 
         auth_login(request, owner)
