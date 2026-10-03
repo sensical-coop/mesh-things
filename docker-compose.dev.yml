@@ -87,6 +87,10 @@ services:
     environment:
       DJANGO_SETTINGS_MODULE: api_project.settings.dev
 
+  registry_gateway_discovery:
+    environment:
+      DJANGO_SETTINGS_MODULE: api_project.settings.dev
+
   registry_sensor_discovery_consumer:
     environment:
       DJANGO_SETTINGS_MODULE: api_project.settings.dev

@@ -9,8 +9,10 @@ from django.core.exceptions import ValidationError as DjangoValidationError
 from django.utils import timezone
 from drf_spectacular.utils import extend_schema_field
 from rest_framework import serializers
+from rest_framework.exceptions import PermissionDenied
 
 from common import sinks as sink_names
+from common.codec import is_well_known_psk
 from common import sources as source_names
 from common.algorithms import validate_calibration, validate_step
 from common.channels import channel_name, origin_of
@@ -288,6 +290,24 @@ class DetectorSerializer(serializers.Serializer):
 
 _PSK_HELP = "Base64-encoded channel PSK"
 _SOURCE_HELP = "Source the mesh's traffic is bridged from. Null for this instance's own broker."
+_DISCOVER_HELP = (
+    "Register gateways whose packets decode with this mesh's channel and PSK automatically. "
+    "Only an operator may switch it on for a mesh with a default or blank PSK."
+)
+
+
+def _check_discovery_psk(serializer, attrs) -> None:
+    """Refuse discovery on a well-known PSK unless the caller is an operator, since every gateway on the channel matches it."""
+    if "discover_gateways" not in attrs and "psk_b64" not in attrs:
+        return
+    instance = serializer.instance
+    discover = attrs.get("discover_gateways", getattr(instance, "discover_gateways", False))
+    psk_b64 = attrs.get("psk_b64", getattr(instance, "psk_b64", ""))
+    owner = serializer.context.get("owner")
+    if discover and is_well_known_psk(psk_b64) and not (owner and owner.is_operator):
+        raise PermissionDenied(
+            "Only an operator may use gateway discovery on a mesh with a default or blank PSK."
+        )
 
 
 def _validate_visible_source(serializer, source):
@@ -394,16 +414,21 @@ class MeshSerializer(_MeshTermsMixin, serializers.ModelSerializer):
             "terms_accepted_version",
             "terms_expires_at",
             "paused_at",
+            "discover_gateways",
             "created_at",
             "updated_at",
         ]
         read_only_fields = ["id", "created_at", "updated_at", "paused_at"]
-        extra_kwargs = {"is_public": {"required": False}}
+        extra_kwargs = {
+            "is_public": {"required": False},
+            "discover_gateways": {"required": False, "help_text": _DISCOVER_HELP},
+        }
 
     def validate_source_id(self, value):
         return _validate_visible_source(self, value)
 
     def validate(self, attrs):
+        _check_discovery_psk(self, attrs)
         return self._take_mesh_terms(super().validate(attrs), needed=attrs.get("source") is None)
 
     def to_representation(self, instance):
@@ -415,7 +440,7 @@ class MeshSerializer(_MeshTermsMixin, serializers.ModelSerializer):
 
 
 class MeshUpdateSerializer(_MeshTermsMixin, serializers.ModelSerializer):
-    """PUT /meshes/{id}: channel_id, psk_b64, label, is_public and source_id are editable.
+    """PUT /meshes/{id}: channel_id, psk_b64, label, is_public, source_id and discover_gateways are editable.
 
     channel_id/psk_b64 are a pair configured together on the physical
     devices, so both can change here the same way - the pipeline decrypts by
@@ -429,15 +454,26 @@ class MeshUpdateSerializer(_MeshTermsMixin, serializers.ModelSerializer):
 
     class Meta:
         model = Mesh
-        fields = ["channel_id", "psk_b64", "label", "is_public", "source_id", "terms_version", "terms_locale"]
+        fields = [
+            "channel_id",
+            "psk_b64",
+            "label",
+            "is_public",
+            "source_id",
+            "discover_gateways",
+            "terms_version",
+            "terms_locale",
+        ]
         extra_kwargs = {
             "label": {"required": False},
             "channel_id": {"required": False},
             "is_public": {"required": False},
+            "discover_gateways": {"required": False, "help_text": _DISCOVER_HELP},
         }
 
     def validate(self, attrs):
         attrs = super().validate(attrs)
+        _check_discovery_psk(self, attrs)
         mesh = self.instance
         moving_to_default = "source" in attrs and attrs["source"] is None and mesh.source_id is not None
         needed = moving_to_default and not is_current(mesh.current_terms_acceptance, TermsKind.MESH)
@@ -870,6 +906,7 @@ class DeviceReadSerializer(serializers.ModelSerializer):
             "archive_enabled_at",
             "archive_enabled_by",
             "last_seen",
+            "discovered_at",
             "telemetry_variant_ids",
             "created_at",
             "updated_at",

@@ -110,3 +110,36 @@ def test_decode_psk_decodes_real_key():
     key_bytes = os.urandom(16)
     key_b64 = base64.b64encode(key_bytes).decode("ascii")
     assert codec.decode_psk(key_b64) == key_bytes
+
+def _encrypted_position(key_b64: str) -> bytes:
+    data = mesh_pb2.Data(portnum=3, payload=mesh_pb2.Position(latitude_i=1).SerializeToString())
+    mp = mesh_pb2.MeshPacket(id=5)
+    setattr(mp, "from", 77)
+    mp.encrypted = codec.encrypt_packet(data.SerializeToString(), mp.id, 77, codec.decode_psk(key_b64))
+    return _build_envelope(mp)
+
+def test_decodes_with_accepts_the_right_key_only():
+    key_b64 = base64.b64encode(os.urandom(16)).decode()
+    raw = _encrypted_position(key_b64)
+
+    assert codec.decodes_with(raw, key_b64)
+    assert not codec.decodes_with(raw, base64.b64encode(os.urandom(16)).decode())
+    assert not codec.decodes_with(raw, "")
+
+def test_decodes_with_matches_a_plain_packet_to_a_mesh_without_encryption_only():
+    raw = _build_envelope(_telemetry_packet(packet_id=1, node_id=1, battery_level=5))
+
+    assert codec.decodes_with(raw, "")
+    assert not codec.decodes_with(raw, "AQ==")
+
+def test_decodes_with_refuses_garbage():
+    assert not codec.decodes_with(b"\xff\x00garbage", "AQ==")
+    assert not codec.decodes_with(_encrypted_position("AQ=="), "not base64!")
+
+def test_well_known_psks():
+    assert codec.is_well_known_psk("")
+    assert codec.is_well_known_psk(None)
+    assert codec.is_well_known_psk("AQ==")
+    assert codec.is_well_known_psk("AA==")
+    assert codec.is_well_known_psk("Cg==")
+    assert not codec.is_well_known_psk(base64.b64encode(os.urandom(16)).decode())

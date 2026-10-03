@@ -39,6 +39,7 @@ services:
           "$$PROTO_DECODE__KAFKA_TOPIC" \
           "$${REGISTRY__DEVICES_KAFKA_TOPIC:-mesh.devices.v1}" \
           "$${REGISTRY__SENSOR_DISCOVERY_KAFKA_TOPIC:-mesh.sensor_discovery.v1}" \
+          "$${REGISTRY__GATEWAY_CANDIDATES_KAFKA_TOPIC:-mesh.gateway_candidates.v1}" \
           "$${POSTPROCESSING__DERIVED_KAFKA_TOPIC:-mesh.telemetry.derived.v1}" \
           "$$PATTERN_DETECTION__ALARMS_TOPIC" \
         ; do
@@ -63,6 +64,10 @@ services:
         /opt/kafka/bin/kafka-configs.sh --bootstrap-server kafka:29092 --alter \
           --entity-type topics --entity-name "$$PATTERN_DETECTION__ALARMS_TOPIC" \
           --add-config retention.ms=259200000,retention.bytes=536870912
+        # Gateway discovery samples are retried by the bridge, so a day is plenty.
+        /opt/kafka/bin/kafka-configs.sh --bootstrap-server kafka:29092 --alter \
+          --entity-type topics --entity-name "$${REGISTRY__GATEWAY_CANDIDATES_KAFKA_TOPIC:-mesh.gateway_candidates.v1}" \
+          --add-config retention.ms=86400000
 
   influxdb:
     mem_limit: 1024m

@@ -327,6 +327,8 @@ class Mesh(models.Model):
     source = models.ForeignKey(Source, on_delete=models.PROTECT, null=True, blank=True, related_name="meshes")
     # Set when its mesh terms lapsed (default broker only): its gateways are deregistered until renewed.
     paused_at = models.DateTimeField(null=True, blank=True)
+    # Registers gateways whose packets decode with this mesh's channel and PSK, without the owner adding them.
+    discover_gateways = models.BooleanField(default=False)
     created_at = models.DateTimeField(auto_now_add=True)
     updated_at = models.DateTimeField(auto_now=True)
 
@@ -466,6 +468,8 @@ class Device(models.Model):
     role = models.CharField(max_length=32, null=True, blank=True)
     nodeinfo_overridden = models.BooleanField(default=False)
     last_seen = models.DateTimeField(null=True, blank=True)
+    # Set when gateway discovery registered it rather than its owner.
+    discovered_at = models.DateTimeField(null=True, blank=True)
     created_at = models.DateTimeField(auto_now_add=True)
     updated_at = models.DateTimeField(auto_now=True)
 
