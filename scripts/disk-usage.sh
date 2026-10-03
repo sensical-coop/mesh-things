@@ -23,8 +23,15 @@ docker system df
 # Log files are root-owned, so their sizes need root or passwordless sudo.
 echo "== container logs (MB)"
 if [ "$(id -u)" -eq 0 ] || sudo -n true 2>/dev/null; then
+	# Only the json-file driver keeps a log file per container; journald and
+	# others leave LogPath empty and store logs elsewhere.
+	driver="$(docker info -f '{{.LoggingDriver}}')"
+	echo "log driver: $driver"
+	[ "$driver" = journald ] && journalctl --disk-usage
 	for c in $(docker ps -aq); do
-		size="$(sudo -n stat -c %s "$(docker inspect -f '{{.LogPath}}' "$c")")"
+		path="$(docker inspect -f '{{.LogPath}}' "$c")"
+		[ -n "$path" ] || continue
+		size="$(sudo -n stat -c %s "$path")"
 		printf '%6d %s\n' "$((size / 1048576))" "$(docker inspect -f '{{.Name}}' "$c" | tr -d /)"
 	done | sort -rn | head -10
 else
