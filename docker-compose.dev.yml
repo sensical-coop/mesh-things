@@ -35,12 +35,15 @@ services:
       DJANGO_SETTINGS_MODULE: api_project.settings.dev
       # Keeps dev's EMQX bridges apart from production's on a shared broker.
       MQTT_CONNECTORS__NAMESPACE: mt-sources-dev
+      # /docs on the published port calls the API through Caddy, another origin.
+      REGISTRY__CORS_ORIGINS: ${REGISTRY__CORS_ORIGINS:-},http://localhost:${REGISTRY__PORT}
 
   readings_api:
     ports: !override
       - ${READINGS__PORT}:${READINGS__PORT}
     environment:
       DJANGO_SETTINGS_MODULE: api_project.settings.dev
+      READINGS__CORS_ORIGINS: ${READINGS__CORS_ORIGINS:-},http://localhost:${REGISTRY__PORT}
 
   # Admin UIs and datastores
   influxdb:
