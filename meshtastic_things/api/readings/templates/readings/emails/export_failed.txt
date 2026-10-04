@@ -1,0 +1,7 @@
+{% autoescape off %}
+Hi {{ name }},
+
+Your {{ job.format|upper }} export of mesh {{ job.mesh_id }}, from {{ job.start|date:"Y-m-d" }} to {{ job.stop|date:"Y-m-d" }}, failed: {{ job.error }}.
+
+You can request it again now.
+{% endautoescape %}

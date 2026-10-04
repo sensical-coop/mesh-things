@@ -1,0 +1,9 @@
+{% extends "emails/base.html" %}
+{% block content %}
+{% include "emails/_chip.html" with label="Terms" tone="warning" %}
+{% include "emails/_title.html" with title="Renew the terms for your sink" %}
+<p style="margin:12px 0 0 0;font-size:15px;line-height:22px;color:#1b1c1f;">Hi {{ name }}, your acceptance of the terms for the sink <strong>{{ sink }}</strong> lapses on {{ expires_at|date:"j M Y, H:i" }} UTC.</p>
+{% include "emails/_button.html" with href=sink_link label="Renew the terms" %}
+<p style="margin:20px 0 0 0;font-size:13px;line-height:20px;color:#6d6d6d;">If it lapses, the sink is paused: nothing more is sent and its credentials are refused until you renew.</p>
+{% endblock %}
+{% block footer %}You are receiving this because you operate this sink on Mesh Things.{% endblock %}

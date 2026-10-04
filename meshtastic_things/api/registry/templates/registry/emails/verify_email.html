@@ -1,0 +1,9 @@
+{% extends "emails/base.html" %}
+{% block content %}
+{% include "emails/_chip.html" with label="Account" tone="neutral" %}
+{% include "emails/_title.html" with title="Verify your email" %}
+<p style="margin:12px 0 0 0;font-size:15px;line-height:22px;color:#1b1c1f;">Hi {{ name }}, thanks for registering with Mesh Things. Verify your email address within {{ ttl_hours }} hours to start using your account.</p>
+{% include "emails/_button.html" with href=verify_link label="Verify email" %}
+<p style="margin:20px 0 0 0;font-size:13px;line-height:20px;color:#6d6d6d;">If you did not register, you can safely ignore this email.</p>
+{% endblock %}
+{% block footer %}You are receiving this because of your Mesh Things account.{% endblock %}

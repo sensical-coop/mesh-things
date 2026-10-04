@@ -25,6 +25,7 @@ Exceptions:
 import json
 import os
 import time
+from datetime import datetime, timezone
 
 import redis
 import structlog
@@ -210,6 +211,9 @@ class Command(BaseCommand):
                 "source": event.get("source"),
                 "triggered_at": event.get("triggered_at"),
                 "cooldown_hours": round(cooldown_seconds / 3600, 1) if cooldown_seconds else 0,
+                "details": _device_details(device)
+                + ([{"label": "Channel", "value": event["channel"], "mono": True}] if event.get("channel") else [])
+                + [{"label": "Detected", "value": _when(event.get("triggered_at"))}],
             },
         )
         log.info("Sent quality alarm email", detector=detector, device_id=device.device_id)
@@ -240,12 +244,20 @@ class Command(BaseCommand):
                 "channel": channel or None,
             })
         alarms.sort(key=lambda a: a["first_triggered_at"] or "")
+        for alarm in alarms:
+            alarm["first_triggered_at"] = _when(alarm.get("first_triggered_at"))
+            alarm["last_triggered_at"] = _when(alarm.get("last_triggered_at"))
 
         send_templated_email(
             to_email=owner.email,
             subject=f"[Mesh Things] Alarm summary - {_device_label(device)}",
             template_name="quality_alarm_summary",
-            context={**_device_context(device), "alarms": alarms, "total": sum(a["count"] for a in alarms)},
+            context={
+                **_device_context(device),
+                "alarms": alarms,
+                "total": sum(a["count"] for a in alarms),
+                "details": _device_details(device),
+            },
         )
         log.info("Sent quality alarm summary", device_id=device.device_id, kinds=len(alarms))
 
@@ -263,3 +275,20 @@ def _device_context(device: Device) -> dict:
         "mesh_label": device.mesh.label or device.mesh.channel_id,
         "mesh_link": console_url("meshes", device.mesh_id),
     }
+
+
+def _device_details(device: Device) -> list[dict]:
+    """The device and mesh rows of an alarm email's summary table, linked to the console."""
+    context = _device_context(device)
+    return [
+        {"label": "Device", "value": f"{context['device_label']} (node {context['device_id']})", "href": context["device_link"]},
+        {"label": "Mesh", "value": context["mesh_label"], "href": context["mesh_link"]},
+    ]
+
+
+def _when(value: str | None) -> str | None:
+    """An event's ISO timestamp as `2026-09-06 12:00 UTC`, or as given when it is not one."""
+    try:
+        return datetime.fromisoformat(value).astimezone(timezone.utc).strftime("%Y-%m-%d %H:%M UTC")
+    except (TypeError, ValueError):
+        return value

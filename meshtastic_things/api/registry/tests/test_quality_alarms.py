@@ -71,6 +71,21 @@ class QualityAlarmRoutingTests(RegistryTestCase):
         self.assertIn(f"https://app.example.org/console/devices/{device.id}", body)
         self.assertIn(f"https://app.example.org/console/meshes/{mesh['id']}", body)
 
+    def test_alarm_email_has_an_html_part_linking_the_device(self):
+        _, mesh = self._device(label="Garden mesh")
+        device = Device.objects.get(mesh_id=mesh["id"], device_id=1)
+
+        with self.settings(PUBLIC_FRONTEND_URL="https://app.example.org", FRONTEND_CONSOLE_PATH="/console"):
+            AlarmCommand._handle(_alarm(mesh["id"], 1, channel="environment_metrics.temperature", message="Stuck <at> 21"))
+
+        [(html, mimetype)] = mail.outbox[0].alternatives
+        self.assertEqual(mimetype, "text/html")
+        self.assertIn(f'href="https://app.example.org/console/devices/{device.id}"', html)
+        self.assertIn("Garden mesh", html)
+        self.assertIn("2026-09-06 12:00 UTC", html)
+        self.assertIn("Stuck &lt;at&gt; 21", html)
+        self.assertIn("Stuck <at> 21", mail.outbox[0].body)
+
     def test_absence_email_explains_the_publish_vs_read_distinction(self):
         _, mesh = self._device()
 
@@ -128,6 +143,9 @@ class QualityAlarmRoutingTests(RegistryTestCase):
 
         self.assertEqual(len(mail.outbox), 2)
         self.assertIn("Latest: still flat", mail.outbox[1].body)
+        [(html, _)] = mail.outbox[1].alternatives
+        self.assertIn("1 more alarm on greenhouse", html)
+        self.assertIn("still flat", html)
 
     def test_a_repeat_is_not_emailed_even_without_a_cooldown(self):
         owner, mesh = self._device()
@@ -256,7 +274,7 @@ class QualityAlarmRoutingTests(RegistryTestCase):
         self.assertIn("greenhouse", summary.subject)
         self.assertIn("4 more time(s)", summary.body)
         self.assertIn("flat_value), env.temperature", summary.body)
-        self.assertIn("3 time(s), first 2026-09-06T12:01:00+00:00, last 2026-09-06T12:03:00+00:00", summary.body)
+        self.assertIn("3 time(s), first 2026-09-06 12:01 UTC, last 2026-09-06 12:03 UTC", summary.body)
         self.assertIn("Latest: flat #2", summary.body)
         self.assertIn("(range)", summary.body)
         self.assertIn("1 time(s)", summary.body)

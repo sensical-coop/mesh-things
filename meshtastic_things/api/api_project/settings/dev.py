@@ -3,12 +3,12 @@
 from common.env import env_bool, env_int, env_list, env_str
 
 from .base import *  # noqa: F401,F403
-from .base import ENV_PREFIX, IS_READINGS
+from .base import ENV_PREFIX, IS_READINGS, SENDS_EMAIL
 
 DEBUG = env_bool(f"{ENV_PREFIX}__DEBUG", True)
 ALLOWED_HOSTS = env_list(f"{ENV_PREFIX}__ALLOWED_HOSTS", ["*"])
 
-if not IS_READINGS:
+if SENDS_EMAIL:
     # Email defaults to MailHog (the `mailhog` service in docker-compose.dev.yml).
     EMAIL_BACKEND = env_str("REGISTRY__EMAIL_BACKEND", "django.core.mail.backends.smtp.EmailBackend")
     EMAIL_HOST = env_str("REGISTRY__EMAIL_HOST", "mailhog")
@@ -20,6 +20,7 @@ if not IS_READINGS:
     EMAIL_TIMEOUT = 10
     DEFAULT_FROM_EMAIL = env_str("REGISTRY__DEFAULT_FROM_EMAIL", "noreply@example.com")
 
+if not IS_READINGS:
     EMAIL_VERIFICATION_TTL_HOURS = env_int("REGISTRY__EMAIL_VERIFICATION_TTL_HOURS", 24)
     PASSWORD_RESET_TTL_HOURS = env_int("REGISTRY__PASSWORD_RESET_TTL_HOURS", 1)
     PUBLIC_BASE_URL = env_str("REGISTRY__PUBLIC_BASE_URL", "http://localhost:8090")

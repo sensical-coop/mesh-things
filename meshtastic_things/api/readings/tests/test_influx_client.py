@@ -1,8 +1,9 @@
 """Tests for influx route params"""
-from datetime import datetime, timezone
+from datetime import date, datetime, timezone
 from unittest.mock import MagicMock
 
 from django.test import SimpleTestCase
+from influxdb_client.client.flux_table import FluxRecord
 
 from common.alarm_counts import ALARM_COUNTS_BUCKET, ALARMS_BUCKET
 from readings.influx_client import InfluxQueryClient
@@ -214,3 +215,49 @@ class DeviceMetricsTests(SimpleTestCase):
         with self.assertRaises(ValueError):
             self.client.device_metrics("not-a-uuid", 123, "-1h", "now()")
         self.client._query_api.query.assert_not_called()
+
+
+class DayRowsTests(SimpleTestCase):
+    def setUp(self):
+        self.client = InfluxQueryClient.__new__(InfluxQueryClient)
+        self.client.bucket = "telemetry"
+        self.client._query_api = MagicMock()
+
+    @staticmethod
+    def record(measurement, field, value, minute, node_id="7", **tags):
+        values = {
+            "result": "_result", "table": 0, "_measurement": measurement, "_field": field, "_value": value,
+            "_time": datetime(2026, 9, 1, 13, minute, tzinfo=timezone.utc), "mesh_id": MESH_ID, "node_id": node_id,
+            "gateway_id": "!aabbccdd", **tags,
+        }
+        return FluxRecord(table=0, values=values)
+
+    def test_fields_of_one_time_and_node_share_a_row(self):
+        self.client._query_api.query_stream.return_value = iter([
+            self.record("environment_metrics", "temperature", 21.5, 5),
+            self.record("environment_metrics", "relative_humidity", 40.0, 5),
+            self.record("environment_metrics", "temperature", 22.0, 1, node_id="10"),
+            self.record("nodeinfo", "user_id", "!0000000a", 0, node_id="10", long_name="Roof"),
+        ])
+
+        out = self.client.day_rows(MESH_ID, date(2026, 9, 1))
+
+        env = out["environment_metrics"]
+        self.assertEqual(env["fields"], ["relative_humidity", "temperature"])
+        self.assertEqual(env["tags"], [])
+        self.assertEqual(env["rows"], [
+            {"time": "2026-09-01T13:01:00Z", "node_id": 10, "temperature": 22.0},
+            {"time": "2026-09-01T13:05:00Z", "node_id": 7, "temperature": 21.5, "relative_humidity": 40.0},
+        ])
+        self.assertEqual(out["nodeinfo"]["tags"], ["long_name"])
+        self.assertEqual(out["nodeinfo"]["rows"][0]["long_name"], "Roof")
+
+    def test_the_query_covers_one_utc_day_without_quality(self):
+        self.client._query_api.query_stream.return_value = iter([])
+
+        self.client.day_rows(MESH_ID, date(2026, 9, 1), node_ids=[7, 10])
+
+        flux = self.client._query_api.query_stream.call_args.args[0]
+        self.assertIn("range(start: 2026-09-01T00:00:00Z, stop: 2026-09-02T00:00:00Z)", flux)
+        self.assertIn('r._measurement != "quality"', flux)
+        self.assertIn('(r.node_id == "7" or r.node_id == "10")', flux)

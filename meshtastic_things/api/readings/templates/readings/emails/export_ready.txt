@@ -1,0 +1,10 @@
+{% autoescape off %}
+Hi {{ name }},
+
+Your {{ job.format|upper }} export of mesh {{ job.mesh_id }}, from {{ job.start|date:"Y-m-d" }} to {{ job.stop|date:"Y-m-d" }}, is ready ({{ job.size|filesizeformat }}).
+
+Download it until {{ job.expires_at|date:"Y-m-d H:i" }} UTC:
+{{ url }}
+
+The link works for anyone who has it. Once it expires the file is deleted, and you can request a new export.
+{% endautoescape %}

@@ -1,0 +1,9 @@
+{% extends "emails/base.html" %}
+{% block content %}
+{% include "emails/_chip.html" with label="Operator request" tone="accent" %}
+{% include "emails/_title.html" with title="Operator role requested" %}
+<p style="margin:12px 0 0 0;font-size:15px;line-height:22px;color:#1b1c1f;">Hi {{ name }}, {{ requester_name }} (<a href="mailto:{{ requester_email }}" style="color:#1b1c1f;">{{ requester_email }}</a>) has asked to become an operator. Operators can bridge remote MQTT brokers into this instance.</p>
+{% if reason %}<p style="margin:20px 0 0 0;font-size:13px;line-height:20px;color:#6d6d6d;">Their reason</p>{% include "emails/_quote.html" with text=reason %}{% endif %}
+{% include "emails/_button.html" with href=request_link label="Review request" %}
+{% endblock %}
+{% block footer %}You are receiving this because you are an administrator of this Mesh Things instance.{% endblock %}

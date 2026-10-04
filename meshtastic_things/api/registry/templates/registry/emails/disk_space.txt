@@ -1,4 +1,4 @@
-Hi {{ name }},
+{% autoescape off %}Hi {{ name }},
 
 The disk of {{ instance }} is {{ percent }}% full, over the {{ threshold }}% limit,
 with {{ free_gb }} GB left.
@@ -14,3 +14,4 @@ Old images and build cache are usually the quickest to free:
   docker builder prune -f
 
 You will be reminded daily while it stays over the limit.
+{% endautoescape %}

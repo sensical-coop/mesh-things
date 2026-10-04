@@ -1,0 +1,10 @@
+{% extends "emails/base.html" %}
+{% block content %}
+{% include "emails/_chip.html" with label="Ready" tone="accent" %}
+{% include "emails/_title.html" with title="Your export is ready" %}
+<p style="margin:0;font-size:15px;line-height:22px;color:#1b1c1f;">Hi {{ name }}, the {{ job.format|upper }} export you requested has finished.</p>
+{% include "emails/_details.html" %}
+{% include "emails/_button.html" with href=url label="Download export" no_fallback=True %}
+<p style="margin:20px 0 0 0;font-size:13px;line-height:20px;color:#6d6d6d;">The link works for anyone who has it until {{ job.expires_at|date:"j M Y, H:i" }} UTC. The file is deleted then, and you can request a new export.</p>
+{% endblock %}
+{% block footer %}You are receiving this because you requested an export on Mesh Things.{% endblock %}

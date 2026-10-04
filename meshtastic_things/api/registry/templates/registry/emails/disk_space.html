@@ -1,0 +1,13 @@
+{% extends "emails/base.html" %}
+{% block content %}
+{% include "emails/_chip.html" with label="Disk" tone="warning" %}
+{% include "emails/_title.html" with title="The disk is nearly full" %}
+<p style="margin:12px 0 0 0;font-size:15px;line-height:22px;color:#1b1c1f;">Hi {{ name }}, the disk of {{ instance }} is {{ percent }}% full, over the {{ threshold }}% limit, with {{ free_gb }} GB left.</p>
+<p style="margin:12px 0 0 0;font-size:15px;line-height:22px;color:#1b1c1f;">When it fills up, Postgres cannot write and stops, and so does everything that depends on it. To see what is using the space, run on the server:</p>
+<p style="margin:12px 0 0 0;padding:12px 14px;border-radius:8px;background:#f6f6f6;font-family:'Geist Mono',ui-monospace,Menlo,Consolas,monospace;font-size:13px;line-height:20px;color:#1b1c1f;white-space:pre;">./scripts/disk-usage.sh</p>
+<p style="margin:12px 0 0 0;font-size:15px;line-height:22px;color:#1b1c1f;">Old images and build cache are usually the quickest to free:</p>
+<p style="margin:12px 0 0 0;padding:12px 14px;border-radius:8px;background:#f6f6f6;font-family:'Geist Mono',ui-monospace,Menlo,Consolas,monospace;font-size:13px;line-height:20px;color:#1b1c1f;white-space:pre;">docker image prune -f
+docker builder prune -f</p>
+<p style="margin:20px 0 0 0;font-size:13px;line-height:20px;color:#6d6d6d;">You will be reminded daily while it stays over the limit.</p>
+{% endblock %}
+{% block footer %}You are receiving this because you are an administrator of this Mesh Things instance.{% endblock %}

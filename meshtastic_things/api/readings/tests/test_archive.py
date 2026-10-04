@@ -24,6 +24,8 @@ ARCHIVE = {
     "ARCHIVE_STS": "minio",
     "ARCHIVE_ROLE_ARN": "",
     "ARCHIVE_CREDENTIAL_TTL_S": 3600,
+    "ARCHIVE_ACCESS_KEY": "archive-reader",
+    "ARCHIVE_SECRET_KEY": "archive-reader-secret",
 }
 PARTITION = {"dt": date(2026, 9, 1), "hour": 13, "size": 2048, "last_modified": datetime(2026, 9, 1, 14, tzinfo=timezone.utc)}
 
@@ -130,7 +132,7 @@ class ArchiveCredentialsTests(ArchiveTestCase):
                 "Expiration": datetime(2026, 9, 1, 15, tzinfo=timezone.utc),
             }
         }
-        archive._clients[("sts", "http://minio:9000")] = sts
+        archive._clients[("sts", "http://minio:9000", "archive-reader")] = sts
         return sts
 
     def test_credentials_are_scoped_to_the_mesh(self):
@@ -183,8 +185,8 @@ class ArchivePartitionTests(ArchiveTestCase):
             from botocore.exceptions import ClientError
 
             s3.head_object.side_effect = ClientError({"Error": {"Code": "404"}}, "HeadObject")
-        archive._clients[("s3", "http://minio:9000")] = s3
-        archive._clients[("s3", "https://s3.example.org")] = s3
+        archive._clients[("s3", "http://minio:9000", "archive-reader")] = s3
+        archive._clients[("s3", "https://s3.example.org", "archive-reader")] = s3
         return s3
 
     def test_redirects_to_a_signed_link(self):
@@ -210,97 +212,25 @@ class ArchivePartitionTests(ArchiveTestCase):
 
 
 class ArchiveZipTests(ArchiveTestCase):
-    HOURS = [
-        {"dt": date(2026, 9, 1), "hour": 22, "size": 3, "last_modified": datetime(2026, 9, 1, 22, 59, tzinfo=timezone.utc)},
-        {"dt": date(2026, 9, 2), "hour": 5, "size": 3, "last_modified": datetime(2026, 9, 2, 5, 59, tzinfo=timezone.utc)},
-    ]
+    HOUR = {"dt": date(2026, 9, 1), "hour": 22, "size": 3, "last_modified": datetime(2026, 9, 1, 22, 59, tzinfo=timezone.utc)}
 
-    def download(self, **query):
-        response = self.client.get(self.url("zip"), query, **self.auth(self.operator))
-        body = b"".join(response.streaming_content) if response.streaming else response.content
-        return response, body
-
-    @patch.object(archive, "read_object", side_effect=lambda key: key.encode())
-    @patch.object(archive, "list_partitions")
-    def test_zips_the_range_a_folder_per_day(self, list_partitions, _):
-        list_partitions.return_value = self.HOURS
-
-        response, body = self.download(start="2026-09-01", stop="2026-09-02")
-
-        self.assertEqual(response.status_code, 200)
-        self.assertEqual(response["Content-Type"], "application/zip")
-        self.assertEqual(
-            response["Content-Disposition"], f'attachment; filename="mesh-{str(self.mesh.id)[:8]}_2026-09-01_2026-09-02.zip"'
-        )
-        self.assertEqual(list_partitions.call_args.args[1:], (date(2026, 9, 1), date(2026, 9, 2)))
-        with zipfile.ZipFile(io.BytesIO(body)) as zf:
-            self.assertEqual(zf.namelist(), ["2026-09-01/2026-09-01_22.parquet", "2026-09-02/2026-09-02_05.parquet"])
-            self.assertTrue(zf.read("2026-09-02/2026-09-02_05.parquet").endswith(b"/dt=2026-09-02/hour=05/data.parquet"))
-            self.assertEqual(zf.getinfo("2026-09-01/2026-09-01_22.parquet").date_time, (2026, 9, 1, 22, 59, 0))
-
-    @patch.object(archive, "read_object", return_value=b"x")
-    @patch.object(archive, "list_partitions")
-    def test_one_day_is_named_after_it(self, list_partitions, _):
-        list_partitions.return_value = self.HOURS[:1]
-
-        response, _ = self.download(start="2026-09-01", stop="2026-09-01")
-
-        self.assertEqual(response["Content-Disposition"], f'attachment; filename="mesh-{str(self.mesh.id)[:8]}_2026-09-01.zip"')
-
-    @patch.object(archive, "list_partitions", return_value=[])
-    def test_an_empty_range_is_not_found(self, _):
-        self.assertEqual(self.download(start="2020-01-01")[0].status_code, 404)
-
-    @patch.object(archive, "list_partitions", return_value=HOURS)
-    def test_nobody_else_downloads_it(self, _):
-        other = self.owner("other@example.com", role=OwnerRole.OPERATOR)
-
-        self.assertEqual(self.client.get(self.url("zip"), **self.auth(other)).status_code, 404)
-
-    @patch.object(archive, "read_object", return_value=b"x")
-    @patch.object(archive, "list_partitions", return_value=HOURS)
-    def test_the_db_connection_is_released_before_streaming(self, *_):
-        response = self.client.get(self.url("zip"), **self.auth(self.operator))
-
-        with patch("readings.archive_views.connection", in_atomic_block=False) as connection:
-            next(iter(response.streaming_content))
-        connection.close.assert_called_once()
-
-    @patch.object(archive, "read_object", side_effect=EndpointConnectionError(endpoint_url="http://minio:9000"))
-    @patch.object(archive, "list_partitions", return_value=HOURS)
-    def test_unreachable_storage_is_a_bad_gateway_not_a_broken_zip(self, *_):
-        response, _ = self.download()
-
-        self.assertEqual(response.status_code, 502)
-
-    @patch.object(archive, "list_partitions", return_value=HOURS)
-    def test_a_failure_after_the_first_file_aborts_the_download(self, _):
-        def read_object(key):
-            # Reads run in parallel, so fail by key rather than by call order.
-            if "hour=05" in key:
-                raise EndpointConnectionError(endpoint_url="http://minio:9000")
-            return b"x"
-
-        with patch.object(archive, "read_object", side_effect=read_object):
-            response = self.client.get(self.url("zip"), **self.auth(self.operator))
-            self.assertEqual(response.status_code, 200)
-            with self.assertRaises(EndpointConnectionError):
-                b"".join(response.streaming_content)
-
-    def test_objects_are_read_in_order_from_the_mesh_prefix(self):
+    def test_objects_are_zipped_in_order_from_the_mesh_prefix(self):
         s3 = MagicMock()
         s3.get_object.side_effect = lambda Bucket, Key: {"Body": io.BytesIO(Key.encode())}
-        archive._clients[("s3", "http://minio:9000")] = s3
-        hours = [dict(self.HOURS[0], hour=h) for h in range(24)]
+        archive._clients[("s3", "http://minio:9000", "archive-reader")] = s3
+        hours = [dict(self.HOUR, hour=h) for h in range(24)]
+        out, written = io.BytesIO(), []
 
-        body = b"".join(archive.zip_partitions(self.mesh.id, hours))
+        archive.zip_partitions(self.mesh.id, hours, out, progress=written.append)
 
-        with zipfile.ZipFile(io.BytesIO(body)) as zf:
+        self.assertEqual(written, hours)
+        with zipfile.ZipFile(out) as zf:
             self.assertEqual([info.filename[-10:-8] for info in zf.infolist()], [f"{h:02d}" for h in range(24)])
             self.assertEqual(
                 zf.read("2026-09-01/2026-09-01_07.parquet").decode(),
                 f"telemetry/mesh_id={self.mesh.id}/dt=2026-09-01/hour=07/data.parquet",
             )
+            self.assertEqual(zf.getinfo("2026-09-01/2026-09-01_07.parquet").date_time, (2026, 9, 1, 22, 59, 0))
 
 
 @override_settings(**ARCHIVE)

@@ -162,6 +162,7 @@ REST_FRAMEWORK = {
         "request-password-reset": "5/hour",
         "operator-request": "3/day",
         "archive-credentials": "20/hour",
+        "exports": "30/hour",
     },
     "DEFAULT_SCHEMA_CLASS": "drf_spectacular.openapi.AutoSchema",
 }
@@ -265,6 +266,15 @@ if ARCHIVE_STS == "aws" and not ARCHIVE_ROLE_ARN:
     raise ImproperlyConfigured("READINGS__ARCHIVE_STS=aws needs READINGS__ARCHIVE_ROLE_ARN")
 if not 900 <= ARCHIVE_CREDENTIAL_TTL_S <= 43200:
     raise ImproperlyConfigured("READINGS__ARCHIVE_CREDENTIAL_TTL_S must be between 900 and 43200 seconds")
+
+# Exports are built by readings_export_worker, the only service holding the credential
+# that writes under the bucket's exports/ prefix.
+EXPORT_ACCESS_KEY = env_str("READINGS__EXPORT_ACCESS_KEY")
+EXPORT_SECRET_KEY = env_str("READINGS__EXPORT_SECRET_KEY")
+EXPORT_MAX_DAYS = env_int("READINGS__EXPORT_MAX_DAYS", 366)
+# The export worker emails owners, so it loads registry's mail settings; readings-api does not.
+EXPORT_EMAIL = IS_READINGS and env_bool("READINGS__EXPORT_WORKER", False)
+SENDS_EMAIL = not IS_READINGS or EXPORT_EMAIL
 
 LOGGING = {
     "version": 1,
