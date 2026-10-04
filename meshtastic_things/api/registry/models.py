@@ -3,11 +3,13 @@ import uuid
 from django.contrib.auth.base_user import AbstractBaseUser, BaseUserManager
 from django.contrib.auth.models import PermissionsMixin
 from django.db import models
+from django.db.models.signals import post_delete
+from django.dispatch import receiver
 from django.utils import timezone
 from django.utils.functional import cached_property
 
 from common import node_ids
-from common.channels import channel_name
+from common.channels import DERIVED_KIND, channel_name
 
 
 class OwnerManager(BaseUserManager):
@@ -716,6 +718,19 @@ class Measurement(models.Model):
 
     def __str__(self) -> str:
         return f"{self.measurement_type} on {self.device_telemetry_variant.device}"
+
+
+@receiver(post_delete, sender=Measurement)
+def drop_orphaned_derived_type(sender, instance: Measurement, **kwargs) -> None:
+    """Drop a derived channel's catalog type with its last Measurement, so its unit
+    cannot refuse a later attach. Fires on cascades too: a device, mesh or owner
+    deletion removes outputs without going through postprocessing."""
+    MeasurementType.objects.filter(
+        pk=instance.measurement_type_id,
+        payload_kind=DERIVED_KIND,
+        measurements__isnull=True,
+        telemetry_variant_links__isnull=True,
+    ).delete()
 
 
 class DevicePostprocessing(models.Model):

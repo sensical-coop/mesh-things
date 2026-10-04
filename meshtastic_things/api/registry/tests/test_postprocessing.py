@@ -649,6 +649,42 @@ class DetachTests(PostprocessingTestCase):
         self.assertEqual(self.last_published_plans(), [])
         self.assertFalse(DevicePostprocessing.objects.exists())
 
+    def derived_types(self) -> set[str]:
+        return set(MeasurementType.objects.filter(payload_kind="computed:derived").values_list("field_name", flat=True))
+
+    def test_detach_drops_the_derived_types_no_device_produces(self):
+        attached = self.attach(self.create_blueprint())
+
+        self.client.delete(f"/devices/{self.node['uuid']}/postprocessings/{attached['id']}", **self.auth_headers(self.owner))
+
+        self.assertEqual(self.derived_types(), set())
+
+    def test_derived_types_stay_while_another_device_produces_them(self):
+        other = self.create_node(self.owner, self.mesh, device_id=8)
+        self.give_channels(Device.objects.get(pk=other["uuid"]))
+        blueprint = self.create_blueprint()
+        attached = self.attach(blueprint)
+        self.attach(blueprint, node=other)
+
+        self.client.delete(f"/devices/{self.node['uuid']}/postprocessings/{attached['id']}", **self.auth_headers(self.owner))
+
+        self.assertEqual(self.derived_types(), {"no2_ppb", "no2_ugm3"})
+
+    def test_deleting_the_device_drops_its_derived_types(self):
+        self.attach(self.create_blueprint())
+
+        self.client.delete(f"/devices/{self.node['uuid']}", **self.auth_headers(self.owner))
+
+        self.assertEqual(self.derived_types(), set())
+
+    def test_dropped_derived_type_no_longer_refuses_another_unit(self):
+        attached = self.attach(self.create_blueprint(_offset_blueprint(default_channel=TEMPERATURE)))
+        self.client.delete(f"/devices/{self.node['uuid']}/postprocessings/{attached['id']}", **self.auth_headers(self.owner))
+
+        working = self.attach(self.create_blueprint(_offset_blueprint(name="working", default_channel=WORKING)))
+
+        self.assertEqual(working["outputs"][0]["unit"], "mV")
+
     def test_blueprint_in_use_elsewhere_outlives_its_deleted_owner(self):
         other = self.create_owner(name="B", email="owner-delete@example.com")
         used = self.create_blueprint(_no2_blueprint(is_public=True), owner=other)
