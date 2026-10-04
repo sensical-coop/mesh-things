@@ -1,0 +1,11 @@
+{% extends "emails/base.html" %}
+{% block content %}
+{% include "emails/_chip.html" with label="Unused" tone="warning" %}
+{% include "emails/_title.html" with title="Nobody is connected to your sink" %}
+<p style="margin:12px 0 0 0;font-size:15px;line-height:22px;color:#1b1c1f;">Hi {{ name }}, nobody has been connected to your sink <strong>{{ sink }}</strong> since {{ since|date:"j M Y, H:i" }} UTC, although it has meshes or devices attached.</p>
+{% if max_offline_hours %}<p style="margin:12px 0 0 0;font-size:15px;line-height:22px;color:#1b1c1f;">Readings are only kept for a consumer that has connected before, and for at most {{ max_offline_hours }} hours after it disconnects. Anything older is discarded.</p>{% endif %}
+<p style="margin:12px 0 0 0;font-size:15px;line-height:22px;color:#1b1c1f;">Check that the service that uses this sink is running and still has the sink's credentials. If the sink is no longer needed, detach its meshes and devices or delete it.</p>
+{% include "emails/_button.html" with href=sink_link label="Open sink" %}
+<p style="margin:20px 0 0 0;font-size:13px;line-height:20px;color:#6d6d6d;">You will not be emailed again until someone connects and the sink is then left unused again.</p>
+{% endblock %}
+{% block footer %}You are receiving this because you operate this sink on Mesh Things.{% endblock %}

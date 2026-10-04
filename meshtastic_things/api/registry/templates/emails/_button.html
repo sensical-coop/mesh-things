@@ -1,0 +1,8 @@
+<table role="presentation" cellspacing="0" cellpadding="0" border="0" style="margin:24px 0 0 0;">
+  <tr>
+    <td style="border-radius:10px;background:#ff495f;background-image:linear-gradient(180deg,#f84559 0%,#ff495f 100%);">
+      <a href="{{ href }}" style="display:inline-block;padding:11px 20px;font-size:15px;font-weight:600;line-height:20px;color:#ffffff;text-decoration:none;">{{ label }}</a>
+    </td>
+  </tr>
+</table>
+{% if not no_fallback %}<p style="margin:12px 0 0 0;font-size:12px;line-height:18px;color:#6d6d6d;word-break:break-all;">Or open <a href="{{ href }}" style="color:#6d6d6d;">{{ href }}</a></p>{% endif %}

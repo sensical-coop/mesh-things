@@ -1,0 +1,8 @@
+<table role="presentation" width="100%" cellspacing="0" cellpadding="0" border="0" style="margin:24px 0;border-top:1px solid #e4e4e5;font-size:14px;line-height:20px;">
+  {% for row in details %}
+  <tr>
+    <td style="padding:10px 0;border-bottom:1px solid #e4e4e5;color:#6d6d6d;width:38%;">{{ row.label }}</td>
+    <td style="padding:10px 0;border-bottom:1px solid #e4e4e5;color:#1b1c1f;word-break:break-word;{% if row.mono %}font-family:'Geist Mono',ui-monospace,Menlo,Consolas,monospace;font-size:13px;{% endif %}">{% if row.href %}<a href="{{ row.href }}" style="color:#1b1c1f;text-decoration:underline;text-decoration-color:#c8c8c9;">{{ row.value }}</a>{% else %}{{ row.value }}{% endif %}</td>
+  </tr>
+  {% endfor %}
+</table>

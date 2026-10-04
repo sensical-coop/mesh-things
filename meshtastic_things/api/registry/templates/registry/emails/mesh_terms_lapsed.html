@@ -1,0 +1,9 @@
+{% extends "emails/base.html" %}
+{% block content %}
+{% include "emails/_chip.html" with label="Paused" tone="error" %}
+{% include "emails/_title.html" with title="Your mesh has stopped storing data" %}
+<p style="margin:12px 0 0 0;font-size:15px;line-height:22px;color:#1b1c1f;">Hi {{ name }}, your acceptance of the terms for the mesh <strong>{{ mesh }}</strong> has lapsed, so the mesh has stopped storing new data.</p>
+<p style="margin:12px 0 0 0;font-size:15px;line-height:22px;color:#1b1c1f;">The data it stored will be deleted in {{ grace_days }} days. Renew the terms before then to resume the mesh and keep its data. You can also export its readings in the meantime.</p>
+{% include "emails/_button.html" with href=mesh_link label="Renew the terms" %}
+{% endblock %}
+{% block footer %}You are receiving this because you own this mesh on Mesh Things.{% endblock %}

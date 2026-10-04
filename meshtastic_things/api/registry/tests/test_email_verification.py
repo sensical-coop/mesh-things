@@ -28,6 +28,16 @@ class SignupVerificationTests(RegistryTestCase):
         self.assertIn("verify-email?token=", mail.outbox[0].body)
         self.assertEqual(mail.outbox[0].to, ["verify-a@example.com"])
 
+    def test_the_verification_email_has_an_html_part_with_the_link(self):
+        self.client.post("/owners", {**SIGNUP_TERMS, "name": "Seán O'Brien", "email": "verify-html@example.com", "password": "Correct-Horse-Battery-42"}, format="json")
+
+        [message] = mail.outbox
+        link = re.search(r"https?://\S+verify-email\?token=\S+", message.body).group(0)
+        [(html, mimetype)] = message.alternatives
+        self.assertEqual(mimetype, "text/html")
+        self.assertIn(f'href="{link}"', html)
+        self.assertIn("Hi Seán O'Brien,", message.body)
+
     def test_signup_email_send_failure_does_not_roll_back_account_creation(self):
         with patch("registry.views.send_verification_email", side_effect=RuntimeError("smtp down")):
             resp = self.client.post("/owners", {**SIGNUP_TERMS, "name": "Bob", "email": "verify-b@example.com", "password": "Correct-Horse-Battery-42"}, format="json")

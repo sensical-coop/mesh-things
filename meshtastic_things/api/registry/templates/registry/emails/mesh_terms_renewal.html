@@ -1,0 +1,9 @@
+{% extends "emails/base.html" %}
+{% block content %}
+{% include "emails/_chip.html" with label="Terms" tone="warning" %}
+{% include "emails/_title.html" with title="Renew the terms for your mesh" %}
+<p style="margin:12px 0 0 0;font-size:15px;line-height:22px;color:#1b1c1f;">Hi {{ name }}, your acceptance of the terms for the mesh <strong>{{ mesh }}</strong> lapses on {{ expires_at|date:"j M Y, H:i" }} UTC. We ask again so that its data is only kept while you want it to be.</p>
+{% include "emails/_button.html" with href=mesh_link label="Renew the terms" %}
+<p style="margin:20px 0 0 0;font-size:13px;line-height:20px;color:#6d6d6d;">If it lapses, the mesh stops storing new data, and the data it stored is deleted {{ grace_days }} days later, unless you renew in the meantime.</p>
+{% endblock %}
+{% block footer %}You are receiving this because you own this mesh on Mesh Things.{% endblock %}

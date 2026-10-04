@@ -1,4 +1,4 @@
-Hi {{ name }},
+{% autoescape off %}Hi {{ name }},
 
 Your acceptance of the terms for the mesh "{{ mesh }}" lapses on
 {{ expires_at|date:"Y-m-d H:i" }} UTC. We ask again so that its data is only kept
@@ -8,3 +8,4 @@ while you want it to be. Renew it to keep the mesh storing data:
 
 If it lapses, the mesh stops storing new data, and the data it stored is deleted
 {{ grace_days }} days later, unless you renew in the meantime.
+{% endautoescape %}

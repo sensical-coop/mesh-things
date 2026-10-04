@@ -1,0 +1,8 @@
+{% extends "emails/base.html" %}
+{% block content %}
+{% if approved %}{% include "emails/_chip.html" with label="Approved" tone="accent" %}{% include "emails/_title.html" with title="You are now an operator" %}{% else %}{% include "emails/_chip.html" with label="Rejected" tone="neutral" %}{% include "emails/_title.html" with title="Your operator request was rejected" %}{% endif %}
+<p style="margin:12px 0 0 0;font-size:15px;line-height:22px;color:#1b1c1f;">Hi {{ name }}, your request to become an operator on Mesh Things has been {% if approved %}approved. You can now bridge remote MQTT brokers as sources.{% else %}rejected.{% endif %}</p>
+{% if note %}<p style="margin:20px 0 0 0;font-size:13px;line-height:20px;color:#6d6d6d;">Note from the reviewer</p>{% include "emails/_quote.html" with text=note %}{% endif %}
+{% if approved %}{% include "emails/_button.html" with href=sources_link label="Create a source" %}{% endif %}
+{% endblock %}
+{% block footer %}You are receiving this because of your Mesh Things account.{% endblock %}

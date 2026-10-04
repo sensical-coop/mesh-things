@@ -2,7 +2,8 @@ import os
 
 import structlog
 from django.conf import settings
-from django.core.mail import send_mail
+from django.core.mail import EmailMultiAlternatives
+from django.template import TemplateDoesNotExist
 from django.template.loader import render_to_string
 
 from .models import OperatorRequestStatus, Owner
@@ -31,11 +32,19 @@ def console_url(*segments) -> str:
 
 
 def send_templated_email(to_email: str, subject: str, template_name: str, context: dict) -> None:
-    """Renders registry/templates/registry/emails/<template_name>.txt with context and
-    sends it plaintext-only via the configured EMAIL_BACKEND"""
-
-    body = render_to_string(f"registry/emails/{template_name}.txt", context)
-    send_mail(subject, body, settings.DEFAULT_FROM_EMAIL, [to_email], fail_silently=False)
+    """Render registry/emails/<template_name>.txt and send it, with an HTML part when
+    registry/emails/<template_name>.html exists."""
+    context = {"subject": subject, **context}
+    message = EmailMultiAlternatives(
+        subject, render_to_string(f"registry/emails/{template_name}.txt", context), settings.DEFAULT_FROM_EMAIL, [to_email]
+    )
+    try:
+        html = render_to_string(f"registry/emails/{template_name}.html", context)
+    except TemplateDoesNotExist:
+        html = None
+    if html:
+        message.attach_alternative(html, "text/html")
+    message.send(fail_silently=False)
 
 
 def send_verification_email(owner, token: str) -> None:

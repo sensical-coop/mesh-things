@@ -1,4 +1,4 @@
-Hi {{ name }},
+{% autoescape off %}Hi {{ name }},
 
 Your source "{{ source }}" has not been connected to {{ server }} since
 {{ since|date:"Y-m-d H:i" }} UTC (status: {{ status }}). Nothing from its meshes is
@@ -13,3 +13,4 @@ administrators of this instance to restore it.
 
 You will not be emailed again about this outage. If the source reconnects and
 fails again later, you will be.
+{% endautoescape %}

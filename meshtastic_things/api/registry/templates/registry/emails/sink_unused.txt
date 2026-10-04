@@ -1,4 +1,4 @@
-Hi {{ name }},
+{% autoescape off %}Hi {{ name }},
 
 Nobody has been connected to your sink "{{ sink }}" since
 {{ since|date:"Y-m-d H:i" }} UTC, although it has meshes or devices attached.
@@ -14,3 +14,4 @@ delete it.
 
 You will not be emailed again until someone connects and then the sink is left
 unused again.
+{% endautoescape %}

@@ -1,4 +1,4 @@
-Hi {{ name }},
+{% autoescape off %}Hi {{ name }},
 
 Since the last alarm email about this device, its data-quality checks were
 triggered {{ total }} more time(s).
@@ -13,3 +13,4 @@ triggered {{ total }} more time(s).
   Latest: {{ alarm.last_message }}
 {% endfor %}
 The next new problem on this device will be emailed straight away.
+{% endautoescape %}

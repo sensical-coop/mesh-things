@@ -1,0 +1,9 @@
+{% extends "emails/base.html" %}
+{% block content %}
+{% include "emails/_chip.html" with label="Paused" tone="error" %}
+{% include "emails/_title.html" with title="Your sink has been paused" %}
+<p style="margin:12px 0 0 0;font-size:15px;line-height:22px;color:#1b1c1f;">Hi {{ name }}, your acceptance of the terms for the sink <strong>{{ sink }}</strong> has lapsed, so the sink has been paused: nothing more is sent and its credentials are refused.</p>
+<p style="margin:12px 0 0 0;font-size:15px;line-height:22px;color:#1b1c1f;">Renew the terms to resume it. Its credentials stay the same.</p>
+{% include "emails/_button.html" with href=sink_link label="Renew the terms" %}
+{% endblock %}
+{% block footer %}You are receiving this because you operate this sink on Mesh Things.{% endblock %}

@@ -1,4 +1,4 @@
-Hi {{ name }},
+{% autoescape off %}Hi {{ name }},
 
 Your acceptance of the terms for the source "{{ source }}" has lapsed, so the
 source has been paused and no new traffic is bridged from it.
@@ -8,4 +8,5 @@ before then to resume the source and keep the data:
 
 {{ source_link }}
 
-You can export the data in the meantime through the archive API.
+You can export the meshes' readings in the meantime.
+{% endautoescape %}

@@ -1,4 +1,4 @@
-Hi {{ name }},
+{% autoescape off %}Hi {{ name }},
 
 Your acceptance of the terms for the mesh "{{ mesh }}" has lapsed, so the mesh has
 stopped storing new data.
@@ -8,4 +8,5 @@ then to resume the mesh and keep its data:
 
 {{ mesh_link }}
 
-You can export the data in the meantime through the archive API.
+You can export its readings in the meantime.
+{% endautoescape %}
