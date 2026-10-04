@@ -52,6 +52,8 @@ class Config:
     poll_s: int = 5
     failures_before_alert: int = 2
     reminder_hours: int = 6
+    # Needs a superuser's API key, as it reads registry's email status.
+    email_check: bool = True
 
     instance_name: str = ""
     alert_emails: list[str] = field(default_factory=list)
@@ -105,6 +107,7 @@ class Config:
             poll_s=env_int("MONITOR__POLL_SECONDS", 5),
             failures_before_alert=max(1, env_int("MONITOR__FAILURES_BEFORE_ALERT", 2)),
             reminder_hours=env_int("MONITOR__REMINDER_HOURS", 6),
+            email_check=env_bool("MONITOR__EMAIL_CHECK", True),
             instance_name=env_str("MONITOR__INSTANCE_NAME"),
             alert_emails=env_list("MONITOR__ALERT_EMAILS"),
             email_host=env_str("MONITOR__EMAIL_HOST"),

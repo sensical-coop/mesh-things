@@ -14,7 +14,8 @@ from monitor.config import Config
 
 log = structlog.get_logger()
 
-HTTP_CHECKS = ("api_root", "api_health", "api_schema", "readings_api")
+EMAIL = "email"
+HTTP_CHECKS = ("api_root", "api_health", "api_schema", "readings_api", EMAIL)
 INGESTION = "ingestion"
 REGISTRY_SIGHTING = "registry_sighting"
 SINK = "sink"
@@ -48,7 +49,8 @@ def iso(epoch: float) -> str:
 def check_names(config: Config) -> tuple[str, ...]:
     """Every check this configuration runs, in report order."""
     probe = (INGESTION, REGISTRY_SIGHTING, SINK) if config.sink_enabled else (INGESTION, REGISTRY_SIGHTING)
-    return HTTP_CHECKS + probe
+    http = HTTP_CHECKS if config.email_check else tuple(name for name in HTTP_CHECKS if name != EMAIL)
+    return http + probe
 
 
 def _result(name: str, ok: bool, detail: str, started: float | None = None) -> CheckResult:
@@ -104,6 +106,8 @@ class Checker:
 
         Public routes are called without credentials, as any visitor would.
         """
+        if name == EMAIL:
+            return await self.email_check()
         path, params = self._http_path(name)
         headers = self._auth if name == "readings_api" else {}
         started = time.monotonic()
@@ -118,6 +122,34 @@ class Checker:
         except aiohttp.ClientError as e:
             return _result(name, False, f"/{path} unreachable: {type(e).__name__}", started)
         return _result(name, True, "ok", started)
+
+    async def email_check(self) -> CheckResult:
+        """Registry's emails are being accepted by its mail server: the latest send did not fail.
+
+        Reads the superuser-only status route, so the monitor's key must be a superuser's.
+        """
+        started = time.monotonic()
+        try:
+            async with self._session() as session:
+                async with session.get(self._url("status/email"), headers=self._auth) as resp:
+                    if resp.status == 403:
+                        return _result(EMAIL, False, "the monitor's API key is not a superuser's, so /status/email is refused", started)
+                    if resp.status != 200:
+                        return _result(EMAIL, False, f"HTTP {resp.status} from /status/email", started)
+                    body = await resp.json()
+        except asyncio.TimeoutError:
+            return _result(EMAIL, False, f"/status/email timed out after {self.config.http_timeout_s}s", started)
+        except aiohttp.ClientError as e:
+            return _result(EMAIL, False, f"/status/email unreachable: {type(e).__name__}", started)
+        if not body.get("ok"):
+            return _result(
+                EMAIL,
+                False,
+                f"the last email ({body.get('last_failed_template')}, {body.get('last_failed_at')}) failed: "
+                f"{body.get('last_error')}; {body.get('failed_24h')} failed in 24h",
+                started,
+            )
+        return _result(EMAIL, True, f"{body.get('sent_24h')} sent in 24h, none failing", started)
 
     async def _get_json(self, session: aiohttp.ClientSession, path: str, params: dict | None = None) -> dict:
         async with session.get(self._url(path), params=params or {}, headers=self._auth) as resp:

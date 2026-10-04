@@ -1,6 +1,7 @@
 import secrets
 import uuid
-from datetime import timedelta
+from datetime import datetime, timedelta
+from datetime import timezone as dt_timezone
 
 import structlog
 from django.conf import settings
@@ -33,7 +34,7 @@ from .data_lifecycle import (
     resume_source,
     schedule_mesh_deletion,
 )
-from . import postprocessing, sinks
+from . import email_health, postprocessing, sinks
 from .emqx_client import get_emqx_client
 from .exceptions import BadGateway, Conflict
 from .gateways import save_gateway
@@ -90,6 +91,7 @@ from .serializers import (
     MeasurementTypeUpdateSerializer,
     MeshSerializer,
     MeshUpdateSerializer,
+    EmailStatusSerializer,
     MetricsResponseSerializer,
     OperatorRequestAdminSerializer,
     OperatorRequestCreateSerializer,
@@ -220,6 +222,27 @@ class MetricsView(APIView):
             "active_gateways": Device.objects.filter(is_gateway=True, is_allowed=True).count(),
         }
         return Response(MetricsResponseSerializer(body).data)
+
+
+class EmailStatusView(APIView):
+    permission_classes = [IsSuperuser]
+
+    @extend_schema(responses=EmailStatusSerializer)
+    def get(self, request):
+        """Report whether the instance's emails are being accepted by its mail server. Superusers only.
+
+        Covers every email registry sends: alarms and their summaries, sign up,
+        password resets, terms and status notices. `ok` is false while the most
+        recent one failed to send, and turns true again with the next success.
+        It says nothing about delivery beyond the mail server, such as spam
+        filtering. Counts cover the last 24 hours and start empty after Redis is
+        cleared.
+        """
+        health = email_health.summary()
+        for field in ("last_sent_at", "last_failed_at"):
+            if health[field] is not None:
+                health[field] = datetime.fromtimestamp(health[field], tz=dt_timezone.utc)
+        return Response(EmailStatusSerializer(health).data)
 
 
 def _owner_serializer_for(request, owner=None):

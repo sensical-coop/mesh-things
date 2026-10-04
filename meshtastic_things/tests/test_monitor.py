@@ -341,3 +341,59 @@ def test_a_query_token_is_checked_too(value, expected):
         assert (await client.get("/run?token=nope")).status == expected
 
     _serve(monitor, scenario)
+
+
+# --- The email check ---
+
+def _email_check(status: int, body: dict | None = None, **config):
+    """Run the email check against a registry answering /status/email with `status` and `body`."""
+    from aiohttp import web
+
+    from monitor.checks import Checker
+
+    seen = {}
+
+    async def email_status(request):
+        seen["auth"] = request.headers.get("Authorization")
+        return web.json_response(body or {}, status=status)
+
+    async def go():
+        app = web.Application()
+        app.router.add_get("/status/email", email_status)
+        server = TestServer(app)
+        await server.start_server()
+        try:
+            checker = Checker(_config(api_url=str(server.make_url("")).rstrip("/"), **config))
+            return await checker.http_check("email")
+        finally:
+            await server.close()
+
+    return asyncio.run(go()), seen
+
+
+def test_the_email_check_passes_while_emails_are_accepted():
+    result, seen = _email_check(200, {"ok": True, "sent_24h": 4})
+    assert result.ok and result.detail == "4 sent in 24h, none failing"
+    assert seen["auth"] == "Bearer k"
+
+
+def test_the_email_check_fails_with_the_mail_server_error():
+    body = {
+        "ok": False, "failed_24h": 3, "last_failed_template": "quality_alarm",
+        "last_failed_at": "2026-10-04T13:00:00Z", "last_error": "SMTPAuthenticationError: (535, b'bad credentials')",
+    }
+    result, _ = _email_check(200, body)
+    assert not result.ok
+    assert "quality_alarm" in result.detail and "535" in result.detail and "3 failed in 24h" in result.detail
+
+
+def test_the_email_check_says_when_the_key_is_not_a_superusers():
+    result, _ = _email_check(403)
+    assert not result.ok and "not a superuser" in result.detail
+
+
+def test_the_email_check_can_be_switched_off():
+    from monitor.checks import check_names
+
+    assert "email" in check_names(_config())
+    assert "email" not in check_names(_config(email_check=False))

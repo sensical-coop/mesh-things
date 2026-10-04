@@ -18,7 +18,10 @@ Exceptions:
   ABSENCE_EMAIL_INTERVAL_SECONDS; later ones are treated like `repeat`, so a
   device publishing slower than configured does not email all day.
 - Alarms marked `repeat` re-raise a condition already emailed when it started.
-  They are counted in an open window's summary, but never emailed on their own.
+  They are counted in an open window's summary. Outside a window, one is emailed
+  as a reminder once REGISTRY__ALARM_REMINDER_HOURS (default 24, 0 for never)
+  have passed since the condition was last emailed, so a long silence means the
+  device is fine rather than that alarms stopped.
 - Alarms marked `replay` come from history being reprocessed, not from a
   device reporting now, and are never emailed.
 """
@@ -49,6 +52,11 @@ WINDOWS_KEY = "registry:alarm-windows"
 HELD_KEY_PREFIX = "registry:alarm-held:"
 ABSENCE_EMAILED_KEY_PREFIX = "registry:absence-emailed:"
 ABSENCE_EMAIL_INTERVAL_SECONDS = 24 * 3600
+# When each ongoing condition ("<window>|<detector>|<channel>") was last emailed, and
+# since when it holds. Refreshed by its hourly re-raises, so it lapses once they stop.
+CONDITION_KEY_PREFIX = "registry:alarm-condition:"
+CONDITION_TTL_SECONDS = 2 * 24 * 3600
+ALARM_REMINDER_SECONDS = int(float(os.environ.get("REGISTRY__ALARM_REMINDER_HOURS", "24")) * 3600)
 
 _redis = None
 
@@ -131,7 +139,7 @@ class Command(BaseCommand):
             closes_at = r.zscore(WINDOWS_KEY, window)
             if closes_at is not None and closes_at <= now:
                 # The tick hasn't closed it yet, so close it before opening a new one.
-                Command._flush_window(window)
+                Command._flush_window(window, now)
                 closes_at = None
             if closes_at is not None and (repeat or detector != ABSENCE):
                 Command._hold(window, event)
@@ -141,11 +149,16 @@ class Command(BaseCommand):
                 r.zadd(WINDOWS_KEY, {window: now + cooldown_seconds})
                 opened = True
         if repeat:
+            if detector != ABSENCE and Command._reminder_due(window, event, now):
+                Command._send_alarm_email(device, event, cooldown_seconds, since=Command._since(window, event), reminder=True)
+                Command._remember(window, event, now)
+                return
             log.debug("Repeat of an alarm already emailed, not sent", detector=detector)
             return
 
         try:
             Command._send_alarm_email(device, event, cooldown_seconds)
+            Command._remember(window, event, now)
         except Exception:
             if opened:
                 # Without the first email, later alarms must not be held silently.
@@ -153,6 +166,43 @@ class Command(BaseCommand):
             if detector == ABSENCE:
                 redis_client().delete(ABSENCE_EMAILED_KEY_PREFIX + window)
             raise
+
+    @staticmethod
+    def _condition_key(window: str, detector: str | None, channel: str | None) -> str:
+        return f"{CONDITION_KEY_PREFIX}{window}|{detector}|{channel or ''}"
+
+    @staticmethod
+    def _since(window: str, event: dict) -> str | None:
+        raw = redis_client().get(Command._condition_key(window, event.get("detector"), event.get("channel")))
+        return json.loads(raw).get("since") if raw else None
+
+    @staticmethod
+    def _remember(window: str, event: dict, now: float) -> None:
+        """Note that the condition was just emailed, keeping when it started."""
+        since = Command._since(window, event) or event.get("triggered_at")
+        redis_client().set(
+            Command._condition_key(window, event.get("detector"), event.get("channel")),
+            json.dumps({"emailed_at": now, "since": since}),
+            ex=CONDITION_TTL_SECONDS,
+        )
+
+    @staticmethod
+    def _reminder_due(window: str, event: dict, now: float) -> bool:
+        """Whether a re-raise should be emailed as a reminder.
+
+        A condition with no record started before this was tracked, as after an
+        upgrade, so it is reminded at once.
+        """
+        if ALARM_REMINDER_SECONDS <= 0:
+            return False
+        key = Command._condition_key(window, event.get("detector"), event.get("channel"))
+        raw = redis_client().get(key)
+        if raw is None:
+            return True
+        if now - json.loads(raw)["emailed_at"] >= ALARM_REMINDER_SECONDS:
+            return True
+        redis_client().expire(key, CONDITION_TTL_SECONDS)
+        return False
 
     @staticmethod
     def _hold(window: str, event: dict) -> None:
@@ -175,30 +225,32 @@ class Command(BaseCommand):
         now = time.time() if now is None else now
         for window in redis_client().zrangebyscore(WINDOWS_KEY, "-inf", now):
             try:
-                Command._flush_window(window)
+                Command._flush_window(window, now)
             except Exception as e:
                 # Left open, so the next tick retries it.
                 log.warning("Failed to send alarm summary", window=window, error=str(e))
 
     @staticmethod
-    def _flush_window(window: str) -> None:
+    def _flush_window(window: str, now: float | None = None) -> None:
         r = redis_client()
         key = HELD_KEY_PREFIX + window
         held = r.hgetall(key)
         if held:
-            Command._send_summary_email(window, held)
+            Command._send_summary_email(window, held, now)
         pipe = r.pipeline()
         pipe.delete(key)
         pipe.zrem(WINDOWS_KEY, window)
         pipe.execute()
 
     @staticmethod
-    def _send_alarm_email(device: Device, event: dict, cooldown_seconds: int) -> None:
+    def _send_alarm_email(device: Device, event: dict, cooldown_seconds: int, since: str | None = None, reminder: bool = False) -> None:
+        """Email one alarm; with `reminder`, as a condition still holding since `since`."""
         owner = device.mesh.owner
         detector = event.get("detector")
+        prefix = "Still active: " if reminder else ""
         send_templated_email(
             to_email=owner.email,
-            subject=f"[Mesh Things] {DETECTOR_SUBJECTS.get(detector, 'Data quality alarm')}"
+            subject=f"[Mesh Things] {prefix}{DETECTOR_SUBJECTS.get(detector, 'Data quality alarm')}"
             f" - {_device_label(device)}",
             template_name="quality_alarm",
             context={
@@ -213,13 +265,17 @@ class Command(BaseCommand):
                 "cooldown_hours": round(cooldown_seconds / 3600, 1) if cooldown_seconds else 0,
                 "details": _device_details(device)
                 + ([{"label": "Channel", "value": event["channel"], "mono": True}] if event.get("channel") else [])
-                + [{"label": "Detected", "value": _when(event.get("triggered_at"))}],
+                + ([{"label": "Ongoing since", "value": _when(since)}] if reminder and since else [])
+                + [{"label": "Last detected" if reminder else "Detected", "value": _when(event.get("triggered_at"))}],
+                "reminder": reminder,
+                "since": _when(since),
+                "reminder_hours": round(ALARM_REMINDER_SECONDS / 3600, 1),
             },
         )
         log.info("Sent quality alarm email", detector=detector, device_id=device.device_id)
 
     @staticmethod
-    def _send_summary_email(window: str, held: dict) -> None:
+    def _send_summary_email(window: str, held: dict, now: float | None = None) -> None:
         mesh_id, device_id = window.rsplit(":", 1)
         device = (
             Device.objects.select_related("mesh__owner")
@@ -260,6 +316,13 @@ class Command(BaseCommand):
             },
         )
         log.info("Sent quality alarm summary", device_id=device.device_id, kinds=len(alarms))
+        # A summary counts as emailing each of its conditions, so no reminder follows straight away.
+        for alarm in alarms:
+            Command._remember(
+                window,
+                {"detector": alarm["detector"], "channel": alarm["channel"], "triggered_at": alarm["first_triggered_at"]},
+                time.time() if now is None else now,
+            )
 
 
 def _device_label(device: Device) -> str:
