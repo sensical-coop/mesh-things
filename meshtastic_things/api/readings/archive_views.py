@@ -3,8 +3,7 @@ from datetime import date
 
 import structlog
 from botocore.exceptions import BotoCoreError, ClientError
-from django.db import connection
-from django.http import HttpResponseRedirect, StreamingHttpResponse
+from django.http import HttpResponseRedirect
 from drf_spectacular.utils import OpenApiParameter, OpenApiResponse, OpenApiTypes, extend_schema
 from registry.exceptions import BadGateway
 from registry.models import Mesh
@@ -41,7 +40,7 @@ def _require_archive_access(request, mesh_id, credentials=False) -> None:
 
 
 @contextmanager
-def _storage():
+def storage():
     try:
         yield
     except (BotoCoreError, ClientError) as e:
@@ -75,7 +74,7 @@ class ArchiveManifestView(APIView):
         """
         _require_archive_access(request, mesh_id)
         start, stop = _day(request, "start"), _day(request, "stop")
-        with _storage():
+        with storage():
             partitions = archive.list_partitions(mesh_id, start, stop)
         body = {"mesh_id": mesh_id, "prefix": archive.mesh_prefix(mesh_id), "partitions": partitions}
         return Response(ArchiveManifestSerializer(body).data)
@@ -95,7 +94,7 @@ class ArchiveCredentialsView(APIView):
         mesh's owner while they are an operator, and to superusers.
         """
         _require_archive_access(request, mesh_id, credentials=True)
-        with _storage():
+        with storage():
             credentials = archive.issue_credentials(mesh_id, session_name=f"owner-{request.user.id}")
         log.info(
             "archive_credentials_issued",
@@ -128,75 +127,7 @@ class ArchivePartitionView(APIView):
             key = archive.partition_key(mesh_id, date.fromisoformat(day), hour)
         except ValueError:
             raise NotFound("Partition not found")
-        with _storage():
+        with storage():
             if not archive.object_exists(key):
                 raise NotFound("Partition not found")
             return HttpResponseRedirect(archive.presigned_url(key))
-
-
-def _without_db(chunks):
-    """Release the request's DB connection before the first chunk, as a download can
-    outlast any query by minutes. Never inside a transaction, which it would break."""
-    if not connection.in_atomic_block:
-        connection.close()
-    yield from chunks
-
-
-def _rest_of_zip(first: bytes, rest, mesh_id):
-    """Once the 200 is sent, a storage failure can only abort the download, which the client sees as incomplete."""
-    yield first
-    try:
-        yield from rest
-    except (BotoCoreError, ClientError) as e:
-        log.warning("archive_zip_aborted", mesh_id=str(mesh_id), error=str(e))
-        raise
-
-
-def _zip_name(mesh_id, partitions) -> str:
-    """By the mesh's short id: readings may not read mesh labels (provision_read_role)."""
-    first, last = partitions[0]["dt"], partitions[-1]["dt"]
-    days = f"{first:%Y-%m-%d}" if first == last else f"{first:%Y-%m-%d}_{last:%Y-%m-%d}"
-    return f"mesh-{str(mesh_id)[:8]}_{days}.zip"
-
-
-class ArchiveZipView(APIView):
-    @extend_schema(
-        parameters=MANIFEST_PARAMS,
-        responses={
-            (200, "application/zip"): OpenApiResponse(
-                OpenApiTypes.BINARY, description="The hourly Parquet files of the range, as one zip."
-            ),
-            404: OpenApiResponse(description="No such mesh, or nothing archived in the range."),
-            502: OpenApiResponse(description="The archive storage could not be reached."),
-        },
-    )
-    def get(self, request, mesh_id):
-        """Download a range of a mesh's archive as one zip, a folder per day.
-
-        Each hour is `YYYY-MM-DD/YYYY-MM-DD_HH.parquet` (UTC), so a day or the whole
-        archive is one download. The zip streams as the files are read, and holds
-        what the file list shows at the time of the request. If the storage fails
-        after the download has started, the download ends early and is incomplete,
-        so retry it. For querying in place, issue credentials instead. Available to
-        the mesh's owner while they are an operator, and to superusers.
-
-        Args:
-            start: Earliest day to include, as `YYYY-MM-DD`. Defaults to the first archived day.
-            stop: Latest day to include, as `YYYY-MM-DD`. Defaults to the last archived day.
-        """
-        _require_archive_access(request, mesh_id)
-        start, stop = _day(request, "start"), _day(request, "stop")
-        with _storage():
-            partitions = archive.list_partitions(mesh_id, start, stop)
-        if not partitions:
-            raise NotFound("Nothing archived in that range")
-        chunks = archive.zip_partitions(mesh_id, partitions)
-        # The first file is read before answering, so unreachable storage is a 502, not a broken 200.
-        with _storage():
-            first = next(chunks)
-        log.info("archive_zip_download", owner_id=str(request.user.id), mesh_id=str(mesh_id), files=len(partitions))
-        response = StreamingHttpResponse(
-            _without_db(_rest_of_zip(first, chunks, mesh_id)), content_type="application/zip"
-        )
-        response["Content-Disposition"] = f'attachment; filename="{_zip_name(mesh_id, partitions)}"'
-        return response

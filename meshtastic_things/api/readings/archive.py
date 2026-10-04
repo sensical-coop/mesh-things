@@ -4,7 +4,6 @@ Works against the bundled MinIO or an external S3. The archive is laid out as
 `{prefix}/mesh_id=<id>/dt=<YYYY-MM-DD>/hour=<HH>/data.parquet`, so a mesh is one
 key prefix and a credential can be limited to it.
 """
-import io
 import json
 import re
 import zipfile
@@ -21,8 +20,7 @@ STS_AWS = "aws"
 _DEFAULT_REGION = "us-east-1"
 _PARTITION = re.compile(r"/dt=(\d{4}-\d{2}-\d{2})/hour=(\d{2})/" + re.escape(PARTITION_FILENAME) + "$")
 
-# Parallel object reads while zipping: S3 answers each GET in tens of milliseconds, and
-# the whole zip has to stream well inside a gunicorn worker's timeout.
+# Parallel object reads while zipping: S3 answers each GET in tens of milliseconds.
 ZIP_READERS = 8
 
 _clients: dict = {}
@@ -50,8 +48,11 @@ def partition_key(mesh_id, day: date, hour: int) -> str:
     return f"{mesh_prefix(mesh_id)}dt={day:%Y-%m-%d}/hour={hour:02d}/{PARTITION_FILENAME}"
 
 
-def _client(service: str, endpoint_url: str):
-    key = (service, endpoint_url)
+def _client(service: str, endpoint_url: str, access_key: str | None = None, secret_key: str | None = None):
+    """A cached client, signing as the archive reader unless other credentials are given."""
+    access_key = access_key or settings.ARCHIVE_ACCESS_KEY
+    secret_key = secret_key or settings.ARCHIVE_SECRET_KEY
+    key = (service, endpoint_url, access_key)
     if key not in _clients:
         import boto3
         from botocore.config import Config
@@ -59,8 +60,8 @@ def _client(service: str, endpoint_url: str):
         _clients[key] = boto3.client(
             service,
             endpoint_url=endpoint_url or None,
-            aws_access_key_id=settings.ARCHIVE_ACCESS_KEY or None,
-            aws_secret_access_key=settings.ARCHIVE_SECRET_KEY or None,
+            aws_access_key_id=access_key or None,
+            aws_secret_access_key=secret_key or None,
             region_name=region(),
             # Path-style, so a self-hosted endpoint needs no wildcard DNS.
             config=Config(signature_version="s3v4", s3={"addressing_style": "path"}),
@@ -163,12 +164,13 @@ def object_exists(key: str) -> bool:
     return True
 
 
-def presigned_url(key: str) -> str:
+def presigned_url(key: str, expires_in: int | None = None, filename: str | None = None) -> str:
     """A download link for one object, signed for the endpoint callers reach."""
+    params = {"Bucket": settings.ARCHIVE_BUCKET, "Key": key}
+    if filename:
+        params["ResponseContentDisposition"] = f'attachment; filename="{filename}"'
     return _client("s3", settings.ARCHIVE_PUBLIC_ENDPOINT_URL).generate_presigned_url(
-        "get_object",
-        Params={"Bucket": settings.ARCHIVE_BUCKET, "Key": key},
-        ExpiresIn=settings.ARCHIVE_CREDENTIAL_TTL_S,
+        "get_object", Params=params, ExpiresIn=expires_in or settings.ARCHIVE_CREDENTIAL_TTL_S
     )
 
 
@@ -179,26 +181,6 @@ def read_object(key: str) -> bytes:
 def zip_entry_name(day: date, hour: int) -> str:
     """One folder per day, and a name that says which hour, unlike the stored data.parquet."""
     return f"{day:%Y-%m-%d}/{day:%Y-%m-%d}_{hour:02d}.parquet"
-
-
-class _Sink(io.RawIOBase):
-    """Where zipfile writes; drained after every entry so the zip streams. Not seekable,
-    so zipfile writes data descriptors instead of going back to fix up headers."""
-
-    def __init__(self):
-        self._chunks: list[bytes] = []
-
-    def writable(self) -> bool:
-        return True
-
-    def write(self, data) -> int:
-        self._chunks.append(bytes(data))
-        return len(data)
-
-    def drain(self) -> bytes:
-        out = b"".join(self._chunks)
-        self._chunks.clear()
-        return out
 
 
 def _read_in_order(keys: list[str]):
@@ -213,15 +195,15 @@ def _read_in_order(keys: list[str]):
             yield pending.popleft().result()
 
 
-def zip_partitions(mesh_id, partitions: list[dict]):
-    """The partitions as one zip, streamed entry by entry. Parquet is already compressed,
-    so entries are stored as they are. Objects are read a few at a time, in order."""
+def zip_partitions(mesh_id, partitions: list[dict], out, progress=None) -> None:
+    """Write the partitions to `out` as one zip, a folder per day. Parquet is already
+    compressed, so entries are stored as they are. Objects are read a few at a time, in
+    order, and `progress` is called with each partition once it is written."""
     keys = [partition_key(mesh_id, p["dt"], p["hour"]) for p in partitions]
-    sink = _Sink()
-    with zipfile.ZipFile(sink, "w", zipfile.ZIP_STORED) as zf:
+    with zipfile.ZipFile(out, "w", zipfile.ZIP_STORED) as zf:
         for partition, data in zip(partitions, _read_in_order(keys)):
             modified = partition["last_modified"].astimezone(timezone.utc)
             info = zipfile.ZipInfo(zip_entry_name(partition["dt"], partition["hour"]), date_time=modified.timetuple()[:6])
             zf.writestr(info, data)
-            yield sink.drain()
-    yield sink.drain()
+            if progress:
+                progress(partition)

@@ -45,7 +45,7 @@ services:
   # the writer's or EMQX's secrets.
   readings_api:
     <<: *api-image
-    environment:
+    environment: &readings-env
       DJANGO_SETTINGS_MODULE: api_project.settings.prod
       APP_ROLE: readings
       READINGS__SECRET_KEY: ${READINGS__SECRET_KEY:-}
@@ -74,16 +74,12 @@ services:
       READINGS__ARCHIVE_STS: ${READINGS__ARCHIVE_STS:-}
       READINGS__ARCHIVE_ROLE_ARN: ${READINGS__ARCHIVE_ROLE_ARN:-}
       READINGS__ARCHIVE_CREDENTIAL_TTL_S: ${READINGS__ARCHIVE_CREDENTIAL_TTL_S:-}
+      READINGS__EXPORT_MAX_DAYS: ${READINGS__EXPORT_MAX_DAYS:-}
     restart: unless-stopped
     mem_limit: 512m
     container_name: readings-api
-    # Threaded workers: an archive zip streams for as long as the client takes, which a
-    # sync worker would neither survive (--timeout) nor share with other requests.
     command:
-      [
-        "gunicorn", "api_project.wsgi:application", "--bind", "0.0.0.0:${READINGS__PORT}",
-        "--workers", "2", "--worker-class", "gthread", "--threads", "8",
-      ]
+      ["gunicorn", "api_project.wsgi:application", "--bind", "0.0.0.0:${READINGS__PORT}", "--workers", "2"]
     depends_on:
       influxdb:
         condition: service_healthy
@@ -103,6 +99,32 @@ services:
       timeout: 10s
       retries: 5
       start_period: 15s
+
+  # Builds exports into the archive bucket. Readings' environment, plus the one credential
+  # that writes under exports/ and the mail settings to tell owners when one is ready.
+  readings_export_worker:
+    <<: *api-image
+    profiles: ["full"]
+    environment:
+      <<: *readings-env
+      READINGS__EXPORT_WORKER: "true"
+      READINGS__EXPORT_ACCESS_KEY: ${READINGS__EXPORT_ACCESS_KEY:-}
+      READINGS__EXPORT_SECRET_KEY: ${READINGS__EXPORT_SECRET_KEY:-}
+      REGISTRY__EMAIL_BACKEND: ${REGISTRY__EMAIL_BACKEND:-}
+      REGISTRY__EMAIL_HOST: ${REGISTRY__EMAIL_HOST:-}
+      REGISTRY__EMAIL_PORT: ${REGISTRY__EMAIL_PORT:-}
+      REGISTRY__EMAIL_HOST_USER: ${REGISTRY__EMAIL_HOST_USER:-}
+      REGISTRY__EMAIL_HOST_PASSWORD: ${REGISTRY__EMAIL_HOST_PASSWORD:-}
+      REGISTRY__EMAIL_USE_TLS: ${REGISTRY__EMAIL_USE_TLS:-}
+      REGISTRY__EMAIL_USE_SSL: ${REGISTRY__EMAIL_USE_SSL:-}
+      REGISTRY__DEFAULT_FROM_EMAIL: ${REGISTRY__DEFAULT_FROM_EMAIL:-}
+    restart: unless-stopped
+    mem_limit: 384m
+    container_name: readings-export-worker
+    depends_on:
+      readings_api:
+        condition: service_healthy
+    command: ["python", "manage.py", "run_export_worker"]
 
   registry_device_consumer:
     <<: *registry-role

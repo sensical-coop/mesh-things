@@ -167,8 +167,8 @@ services:
       timeout: 5s
       retries: 5
 
-  # One-shot: the bucket, and the read-only identity readings issues archive
-  # credentials from. Idempotent, so it runs on every `up`.
+  # One-shot: the bucket, the read-only identity readings issues archive credentials
+  # from, and the identity that writes exports. Idempotent, so it runs on every `up`.
   minio_init:
     profiles: ["minio"]
     mem_limit: 128m
@@ -201,6 +201,33 @@ services:
         mc admin user add local "$$READINGS__ARCHIVE_ACCESS_KEY" "$$READINGS__ARCHIVE_SECRET_KEY"
         mc admin policy attach local archive-reader --user "$$READINGS__ARCHIVE_ACCESS_KEY" 2>/dev/null || true
         echo "Archive reader ready."
+        # Exports are kept a day; the job that lists them expires at the same time.
+        # The image has no grep, so the existing rules are matched with case.
+        rules=$$(mc ilm rule ls --json "local/$$S3_WRITER__BUCKET" 2>/dev/null || true)
+        case "$$rules" in
+          *'"Prefix":"exports/"'*) ;;
+          *) mc ilm rule add --prefix "exports/" --expire-days 1 "local/$$S3_WRITER__BUCKET" ;;
+        esac
+        if [ -z "$$READINGS__EXPORT_ACCESS_KEY" ]; then
+          echo "READINGS__EXPORT_ACCESS_KEY not set - no export writer created."
+          exit 0
+        fi
+        cat > /tmp/export-writer.json <<EOF
+        {
+          "Version": "2012-10-17",
+          "Statement": [
+            {
+              "Effect": "Allow",
+              "Action": ["s3:PutObject", "s3:AbortMultipartUpload", "s3:ListMultipartUploadParts"],
+              "Resource": ["arn:aws:s3:::$$S3_WRITER__BUCKET/exports/*"]
+            }
+          ]
+        }
+        EOF
+        mc admin policy create local export-writer /tmp/export-writer.json
+        mc admin user add local "$$READINGS__EXPORT_ACCESS_KEY" "$$READINGS__EXPORT_SECRET_KEY"
+        mc admin policy attach local export-writer --user "$$READINGS__EXPORT_ACCESS_KEY" 2>/dev/null || true
+        echo "Export writer ready."
 
 volumes:
   minio_data:

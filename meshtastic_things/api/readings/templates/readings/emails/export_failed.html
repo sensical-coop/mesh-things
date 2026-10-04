@@ -1,0 +1,10 @@
+{% extends "emails/base.html" %}
+{% block content %}
+{% include "emails/_chip.html" with label="Failed" tone="error" %}
+{% include "emails/_title.html" with title="Your export failed" %}
+<p style="margin:0;font-size:15px;line-height:22px;color:#1b1c1f;">Hi {{ name }}, the {{ job.format|upper }} export you requested could not be built.</p>
+<p style="margin:16px 0 0 0;padding:12px 14px;border-radius:8px;background:#f6f6f6;font-size:14px;line-height:20px;color:#1b1c1f;">{{ job.error }}</p>
+{% include "emails/_details.html" %}
+<p style="margin:0;font-size:13px;line-height:20px;color:#6d6d6d;">You can request it again now.</p>
+{% endblock %}
+{% block footer %}You are receiving this because you requested an export on Mesh Things.{% endblock %}

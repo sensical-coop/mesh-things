@@ -45,6 +45,10 @@ services:
       DJANGO_SETTINGS_MODULE: api_project.settings.dev
       READINGS__CORS_ORIGINS: ${READINGS__CORS_ORIGINS:-},http://localhost:${REGISTRY__PORT}
 
+  readings_export_worker:
+    environment:
+      DJANGO_SETTINGS_MODULE: api_project.settings.dev
+
   # Admin UIs and datastores
   influxdb:
     ports: !override

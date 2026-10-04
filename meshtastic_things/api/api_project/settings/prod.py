@@ -5,7 +5,7 @@ from django.core.exceptions import ImproperlyConfigured
 from common.env import env_bool, env_int, env_list, env_str
 
 from .base import *  # noqa: F401,F403
-from .base import ENV_PREFIX, INTERNAL_HOST, IS_READINGS, REST_FRAMEWORK
+from .base import ENV_PREFIX, INTERNAL_HOST, IS_READINGS, REST_FRAMEWORK, SENDS_EMAIL
 
 # DEBUG in production leaks settings and stack traces.
 DEBUG = False
@@ -28,7 +28,7 @@ if "*" in ALLOWED_HOSTS:
     )
 ALLOWED_HOSTS.append(INTERNAL_HOST)
 
-if not IS_READINGS:
+if SENDS_EMAIL:
     EMAIL_BACKEND = env_str("REGISTRY__EMAIL_BACKEND", "django.core.mail.backends.console.EmailBackend")
     EMAIL_HOST = env_str("REGISTRY__EMAIL_HOST", "")
     EMAIL_PORT = env_int("REGISTRY__EMAIL_PORT", 587)
@@ -46,6 +46,7 @@ if not IS_READINGS:
             f"REGISTRY__EMAIL_HOST={EMAIL_HOST!r} is not a production mail server. "
         )
 
+if not IS_READINGS:
     EMAIL_VERIFICATION_TTL_HOURS = env_int("REGISTRY__EMAIL_VERIFICATION_TTL_HOURS", 24)
     PASSWORD_RESET_TTL_HOURS = env_int("REGISTRY__PASSWORD_RESET_TTL_HOURS", 1)
 

@@ -1,10 +1,10 @@
 import os
-from datetime import datetime, timedelta, timezone
+from datetime import date, datetime, timedelta, timezone
 
 from influxdb_client import InfluxDBClient
 
 from common.alarm_counts import ALARM_COUNTS, ALARM_COUNTS_BUCKET, ALARMS_BUCKET, ALARMS_RETENTION_DAYS
-from common.channels import ALARMS
+from common.channels import ALARMS, QUALITY
 from common.detectors import RANGE
 from common.influx_query import bound_to_datetime
 
@@ -20,6 +20,9 @@ from common.influx_query import (  # noqa: F401
 # writer/point_builders.py stores these on every point. Ignore them
 METADATA_FIELDS = ("packet_id", "timestamp_quality")
 _METADATA_FIELDS_FLUX = "[" + ", ".join(f'"{f}"' for f in METADATA_FIELDS) + "]"
+# Tags an export leaves out: the mesh is the export's own, node_id has its own column,
+# and the rest say how a point arrived rather than what it measured.
+_NON_EXPORTED_COLUMNS = {"result", "table", "mesh_id", "node_id", "channel_id", "gateway_id", "postprocessing_id"}
 
 
 class InfluxQueryClient:
@@ -201,6 +204,52 @@ from(bucket: "{self.bucket}")
             "alarms_by_detector": alarms_by_detector,
             "channels": channels,
         }
+
+    def day_rows(self, mesh_id: str, day: date, node_ids: list[int] | None = None) -> dict[str, dict]:
+        """A mesh's readings for one UTC day, per measurement, as rows of one time and
+        node with a column per field and per descriptive tag (a node's name, for example).
+
+        Points sharing a time and node, such as one packet heard by several gateways,
+        share a row. `quality` is left out, and alarms live in another bucket.
+
+        Returns:
+            {measurement: {"tags": [...], "fields": [...], "rows": [...]}}, rows sorted
+            by time then node, each a dict with `time`, `node_id` and its values.
+        """
+        mesh_id = _validate_mesh_id(mesh_id)
+        start = datetime(day.year, day.month, day.day, tzinfo=timezone.utc)
+        stop = start + timedelta(days=1)
+        filters = f'r.mesh_id == "{mesh_id}" and r._measurement != "{QUALITY}"'
+        if node_ids:
+            filters += " and (" + " or ".join(f'r.node_id == "{int(n)}"' for n in node_ids) + ")"
+
+        flux = f'''
+from(bucket: "{self.bucket}")
+  |> range(start: {start:%Y-%m-%dT%H:%M:%SZ}, stop: {stop:%Y-%m-%dT%H:%M:%SZ})
+  |> filter(fn: (r) => {filters})
+  |> filter(fn: (r) => not contains(value: r._field, set: {_METADATA_FIELDS_FLUX}))
+'''
+        found: dict[str, dict] = {}
+        for record in self._query_api.query_stream(flux):
+            values = record.values
+            node_id = values.get("node_id")
+            table = found.setdefault(record.get_measurement(), {"tags": set(), "fields": set(), "rows": {}})
+            row = table["rows"].setdefault((record.get_time(), node_id), {})
+            row[record.get_field()] = record.get_value()
+            table["fields"].add(record.get_field())
+            for tag, value in values.items():
+                if tag.startswith("_") or tag in _NON_EXPORTED_COLUMNS or value is None:
+                    continue
+                row[tag] = value
+                table["tags"].add(tag)
+
+        out = {}
+        for measurement, table in found.items():
+            rows = []
+            for (time, node_id), row in sorted(table["rows"].items(), key=lambda item: (item[0][0], int(item[0][1]))):
+                rows.append({"time": time.isoformat().replace("+00:00", "Z"), "node_id": int(node_id), **row})
+            out[measurement] = {"tags": sorted(table["tags"]), "fields": sorted(table["fields"]), "rows": rows}
+        return out
 
     @staticmethod
     def _records_to_channel_quality(tables) -> list[dict]:

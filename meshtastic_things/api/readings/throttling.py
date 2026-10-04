@@ -16,3 +16,9 @@ class ArchiveCredentialsThrottle(OwnerRateThrottle):
     """Credentials are issued far less often than readings are read."""
 
     scope = "archive-credentials"
+
+
+class ExportsThrottle(OwnerRateThrottle):
+    """Requesting an export queues work for the export worker."""
+
+    scope = "exports"
