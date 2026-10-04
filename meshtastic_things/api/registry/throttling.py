@@ -1,12 +1,21 @@
 from rest_framework.throttling import AnonRateThrottle, BaseThrottle, SimpleRateThrottle
 
 
+class SuperuserExempt:
+    """Superusers are never throttled. Mixed in ahead of a throttle class."""
+
+    def allow_request(self, request, view):
+        if getattr(getattr(request, "user", None), "is_superuser", False):
+            return True
+        return super().allow_request(request, view)
+
+
 def client_ident(request) -> str:
     """Return the caller's address, read through the reverse proxy like every DRF throttle."""
     return BaseThrottle().get_ident(request)
 
 
-class OwnerRateThrottle(SimpleRateThrottle):
+class OwnerRateThrottle(SuperuserExempt, SimpleRateThrottle):
     """Throttles authenticated traffic per Owner"""
 
     scope = "owner"
@@ -17,7 +26,7 @@ class OwnerRateThrottle(SimpleRateThrottle):
         return self.cache_format % {"scope": self.scope, "ident": request.user.id}
 
 
-class AnonReadThrottle(AnonRateThrottle):
+class AnonReadThrottle(SuperuserExempt, AnonRateThrottle):
     """Any anonymous GET request"""
 
     scope = "anon"
@@ -28,7 +37,7 @@ class AnonReadThrottle(AnonRateThrottle):
         return super().get_cache_key(request, view)
 
 
-class SignupThrottle(SimpleRateThrottle):
+class SignupThrottle(SuperuserExempt, SimpleRateThrottle):
     """POST /owners"""
 
     scope = "owner-signup"
@@ -39,7 +48,7 @@ class SignupThrottle(SimpleRateThrottle):
         return self.cache_format % {"scope": self.scope, "ident": self.get_ident(request)}
 
 
-class LoginThrottle(SimpleRateThrottle):
+class LoginThrottle(SuperuserExempt, SimpleRateThrottle):
     """POST /owners/login, per source IP and email"""
 
     scope = "login"
@@ -52,7 +61,7 @@ class LoginThrottle(SimpleRateThrottle):
         return self.cache_format % {"scope": self.scope, "ident": ident}
 
 
-class ResendVerificationThrottle(SimpleRateThrottle):
+class ResendVerificationThrottle(SuperuserExempt, SimpleRateThrottle):
     """POST /owners/me/resend-verification"""
 
     scope = "resend-verification"
@@ -65,7 +74,7 @@ class ResendVerificationThrottle(SimpleRateThrottle):
         return self.cache_format % {"scope": self.scope, "ident": request.user.id}
 
 
-class OperatorRequestThrottle(SimpleRateThrottle):
+class OperatorRequestThrottle(SuperuserExempt, SimpleRateThrottle):
     """POST /owners/me/operator-request"""
 
     scope = "operator-request"
@@ -78,7 +87,7 @@ class OperatorRequestThrottle(SimpleRateThrottle):
         return self.cache_format % {"scope": self.scope, "ident": request.user.id}
 
 
-class RequestPasswordResetThrottle(SimpleRateThrottle):
+class RequestPasswordResetThrottle(SuperuserExempt, SimpleRateThrottle):
     """POST /owners/request-password-reset"""
 
     scope = "request-password-reset"

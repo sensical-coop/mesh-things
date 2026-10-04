@@ -27,10 +27,12 @@ class OwnerBearerAuthentication(authentication.BaseAuthentication):
             return None
 
         cache_key = f"registry:failed-auth:{client_ident(request)}"
+        owner = Owner.objects.filter(api_key_hash=hash_api_key(token)).first()
+        # Superusers are never throttled, even from an address that sent bad keys.
+        if owner is not None and owner.is_superuser:
+            return (owner, None)
         if (cache.get(cache_key) or 0) >= FAILED_AUTH_RATE_LIMIT:
             raise exceptions.Throttled(detail="Too many invalid credentials, slow down")
-
-        owner = Owner.objects.filter(api_key_hash=hash_api_key(token)).first()
         if owner is None:
             self._record_failed_attempt(cache_key)
             raise exceptions.AuthenticationFailed("Invalid API key")
