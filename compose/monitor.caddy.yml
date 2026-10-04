@@ -1,0 +1,27 @@
+# Serves the server monitor's status API on MONITOR__DOMAIN over HTTPS, with a
+# certificate from Let's Encrypt. Use instead of compose/monitor.public.yml:
+#   docker compose -f compose/monitor.yml -f compose/monitor.caddy.yml \
+#     --env-file monitor.env --profile monitor up -d --build
+services:
+  monitor_caddy:
+    profiles: ["monitor"]
+    image: caddy:2-alpine
+    mem_limit: 64m
+    container_name: monitor-caddy
+    restart: unless-stopped
+    environment:
+      # Only the domain; the rest of monitor.env stays out of this container.
+      MONITOR__DOMAIN: ${MONITOR__DOMAIN:?set MONITOR__DOMAIN in monitor.env}
+    ports:
+      - "80:80"
+      - "443:443"
+    volumes:
+      - ../monitor.Caddyfile:/etc/caddy/Caddyfile:ro
+      - monitor_caddy_data:/data
+      - monitor_caddy_config:/config
+    depends_on:
+      - server_monitor
+
+volumes:
+  monitor_caddy_data:
+  monitor_caddy_config:

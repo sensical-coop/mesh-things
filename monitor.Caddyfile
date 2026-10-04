@@ -1,0 +1,4 @@
+# Server monitor's status API on its own domain (compose/monitor.caddy.yml).
+{$MONITOR__DOMAIN} {
+	reverse_proxy server-monitor:8095
+}
