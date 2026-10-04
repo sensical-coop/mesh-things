@@ -1,7 +1,9 @@
 from rest_framework.throttling import SimpleRateThrottle
 
+from registry.throttling import SuperuserExempt
 
-class OwnerRateThrottle(SimpleRateThrottle):
+
+class OwnerRateThrottle(SuperuserExempt, SimpleRateThrottle):
     """Throttles authenticated traffic per Owner"""
 
     scope = "owner"

@@ -57,6 +57,17 @@ class OwnerPublicSerializer(serializers.ModelSerializer):
         read_only_fields = fields
 
 
+class EmailStatusSerializer(serializers.Serializer):
+    ok = serializers.BooleanField(help_text="False while the most recent email failed to send.")
+    last_sent_at = serializers.DateTimeField(allow_null=True)
+    last_sent_template = serializers.CharField(allow_null=True, help_text="Which email, such as `quality_alarm`.")
+    last_failed_at = serializers.DateTimeField(allow_null=True)
+    last_failed_template = serializers.CharField(allow_null=True)
+    last_error = serializers.CharField(allow_null=True)
+    sent_24h = serializers.IntegerField()
+    failed_24h = serializers.IntegerField()
+
+
 class MetricsResponseSerializer(serializers.Serializer):
     devices = serializers.IntegerField()
     owners = serializers.IntegerField()

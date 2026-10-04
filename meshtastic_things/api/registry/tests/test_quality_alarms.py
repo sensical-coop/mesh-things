@@ -93,12 +93,12 @@ class QualityAlarmRoutingTests(RegistryTestCase):
 
         self.assertIn("may still deliver this period later", mail.outbox[0].body)
 
-    def test_condition_email_says_it_will_not_repeat(self):
+    def test_condition_email_says_when_it_will_be_reminded(self):
         _, mesh = self._device()
 
         AlarmCommand._handle(_alarm(mesh["id"], 1, detector="range"))
 
-        self.assertIn("not get another email about this condition", mail.outbox[0].body)
+        self.assertIn("a reminder like this every 24 hours", mail.outbox[0].body)
 
     def test_completeness_email_names_the_channel(self):
         _, mesh = self._device()
@@ -128,10 +128,12 @@ class QualityAlarmRoutingTests(RegistryTestCase):
 
     def test_a_repeat_never_opens_a_window_or_emails(self):
         _, mesh = self._device()
+        AlarmCommand._handle(_alarm(mesh["id"], 1), now=NOW)
+        AlarmCommand.flush_due_windows(now=NOW + ALARM_EMAIL_COOLDOWN_SECONDS)
 
-        AlarmCommand._handle(_alarm(mesh["id"], 1, repeat=True), now=NOW)
+        AlarmCommand._handle(_alarm(mesh["id"], 1, repeat=True), now=NOW + ALARM_EMAIL_COOLDOWN_SECONDS + 1)
 
-        self.assertEqual(len(mail.outbox), 0)
+        self.assertEqual(len(mail.outbox), 1)
         self.assertIsNone(redis_client().zscore(WINDOWS_KEY, _window(mesh)))
 
     def test_a_repeat_is_counted_in_an_open_window(self):
@@ -150,20 +152,68 @@ class QualityAlarmRoutingTests(RegistryTestCase):
     def test_a_repeat_is_not_emailed_even_without_a_cooldown(self):
         owner, mesh = self._device()
         Owner.objects.filter(pk=owner["id"]).update(alarm_email_cooldown_seconds=0)
+        AlarmCommand._handle(_alarm(mesh["id"], 1), now=NOW)
 
-        AlarmCommand._handle(_alarm(mesh["id"], 1, repeat=True), now=NOW)
+        AlarmCommand._handle(_alarm(mesh["id"], 1, repeat=True), now=NOW + 60)
 
-        self.assertEqual(len(mail.outbox), 0)
+        self.assertEqual(len(mail.outbox), 1)
 
-    def test_hourly_repeats_of_one_condition_email_once(self):
+    def test_hourly_repeats_of_one_condition_email_once_a_day(self):
         _, mesh = self._device()
         AlarmCommand._handle(_alarm(mesh["id"], 1), now=NOW)
-        for hour in range(1, 25):
-            now = NOW + hour * ALARM_EMAIL_COOLDOWN_SECONDS + 1
+        for hour in range(1, 49):
+            now = NOW + hour * 3600 + 1
             AlarmCommand.flush_due_windows(now=now)
             AlarmCommand._handle(_alarm(mesh["id"], 1, repeat=True), now=now)
 
-        self.assertEqual(len(mail.outbox), 1)
+        self.assertEqual(len(mail.outbox), 3)
+        self.assertNotIn("Still active", mail.outbox[0].subject)
+        reminder = mail.outbox[1]
+        self.assertIn("Still active: Sensor value is flat", reminder.subject)
+        self.assertIn("still triggered on one of your devices, since 2026-09-06 12:00 UTC", reminder.body)
+        self.assertIn("a reminder like this every 24 hours", reminder.body)
+        [(html, _)] = reminder.alternatives
+        self.assertIn("Still active", html)
+        self.assertIn("Ongoing since", html)
+        self.assertIn("a reminder like this every 24 hours", html)
+        self.assertNotIn("one summary of them", reminder.body)
+
+    def test_a_condition_that_predates_its_record_is_reminded_at_once(self):
+        _, mesh = self._device()
+
+        AlarmCommand._handle(_alarm(mesh["id"], 1, repeat=True), now=NOW)
+        AlarmCommand._handle(_alarm(mesh["id"], 1, repeat=True), now=NOW + 3600)
+
+        self.assertEqual([m.subject.startswith("[Mesh Things] Still active") for m in mail.outbox], [True])
+
+    def test_reminders_can_be_switched_off(self):
+        _, mesh = self._device()
+
+        with patch("registry.management.commands.consume_quality_alarms.ALARM_REMINDER_SECONDS", 0):
+            AlarmCommand._handle(_alarm(mesh["id"], 1, repeat=True), now=NOW)
+
+        self.assertEqual(len(mail.outbox), 0)
+
+    def test_a_summary_counts_as_emailing_its_conditions(self):
+        _, mesh = self._device()
+        AlarmCommand._handle(_alarm(mesh["id"], 1, detector="range"), now=NOW)
+        AlarmCommand._handle(_alarm(mesh["id"], 1, repeat=True), now=NOW + 10)
+        closed = NOW + ALARM_EMAIL_COOLDOWN_SECONDS
+        AlarmCommand.flush_due_windows(now=closed)
+
+        AlarmCommand._handle(_alarm(mesh["id"], 1, repeat=True), now=closed + 23 * 3600)
+        AlarmCommand._handle(_alarm(mesh["id"], 1, repeat=True), now=closed + 24 * 3600)
+
+        self.assertEqual(len(mail.outbox), 3)
+        self.assertIn("Alarm summary", mail.outbox[1].subject)
+        self.assertIn("Still active", mail.outbox[2].subject)
+
+    def test_an_absence_is_never_reminded(self):
+        _, mesh = self._device()
+
+        AlarmCommand._handle(_alarm(mesh["id"], 1, detector="absence", channel=None, repeat=True), now=NOW)
+
+        self.assertEqual(len(mail.outbox), 0)
 
     def test_absence_is_emailed_at_most_once_a_day_per_device(self):
         _, mesh = self._device()

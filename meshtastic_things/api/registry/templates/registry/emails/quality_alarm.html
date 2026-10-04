@@ -1,13 +1,13 @@
 {% extends "emails/base.html" %}
 {% block content %}
-{% include "emails/_chip.html" with label="Alarm" tone="warning" %}
+{% if reminder %}{% include "emails/_chip.html" with label="Still active" tone="warning" %}{% else %}{% include "emails/_chip.html" with label="Alarm" tone="warning" %}{% endif %}
 <h1 style="margin:12px 0 8px 0;font-size:22px;line-height:28px;font-weight:600;letter-spacing:-0.02em;color:#1b1c1f;">{{ detector_summary }}</h1>
-<p style="margin:0;font-size:15px;line-height:22px;color:#1b1c1f;">Hi {{ name }}, a data-quality check was triggered on {{ device_label }}.</p>
+<p style="margin:0;font-size:15px;line-height:22px;color:#1b1c1f;">Hi {{ name }}, {% if reminder %}a data-quality check is still triggered on {{ device_label }}{% if since %}, since {{ since }}{% endif %}.{% else %}a data-quality check was triggered on {{ device_label }}.{% endif %}</p>
 {% if message %}<p style="margin:16px 0 0 0;padding:12px 14px;border-radius:8px;background:#f6f6f6;font-size:14px;line-height:20px;color:#1b1c1f;">{{ message }}</p>{% endif %}
 {% include "emails/_details.html" %}
 {% if detector == "absence" %}<p style="margin:0 0 12px 0;font-size:14px;line-height:21px;color:#1b1c1f;">The device has not published data recently. If it batches readings, it may still deliver this period later, so check its data completeness.</p>{% endif %}
-{% if detector == "flat_value" or detector == "range" %}<p style="margin:0 0 12px 0;font-size:14px;line-height:21px;color:#1b1c1f;">You will not get another email about this condition while it lasts.</p>{% endif %}
+{% if detector == "flat_value" or detector == "range" %}<p style="margin:0 0 12px 0;font-size:14px;line-height:21px;color:#1b1c1f;">{% if reminder_hours %}While it lasts, you will get a reminder like this every {{ reminder_hours|floatformat:"-1" }} hours.{% else %}You will not get another email about this condition while it lasts.{% endif %}</p>{% endif %}
 {% include "emails/_button.html" with href=device_link label="Open device" %}
-{% if cooldown_hours %}<p style="margin:20px 0 0 0;font-size:13px;line-height:20px;color:#6d6d6d;">Further alarms on this device, from any check, will not be emailed one by one. If any occur in the next {{ cooldown_hours|floatformat:"-1" }} hour{{ cooldown_hours|pluralize }}, you will get one summary of them when that period ends.</p>{% endif %}
+{% if cooldown_hours and not reminder %}<p style="margin:20px 0 0 0;font-size:13px;line-height:20px;color:#6d6d6d;">Further alarms on this device, from any check, will not be emailed one by one. If any occur in the next {{ cooldown_hours|floatformat:"-1" }} hour{{ cooldown_hours|pluralize }}, you will get one summary of them when that period ends.</p>{% endif %}
 {% endblock %}
 {% block footer %}You are receiving this because data-quality checks are switched on for this device on Mesh Things.{% endblock %}

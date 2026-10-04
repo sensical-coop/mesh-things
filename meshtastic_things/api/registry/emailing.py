@@ -6,6 +6,7 @@ from django.core.mail import EmailMultiAlternatives
 from django.template import TemplateDoesNotExist
 from django.template.loader import render_to_string
 
+from . import email_health
 from .models import OperatorRequestStatus, Owner
 
 log = structlog.get_logger()
@@ -33,7 +34,7 @@ def console_url(*segments) -> str:
 
 def send_templated_email(to_email: str, subject: str, template_name: str, context: dict) -> None:
     """Render registry/emails/<template_name>.txt and send it, with an HTML part when
-    registry/emails/<template_name>.html exists."""
+    registry/emails/<template_name>.html exists, recording whether the mail server took it."""
     context = {"subject": subject, **context}
     message = EmailMultiAlternatives(
         subject, render_to_string(f"registry/emails/{template_name}.txt", context), settings.DEFAULT_FROM_EMAIL, [to_email]
@@ -44,7 +45,12 @@ def send_templated_email(to_email: str, subject: str, template_name: str, contex
         html = None
     if html:
         message.attach_alternative(html, "text/html")
-    message.send(fail_silently=False)
+    try:
+        message.send(fail_silently=False)
+    except Exception as e:
+        email_health.record_failed(template_name, e)
+        raise
+    email_health.record_sent(template_name)
 
 
 def send_verification_email(owner, token: str) -> None:
