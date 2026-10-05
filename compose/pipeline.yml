@@ -171,7 +171,7 @@ services:
   # from, and the identity that writes exports. Idempotent, so it runs on every `up`.
   minio_init:
     profiles: ["minio"]
-    mem_limit: 128m
+    mem_limit: 256m
     container_name: minio-init
     image: quay.io/minio/minio:RELEASE.2025-09-07T16-13-09Z
     restart: "no"
