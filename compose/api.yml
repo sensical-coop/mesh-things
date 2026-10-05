@@ -19,7 +19,7 @@ x-registry-role: &registry-role
 services:
   registry_api:
     <<: *registry-role
-    mem_limit: 512m
+    mem_limit: 768m
     container_name: registry-api
     depends_on:
       kafka:
