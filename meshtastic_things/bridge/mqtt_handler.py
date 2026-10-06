@@ -12,7 +12,7 @@ from paho.mqtt.properties import Properties
 
 from bridge import discovery
 from common import sources
-from pipeline.config_state import replay_consumer, replay_to_end
+from pipeline.config_state import CatchUpCheck, replay_consumer, replay_to_end
 from tools.healthcheck import HealthState, KakfaProducerHealth, MQTTHealth
 from tools.env import get_bool_env
 
@@ -142,6 +142,9 @@ class MQTTHandler(object):
         log.info('Loaded gateway sources', records=read, gateways=len(self.gateway_sources))
 
     async def follow_gateway_sources(self):
+        """Apply gateway changes as they arrive. Raising FellBehind ends the bridge, so it
+        is restarted rather than dropping newly registered gateways on stale state."""
+        catch_up = CatchUpCheck(self.config_consumer)
         while True:
             messages = await asyncio.to_thread(self.config_consumer.poll, timeout_ms=1000)
             for records in messages.values():
@@ -150,6 +153,7 @@ class MQTTHandler(object):
                         self._apply_gateway_record(record)
                     except Exception as e:
                         log.exception("Bad config message skipped", exc_info=e)
+            await asyncio.to_thread(catch_up.check)
 
     def is_registered(self, topic: str) -> bool:
         return topic.split('/')[-1] in self.gateway_sources

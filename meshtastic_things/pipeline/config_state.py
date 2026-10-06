@@ -3,6 +3,7 @@
 The twin of decode_job.py's broadcast state.
 """
 import json
+import time
 
 import structlog
 from kafka import KafkaConsumer, TopicPartition
@@ -71,3 +72,46 @@ def replay_to_end(consumer: KafkaConsumer, on_record) -> int:
         # kafka-python's position() blocks until a poll has resolved the seek to the beginning.
         if all(consumer.position(tp) >= end[tp] for tp in partitions):
             return read
+
+
+class FellBehind(RuntimeError):
+    """A replay consumer stopped keeping up with its topic."""
+
+
+class CatchUpCheck:
+    """Raises FellBehind when a replay consumer stops following its topic.
+
+    Checked at most every `interval_s`. Staying behind the end, or failing to read it,
+    for longer than `max_behind_s` raises, as does a position past the end, which means
+    the topic was recreated. The process is then expected to exit and replay afresh.
+    """
+
+    def __init__(self, consumer: KafkaConsumer, interval_s: float = 30, max_behind_s: float = 120, clock=time.monotonic):
+        self.consumer = consumer
+        self.interval_s = interval_s
+        self.max_behind_s = max_behind_s
+        self._clock = clock
+        self._last_check = clock()
+        self._behind_since: float | None = None
+
+    def check(self) -> None:
+        now = self._clock()
+        if now - self._last_check < self.interval_s:
+            return
+        self._last_check = now
+        partitions = list(self.consumer.assignment())
+        try:
+            end = self.consumer.end_offsets(partitions)
+            position = {tp: self.consumer.position(tp) for tp in partitions}
+        except Exception as e:
+            log.warning("Could not read the config topic's end", error=str(e))
+        else:
+            if any(position[tp] > end[tp] for tp in partitions):
+                raise FellBehind(f"Position {position} is past the end {end}; the topic was recreated")
+            if all(position[tp] >= end[tp] for tp in partitions):
+                self._behind_since = None
+                return
+        if self._behind_since is None:
+            self._behind_since = now
+        elif now - self._behind_since > self.max_behind_s:
+            raise FellBehind(f"Not caught up with the config topic for {now - self._behind_since:.0f}s")
