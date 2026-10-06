@@ -74,11 +74,12 @@ def test_an_own_topic_overlapping_the_sources_is_refused(own_topic):
         subscription_filters(own_topic)
 
 
-def test_an_unregistered_gateway_passes_either_way():
+def test_an_unregistered_gateway_is_not_ingested_either_way():
     handler = _handler()
 
-    assert handler.accepts(REMOTE)
-    assert handler.accepts(f"{sources.local_topic_prefix(SOURCE)}/{REMOTE}")
+    assert not handler.is_registered(REMOTE)
+    assert not handler.accepts(REMOTE)
+    assert not handler.accepts(f"{sources.local_topic_prefix(SOURCE)}/{REMOTE}")
 
 
 def test_a_gateway_on_the_own_topic_is_refused_through_a_source():
