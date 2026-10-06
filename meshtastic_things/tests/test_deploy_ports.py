@@ -653,3 +653,20 @@ def test_the_s3_api_is_proxied_without_basic_auth():
     assert block, "no Caddy site block for CADDY_S3_ADDRESS"
     assert "reverse_proxy minio:9000" in block.group(1)
     assert "admin_ui" not in block.group(1) and "basic_auth" not in block.group(1)
+
+
+# Services that create or read EMQX bridges and sink users, or the topics they republish on.
+EMQX_SERVICES = sorted(
+    name for name in BASE_SERVICES if name.startswith(("registry_", "mqtt_kafka_bridge")) or name == "sink_dispatcher"
+)
+
+
+def test_the_emqx_services_are_found():
+    assert "registry_data_lifecycle" in EMQX_SERVICES and "mqtt_kafka_bridge" in EMQX_SERVICES
+
+
+@pytest.mark.parametrize("service", EMQX_SERVICES)
+def test_dev_keeps_every_emqx_service_out_of_the_production_namespace(service):
+    """The dev stack shares production's broker, so a service left on the default namespace edits production's bridges."""
+    env = (DEV_SERVICES.get(service) or {}).get("environment") or {}
+    assert env.get("MQTT_CONNECTORS__NAMESPACE") == "mt-sources-dev", service
