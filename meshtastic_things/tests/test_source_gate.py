@@ -48,6 +48,23 @@ def test_the_namespace_separates_dev_from_production(monkeypatch):
     assert sources.source_id_from_resource_name(sources.resource_name(SOURCE)) == SOURCE
 
 
+def test_a_channel_resource_name_still_names_its_source():
+    name = sources.channel_resource_name(SOURCE, "LongFast")
+
+    assert name.startswith(f"{sources.resource_name(SOURCE)}-")
+    assert sources.source_id_from_resource_name(name) == SOURCE
+    assert name != sources.channel_resource_name(SOURCE, "longfast")
+
+
+def test_a_name_that_is_not_a_source_id_is_ignored():
+    assert sources.source_id_from_resource_name(f"{sources.resource_name(SOURCE)}x") is None
+    assert sources.source_id_from_resource_name("mt-sources-src-short") is None
+
+
+def test_a_channel_is_subscribed_beneath_the_root():
+    assert sources.channel_filter("msh/EU_868", "LongFast") == "msh/EU_868/2/e/LongFast/+"
+
+
 @pytest.mark.parametrize("topic", ["#", "+/#", "+/x/#", "mt-sources/#", "mt-sources-sinks/a/#", "mt-sources-dev/s/#"])
 def test_a_source_filter_reaching_republished_or_sinked_topics_is_reserved(topic):
     assert sources.reaches_reserved_topics(topic)

@@ -2,6 +2,7 @@ from django.core.management.base import BaseCommand, CommandError
 
 from registry.emqx_client import get_emqx_client
 from registry.models import Source
+from registry.source_bridges import sync_source
 
 
 class Command(BaseCommand):
@@ -35,7 +36,7 @@ class Command(BaseCommand):
 
         # Re-applying every source also repairs ones whose EMQX config drifted.
         for source in wanted.values():
-            client.apply_source(source)
+            sync_source(source)
         for source_id in orphaned:
             client.delete_source(source_id)
         self.stdout.write(f"Applied {len(wanted)} source(s), removed {len(orphaned)} orphan(s)")

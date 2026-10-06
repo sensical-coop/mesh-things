@@ -190,7 +190,7 @@ class OperatorRequest(models.Model):
 
 
 class Source(models.Model):
-    """A remote MQTT broker and topic filter, bridged into this instance by EMQX."""
+    """A remote MQTT broker and topic root, bridged into this instance by EMQX."""
 
     id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
     label = models.CharField(max_length=255, null=True, blank=True)
@@ -200,7 +200,8 @@ class Source(models.Model):
     username = models.CharField(max_length=255, null=True, blank=True)
     # Write-only over the API, never returned to anyone.
     password = models.TextField(null=True, blank=True)
-    topic = models.CharField(max_length=1024)
+    # Literal remote topic prefix, such as msh/EU_868; channels are subscribed beneath it.
+    root = models.CharField(max_length=1024)
     qos = models.PositiveSmallIntegerField(default=1)
     created_by = models.ForeignKey(
         Owner, on_delete=models.SET_NULL, null=True, blank=True, related_name="created_sources"
@@ -214,7 +215,7 @@ class Source(models.Model):
         db_table = "sources"
 
     def __str__(self) -> str:
-        return self.label or f"{self.server} {self.topic}"
+        return self.label or f"{self.server} {self.root}"
 
     @property
     def current_terms_acceptance(self):

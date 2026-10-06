@@ -1,13 +1,17 @@
 """Naming shared by the registry, which creates EMQX bridges for sources, and the
 MQTT bridge, which reads what they republish.
 
-A source's traffic is republished locally under `{namespace}/{source_id}/{remote topic}`,
-so the last segment is still the gateway id the Kafka key is taken from. Sinks share the
-namespace (common/sinks.py).
+A source subscribes to `{root}/2/e/{channel}/+` once per channel its meshes use, and its
+traffic is republished locally under `{namespace}/{source_id}/{remote topic}`, so the last
+segment is still the gateway id the Kafka key is taken from. Sinks share the namespace
+(common/sinks.py).
 """
+import hashlib
+
 from common.env import env_str
 
 DEFAULT_NAMESPACE = "mt-sources"
+UUID_LENGTH = 36
 
 
 def namespace() -> str:
@@ -25,13 +29,29 @@ def local_topic_filter() -> str:
 
 
 def resource_name(source_id: str) -> str:
-    """The name of a source's EMQX connector, source and rule."""
+    """The name of a source's EMQX connector, and the prefix of its per-channel resources."""
     return f"{namespace()}-src-{source_id}"
+
+
+def channel_resource_name(source_id: str, channel: str) -> str:
+    """The name of the EMQX source and rule of one channel. Hashed, since EMQX names allow fewer characters than channels."""
+    return f"{resource_name(source_id)}-{hashlib.sha1(channel.encode()).hexdigest()[:12]}"
+
+
+def channel_filter(root: str, channel: str) -> str:
+    """The remote topic filter of one channel's encrypted feed."""
+    return f"{root}/2/e/{channel}/+"
 
 
 def source_id_from_resource_name(name: str) -> str | None:
     prefix = f"{namespace()}-src-"
-    return name[len(prefix):] if name.startswith(prefix) else None
+    if not name.startswith(prefix):
+        return None
+    rest = name[len(prefix):]
+    # A fixed-length UUID, followed by a channel suffix on per-channel resources.
+    if len(rest) == UUID_LENGTH or (len(rest) > UUID_LENGTH and rest[UUID_LENGTH] == "-"):
+        return rest[:UUID_LENGTH]
+    return None
 
 
 def source_id_from_topic(topic: str) -> str | None:

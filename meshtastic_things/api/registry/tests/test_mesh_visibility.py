@@ -218,7 +218,7 @@ class AnonymousViewerTests(MeshVisibilityTestCase):
         self.assertEqual(self.client.get("/meshes?owned=true").json(), [])
 
     def test_the_source_filter_does_not_reveal_a_viewers_source(self):
-        source = Source.objects.create(label="remote", server="mqtt.example.org", topic="msh/#")
+        source = Source.objects.create(label="remote", server="mqtt.example.org", root="msh/EU_868")
         Mesh.objects.filter(pk=self.mesh["id"]).update(source=source)
 
         self.assertEqual(self.client.get(f"/meshes?source_id={source.id}").json(), [])

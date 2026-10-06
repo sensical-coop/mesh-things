@@ -44,7 +44,7 @@ class TermsOffTests(RegistryTestCase):
             "/meshes", {"channel_id": "B", "psk_b64": "AQ==", "terms_version": "meshes-2020-01"}, format="json", **headers
         )
         source = self.client.post(
-            "/sources", {"server": "r.example.org:1883", "topic": "msh/EU/#"}, format="json", **headers
+            "/sources", {"server": "r.example.org:1883", "root": "msh/EU"}, format="json", **headers
         )
 
         self.assertEqual(

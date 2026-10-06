@@ -309,6 +309,17 @@ class DetectorSerializer(serializers.Serializer):
 
 _PSK_HELP = "Base64-encoded channel PSK"
 _SOURCE_HELP = "Source the mesh's traffic is bridged from. Null for this instance's own broker."
+_CHANNEL_HELP = "Channel name, as it appears in the gateways' MQTT topics."
+_ROOT_HELP = "Remote topic root, the part before /2/e, for example msh/EU_868. One subscription per channel is made beneath it."
+
+
+def _validate_channel_id(value: str) -> str:
+    """A channel is one level of an MQTT topic, and sources subscribe to it by name."""
+    if any(c in value for c in "/+#"):
+        raise serializers.ValidationError("A channel name cannot contain /, + or #.")
+    return value
+
+
 _DISCOVER_HELP = (
     "Register gateways whose packets decode with this mesh's channel and PSK automatically. "
     "Only an operator may switch it on for a mesh with a default or blank PSK."
@@ -441,10 +452,14 @@ class MeshSerializer(_MeshTermsMixin, serializers.ModelSerializer):
         extra_kwargs = {
             "is_public": {"required": False},
             "discover_gateways": {"required": False, "help_text": _DISCOVER_HELP},
+            "channel_id": {"help_text": _CHANNEL_HELP},
         }
 
     def validate_source_id(self, value):
         return _validate_visible_source(self, value)
+
+    def validate_channel_id(self, value):
+        return _validate_channel_id(value)
 
     def validate(self, attrs):
         _check_discovery_psk(self, attrs)
@@ -485,7 +500,7 @@ class MeshUpdateSerializer(_MeshTermsMixin, serializers.ModelSerializer):
         ]
         extra_kwargs = {
             "label": {"required": False},
-            "channel_id": {"required": False},
+            "channel_id": {"required": False, "help_text": _CHANNEL_HELP},
             "is_public": {"required": False},
             "discover_gateways": {"required": False, "help_text": _DISCOVER_HELP},
         }
@@ -500,6 +515,9 @@ class MeshUpdateSerializer(_MeshTermsMixin, serializers.ModelSerializer):
 
     def validate_source_id(self, value):
         return _validate_visible_source(self, value)
+
+    def validate_channel_id(self, value):
+        return _validate_channel_id(value)
 
 
 def _own_broker_hosts() -> list[str]:
@@ -533,7 +551,7 @@ class SourceSerializer(serializers.ModelSerializer):
             "ssl",
             "username",
             "password",
-            "topic",
+            "root",
             "qos",
             "created_by_id",
             "created_at",
@@ -542,7 +560,7 @@ class SourceSerializer(serializers.ModelSerializer):
         read_only_fields = ["id", "created_by_id", "created_at", "updated_at"]
         extra_kwargs = {
             "server": {"help_text": "Remote broker as host:port."},
-            "topic": {"help_text": "Remote topic filter, for example msh/EU_868/2/e/MyChannel/#."},
+            "root": {"help_text": _ROOT_HELP},
         }
 
     def validate_password(self, value):
@@ -576,18 +594,22 @@ class SourceSerializer(serializers.ModelSerializer):
             raise serializers.ValidationError("This broker is not allowed as a source.")
         return value
 
-    def validate_topic(self, value):
-        value = value.strip()
-        if not value or value.startswith("$"):
-            raise serializers.ValidationError("Must be a plain topic filter; $share and $SYS topics are not accepted.")
-        if value in settings.SOURCES_BLOCKED_TOPICS:
-            raise serializers.ValidationError("This topic filter is not allowed as a source.")
-        if source_names.reaches_reserved_topics(value):
+    def validate_root(self, value):
+        value = value.strip().rstrip("/")
+        levels = value.split("/")
+        if value.startswith("$") or any(c in value for c in "+#") or "" in levels:
+            raise serializers.ValidationError("Must be a literal topic prefix, without wildcards or empty levels.")
+        if len(levels) < 2:
+            raise serializers.ValidationError("Must have at least two levels, such as msh/EU_868.")
+        if "2" in levels:
+            raise serializers.ValidationError("Give only the part before /2/e, such as msh/EU_868.")
+        if any(fnmatch(value, pattern) for pattern in settings.SOURCES_BLOCKED_ROOTS):
+            raise serializers.ValidationError("This topic root is not allowed as a source.")
+        if source_names.reaches_reserved_topics(f"{value}/#"):
             raise serializers.ValidationError(
-                "This topic filter could match the topics sources are republished and sinks are sent on."
+                "This topic root could reach the topics sources are republished and sinks are sent on."
             )
         return value
-
 
 
 class SourceCreateSerializer(_TermsAcceptanceInputMixin, SourceSerializer):
@@ -610,7 +632,7 @@ class SourceUpdateSerializer(SourceSerializer):
     class Meta(SourceSerializer.Meta):
         extra_kwargs = {
             "server": {"help_text": "Remote broker as host:port.", "required": False},
-            "topic": {"help_text": "Remote topic filter, for example msh/EU_868/2/e/MyChannel/#.", "required": False},
+            "root": {"help_text": _ROOT_HELP, "required": False},
         }
 
 

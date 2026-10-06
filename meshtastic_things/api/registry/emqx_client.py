@@ -1,9 +1,10 @@
 """Client for the EMQX REST API, which realises each Source as a bridge and each Sink
 as a user its consumer connects with.
 
-A source is three EMQX resources sharing one name: an MQTT connector to the remote
-broker, an MQTT source subscribing to the remote topic, and a rule republishing
-what arrives under the source's local topic prefix.
+A source is an MQTT connector to the remote broker, plus, per channel its meshes use, an
+MQTT source subscribing to that channel's feed and a rule republishing what arrives under
+the source's local topic prefix. The rule passes only the channel's registered gateways,
+or every gateway while one of its meshes discovers gateways.
 
 A sink is a user in the built-in authentication database and that user's rules in the
 built-in authorization database, which must be checked before any other source.
@@ -30,6 +31,26 @@ LIST_LIMIT = 10000
 POOL_SIZE = 1
 
 
+def _rule_sql(name: str, gateways: list[str] | None) -> str:
+    sql = f'SELECT * FROM "$bridges/mqtt:{name}"'
+    if gateways is None:
+        return sql
+    # Gateway ids are `!` and hex digits, so they need no escaping.
+    return f"{sql} WHERE regex_match(topic, '/({'|'.join(sorted(gateways))})$')"
+
+
+def _republish(source_id: str) -> dict:
+    return {
+        "function": "republish",
+        "args": {
+            "topic": f"{sources.local_topic_prefix(source_id)}/${{topic}}",
+            "qos": "${qos}",
+            "payload": "${payload}",
+            "retain": False,
+        },
+    }
+
+
 class EmqxClient:
     def __init__(self, base_url: str, api_key: str, api_secret: str, timeout: float = 10.0):
         self.base_url = base_url.rstrip("/")
@@ -52,9 +73,17 @@ class EmqxClient:
         if resp.status_code != 404:
             resp.raise_for_status()
 
-    def apply_source(self, source) -> None:
-        """Create or update a source's connector, source and rule, in dependency order."""
-        name = sources.resource_name(str(source.id))
+    def apply_source(self, source, channels: dict[str, list[str] | None]) -> None:
+        """Bring a source's EMQX resources in line with the channels it should bridge.
+
+        Args:
+            source: The source, with its server, credentials, root and QoS.
+            channels: Each channel to subscribe to, mapped to the gateway ids its rule
+                passes (never empty), or to None to pass every gateway. Resources of any
+                other channel are removed.
+        """
+        source_id = str(source.id)
+        name = sources.resource_name(source_id)
         connector = {
             "server": source.server,
             "proto_ver": "v5",
@@ -67,49 +96,55 @@ class EmqxClient:
         if source.password:
             connector["password"] = source.password
         self._upsert(f"/connectors/mqtt:{name}", "/connectors", connector, {"type": "mqtt", "name": name})
-        bridge = {"connector": name, "parameters": {"topic": source.topic, "qos": source.qos}}
-        self._upsert(f"/sources/mqtt:{name}", "/sources", bridge, {"type": "mqtt", "name": name})
-        rule = {
-            "sql": f'SELECT * FROM "$bridges/mqtt:{name}"',
-            "actions": [
-                {
-                    "function": "republish",
-                    "args": {
-                        "topic": f"{sources.local_topic_prefix(str(source.id))}/${{topic}}",
-                        "qos": "${qos}",
-                        "payload": "${payload}",
-                        "retain": False,
-                    },
-                }
-            ],
-        }
-        self._upsert(f"/rules/{name}", "/rules", rule, {"id": name})
-        log.info("Applied EMQX source", source_id=str(source.id))
+        wanted = set()
+        for channel, gateways in sorted(channels.items()):
+            channel_name = sources.channel_resource_name(source_id, channel)
+            wanted.add(channel_name)
+            bridge = {"connector": name, "parameters": {"topic": sources.channel_filter(source.root, channel), "qos": source.qos}}
+            self._upsert(f"/sources/mqtt:{channel_name}", "/sources", bridge, {"type": "mqtt", "name": channel_name})
+            rule = {"sql": _rule_sql(channel_name, gateways), "actions": [_republish(source_id)]}
+            self._upsert(f"/rules/{channel_name}", "/rules", rule, {"id": channel_name})
+        for stale in self._channel_resource_names(source_id) - wanted:
+            self._delete(f"/rules/{stale}")
+            self._delete(f"/sources/mqtt:{stale}")
+        log.info("Applied EMQX source", source_id=source_id, channels=len(channels))
 
     def delete_source(self, source_id: str) -> None:
         """Remove a source's resources. EMQX refuses to delete one still referenced, hence the order."""
-        name = sources.resource_name(source_id)
-        self._delete(f"/rules/{name}")
-        self._delete(f"/sources/mqtt:{name}")
-        self._delete(f"/connectors/mqtt:{name}")
+        for name in self._channel_resource_names(source_id):
+            self._delete(f"/rules/{name}")
+            self._delete(f"/sources/mqtt:{name}")
+        self._delete(f"/connectors/mqtt:{sources.resource_name(source_id)}")
         log.info("Deleted EMQX source", source_id=source_id)
 
+    def _channel_resource_names(self, source_id: str) -> set[str]:
+        """Names of the source's EMQX sources and rules, whatever channel they were made for."""
+        names = set()
+        resp = self._request("GET", "/sources")
+        resp.raise_for_status()
+        names.update(item.get("name", "") for item in resp.json())
+        resp = self._request("GET", f"/rules?limit={LIST_LIMIT}")
+        resp.raise_for_status()
+        names.update(item.get("id", "") for item in resp.json().get("data", []))
+        return {name for name in names if sources.source_id_from_resource_name(name) == source_id}
+
     def source_status(self, source_id: str) -> str:
-        """EMQX's connection status for the source, such as `connected` or `disconnected`."""
-        resp = self._request("GET", f"/sources/mqtt:{sources.resource_name(source_id)}")
+        """EMQX's connection status for the source's connector, such as `connected` or `disconnected`."""
+        resp = self._request("GET", f"/connectors/mqtt:{sources.resource_name(source_id)}")
         if resp.status_code == 404:
             return "missing"
         resp.raise_for_status()
         return resp.json().get("status", "unknown")
 
     def source_statuses(self) -> dict[str, str]:
-        """Connection status of every source in this instance's namespace, in one call."""
-        resp = self._request("GET", "/sources")
+        """Connection status of every source's connector in this instance's namespace, in one call."""
+        resp = self._request("GET", "/connectors")
         resp.raise_for_status()
         statuses = {}
         for item in resp.json():
-            source_id = sources.source_id_from_resource_name(item.get("name", ""))
-            if source_id:
+            name = item.get("name", "")
+            source_id = sources.source_id_from_resource_name(name)
+            if source_id and name == sources.resource_name(source_id):
                 statuses[source_id] = item.get("status", "unknown")
         return statuses
 
@@ -128,7 +163,7 @@ class EmqxClient:
             resp = self._request("GET", path)
             resp.raise_for_status()
             found.update(item.get(id_field, "") for item in resp.json())
-        resp = self._request("GET", "/rules?limit=10000")
+        resp = self._request("GET", f"/rules?limit={LIST_LIMIT}")
         resp.raise_for_status()
         found.update(item.get("id", "") for item in resp.json().get("data", []))
         return {sid for sid in map(sources.source_id_from_resource_name, found) if sid}

@@ -38,6 +38,7 @@ from . import email_health, postprocessing, sinks
 from .emqx_client import get_emqx_client
 from .exceptions import BadGateway, Conflict
 from .gateways import save_gateway
+from .source_bridges import sync_source, sync_sources, sync_sources_after_commit
 from .kafka_publisher import get_publisher, publish_gateway_state
 from common.algorithms import REGISTRY, discover
 from common.env import env_str
@@ -676,6 +677,7 @@ def _delete_owner_cascading(owner: Owner) -> None:
         ).delete()
         for mesh_id, source_id in meshes:
             schedule_mesh_deletion(mesh_id, DataDeletionReason.MESH_DELETED, source_id=source_id)
+        sync_sources_after_commit(*(source_id for _, source_id in meshes))
     postprocessing.unpublish_devices(processed)
     try:
         # Harmless if lost: the dispatcher sends nothing for a sink it no longer has.
@@ -955,7 +957,8 @@ class MeshListCreateView(APIView):
         """Create a mesh owned by the caller.
 
         A mesh on the default broker needs its mesh terms accepted, which are
-        recorded with it. A mesh on a source is covered by the source's terms.
+        recorded with it. A mesh on a source is covered by the source's terms, and
+        is not created if the source's bridge cannot be updated.
 
         Args:
             source_id: Source the mesh's traffic is bridged from, which must be
@@ -977,6 +980,10 @@ class MeshListCreateView(APIView):
             mesh = serializer.save(owner=request.user)
             if serializer.accept_terms_locale:
                 record_acceptance(TermsKind.MESH, request.user, serializer.accept_terms_locale, mesh=mesh)
+            try:
+                sync_sources(mesh.source_id)
+            except Exception as e:
+                raise BadGateway(f"Failed to update the source's bridge, mesh NOT created: {e}")
         return Response(
             MeshSerializer(mesh, context=_viewer_context(request)).data, status=status.HTTP_201_CREATED
         )
@@ -1001,6 +1008,7 @@ def _publish_mesh_gateways(mesh: Mesh, previous: dict) -> None:
             for field, value in previous.items():
                 setattr(mesh, field, value)
             mesh.save(update_fields=list(previous))
+            sync_sources_after_commit(previous["source_id"], mesh.source_id)
             for done in published:
                 try:
                     publish_gateway_state(publisher, done, mesh)
@@ -1008,6 +1016,19 @@ def _publish_mesh_gateways(mesh: Mesh, previous: dict) -> None:
                     log.error("gateway_restore_failed", device_id=str(done.id), error=str(restore_error))
             raise BadGateway(f"Failed to publish mesh change, rolled back: {e}")
         published.append(gateway)
+
+
+def _sync_mesh_sources(mesh: Mesh, previous: dict) -> None:
+    """Apply the bridges of the mesh's previous and current source, restoring `previous` on failure."""
+    try:
+        sync_sources(previous["source_id"], mesh.source_id)
+    except Exception as e:
+        new_source_id = mesh.source_id
+        for field, value in previous.items():
+            setattr(mesh, field, value)
+        mesh.save(update_fields=list(previous))
+        sync_sources_after_commit(previous["source_id"], new_source_id)
+        raise BadGateway(f"Failed to update the source's bridge, rolled back: {e}")
 
 
 class MeshDetailView(APIView):
@@ -1031,7 +1052,9 @@ class MeshDetailView(APIView):
         Changing the channel_id, the pre-shared key or the source redistributes
         them to every allowed gateway on the mesh, and the whole update is
         rolled back if that fails. Once the source changes, the mesh's gateways
-        are only accepted through the new one.
+        are only accepted through the new one. On a source, changing the channel,
+        the source or `discover_gateways` also updates which channels and gateways
+        the source bridges, and the update is rolled back if that fails.
 
         Args:
             source_id: Source to bridge the mesh's traffic from, which must be one
@@ -1057,7 +1080,12 @@ class MeshDetailView(APIView):
         _require_mesh_ownership(mesh, request.user)
         redistributed = ("channel_id", "psk_b64", "source_id")
         changing_gateway_state = any(field in request.data for field in redistributed)
-        previous = {"channel_id": mesh.channel_id, "psk_b64": mesh.psk_b64, "source_id": mesh.source_id}
+        previous = {
+            "channel_id": mesh.channel_id,
+            "psk_b64": mesh.psk_b64,
+            "source_id": mesh.source_id,
+            "discover_gateways": mesh.discover_gateways,
+        }
         serializer = MeshUpdateSerializer(mesh, data=request.data, partial=True, context={"owner": request.user})
         serializer.is_valid(raise_exception=True)
         updated = serializer.save()
@@ -1067,6 +1095,8 @@ class MeshDetailView(APIView):
             # Accepting the terms resumes a mesh paused by an earlier lapse, so its gateways
             # are published as registered below.
             updated.paused_at = None
+        if any(field in request.data for field in ("channel_id", "source_id", "discover_gateways")):
+            _sync_mesh_sources(updated, previous)
         if changing_gateway_state:
             _publish_mesh_gateways(updated, previous)
         if accept_locale:
@@ -1125,6 +1155,7 @@ class MeshDetailView(APIView):
             schedule_mesh_deletion(
                 mesh_id, DataDeletionReason.MESH_DELETED, source_id=source_id, requested_by=request.user
             )
+            sync_sources_after_commit(source_id)
         postprocessing.unpublish_devices(processed)
         return Response(status=status.HTTP_204_NO_CONTENT)
 
@@ -1222,9 +1253,10 @@ class DeviceListCreateView(APIView):
     def post(self, request):
         """Register a device on a mesh the caller owns.
 
-        Registering a gateway authorizes its traffic to be decoded. A
-        device can only move to another mesh once its current registration has
-        been disallowed.
+        Registering a gateway authorizes its traffic to be decoded. On a mesh
+        bridged from a source, the gateway is also added to the source's bridge,
+        and nothing is registered if that fails. A device can only move to
+        another mesh once its current registration has been disallowed.
         """
         input_serializer = DeviceCreateSerializer(data=request.data)
         input_serializer.is_valid(raise_exception=True)
@@ -1289,8 +1321,9 @@ class DeviceDetailView(APIView):
         instances that run the archive. Turning it off stops storing new readings
         and keeps those already stored.
 
-        Nothing in the request is applied if the pipeline cannot be told about a
-        change to `archive_enabled` or `is_allowed`.
+        Nothing in the request is applied if the pipeline, or for a gateway on a
+        source that source's bridge, cannot be told about a change to
+        `archive_enabled` or `is_allowed`.
         """
         device = _get_device_or_404(device_uuid)
         _require_mesh_ownership(device.mesh, request.user)
@@ -1339,6 +1372,7 @@ class DeviceDetailView(APIView):
                     publisher = get_publisher()
                     try:
                         if updated.is_gateway:
+                            sync_sources(updated.mesh.source_id)
                             if updated.is_allowed:
                                 publish_gateway_state(publisher, updated, updated.mesh)
                             else:
@@ -1411,6 +1445,8 @@ class DeviceDetailView(APIView):
             raise BadGateway(f"Failed to publish device deletion, device NOT removed: {e}")
         had_postprocessing = device.postprocessings.exists()
         device.delete()
+        if device.is_gateway:
+            sync_sources_after_commit(device.mesh.source_id)
         if had_postprocessing:
             postprocessing.unpublish_devices([device])
         return Response(status=status.HTTP_204_NO_CONTENT)
@@ -2311,7 +2347,7 @@ def _source_read_data(source: Source) -> dict:
     return SourceReadSerializer(source).data
 
 
-_SOURCE_FIELDS = ("label", "server", "ssl", "username", "password", "topic", "qos")
+_SOURCE_FIELDS = ("label", "server", "ssl", "username", "password", "root", "qos")
 
 
 def _require_terms_enforced() -> None:
@@ -2478,7 +2514,7 @@ class SourceListCreateView(APIView):
 
     @extend_schema(request=SourceCreateSerializer, responses={201: SourceReadSerializer})
     def post(self, request):
-        """Create a source and start bridging its remote topic into this instance. Operators only.
+        """Create a source and connect this instance to its remote broker. Operators only.
 
         The caller must first accept the current source terms. The acceptance
         is recorded with the source. Nothing is kept if the bridge cannot be set
@@ -2490,9 +2526,10 @@ class SourceListCreateView(APIView):
             ssl: Connect to the remote broker over TLS. Defaults to true.
             username: Remote broker username, if it requires one.
             password: Remote broker password. Accepted but never returned.
-            topic: Remote topic filter, for example `msh/EU_868/2/e/MyChannel/#`.
-                `$share`, `$SYS` and filters the server has blocked, such as `#`,
-                are rejected.
+            root: Remote topic root, the part of the gateways' topics before
+                `/2/e`, for example `msh/EU_868`. Must be literal, without
+                wildcards. Each channel used by the source's meshes is subscribed
+                beneath it once one of them has a gateway or discovery on.
             qos: 0 or 1. Defaults to 1.
             terms_version: The `version` of the source terms the caller accepted.
                 Required, and refused once the terms have changed, unless the
@@ -2507,7 +2544,7 @@ class SourceListCreateView(APIView):
         try:
             with transaction.atomic():
                 source = serializer.save(created_by=request.user)
-                get_emqx_client().apply_source(source)
+                sync_source(source)
                 # Only once the bridge exists, since a failed bridge rolls the source back.
                 record_acceptance(TermsKind.SOURCE, request.user, locale, source=source)
         except Exception as e:
@@ -2545,15 +2582,14 @@ class SourceDetailView(APIView):
         updated = serializer.save()
         if updated.paused_at is not None:
             return Response(_source_read_data(updated))
-        client = get_emqx_client()
         try:
-            client.apply_source(updated)
+            sync_source(updated)
         except Exception as e:
             for field, value in previous.items():
                 setattr(updated, field, value)
             updated.save(update_fields=list(previous))
             try:
-                client.apply_source(updated)
+                sync_source(updated)
             except Exception as restore_error:
                 log.error("source_restore_failed", source_id=str(updated.id), error=str(restore_error))
             raise BadGateway(f"Failed to reconfigure the bridge, rolled back: {e}")

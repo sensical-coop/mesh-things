@@ -209,10 +209,10 @@ if COOKIE_DOMAIN:
 # Prefix under PUBLIC_FRONTEND_URL of the frontend's authenticated pages (meshes, devices, ...).
 FRONTEND_CONSOLE_PATH = env_str("REGISTRY__FRONTEND_CONSOLE_PATH", "/console")
 
-# Remote brokers and topic filters a source may not use. Brokers are host or host:port
-# patterns (`*` wildcards); topics must match exactly. An empty topic list still blocks `#`.
+# Remote brokers and topic roots a source may not use, as patterns with `*` wildcards.
+# Brokers are host or host:port; roots are literal prefixes such as msh/EU_868.
 SOURCES_BLOCKED_BROKERS = env_list("REGISTRY__SOURCES_BLOCKED_BROKERS")
-SOURCES_BLOCKED_TOPICS = env_list("REGISTRY__SOURCES_BLOCKED_TOPICS", ["#"])
+SOURCES_BLOCKED_ROOTS = env_list("REGISTRY__SOURCES_BLOCKED_ROOTS")
 # Loopback, link-local and bare hostnames are always refused. Private network addresses
 # are too unless this is set, e.g. for a self-hosted instance bridging a broker on its LAN.
 SOURCES_ALLOW_PRIVATE_BROKERS = env_bool("REGISTRY__SOURCES_ALLOW_PRIVATE_BROKERS", False)

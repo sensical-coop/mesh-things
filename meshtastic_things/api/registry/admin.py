@@ -58,10 +58,10 @@ class MeshAdmin(admin.ModelAdmin):
 class SourceAdmin(admin.ModelAdmin):
     """Read-only: a source is only consistent with its EMQX bridge when written through the API."""
 
-    list_display = ("label", "server", "topic", "qos", "ssl", "created_by", "created_at")
+    list_display = ("label", "server", "root", "qos", "ssl", "created_by", "created_at")
     list_select_related = ("created_by",)
     exclude = ("password",)
-    search_fields = ("label", "server", "topic")
+    search_fields = ("label", "server", "root")
 
     def has_add_permission(self, request):
         return False
