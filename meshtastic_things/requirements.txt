@@ -1,4 +1,4 @@
-kafka-python==2.2.15
+kafka-python==2.2.20
 cryptography
 aiomqtt
 meshtastic==2.7.11
