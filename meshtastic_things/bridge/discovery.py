@@ -74,8 +74,8 @@ class DiscoveryPacer:
     @classmethod
     def from_env(cls) -> "DiscoveryPacer":
         return cls(
-            immediate_gateways=int(os.environ.get("MQTT_BRIDGE__DISCOVERY__IMMEDIATE_GATEWAYS", 5)),
-            delay_seconds=float(os.environ.get("MQTT_BRIDGE__DISCOVERY__DELAY_SECONDS", 900)),
+            immediate_gateways=int(os.environ.get("MQTT_BRIDGE__DISCOVERY__IMMEDIATE_GATEWAYS", 50)),
+            delay_seconds=float(os.environ.get("MQTT_BRIDGE__DISCOVERY__DELAY_SECONDS", 60)),
         )
 
     def should_send(self, key: tuple) -> bool:
