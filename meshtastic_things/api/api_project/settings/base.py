@@ -226,6 +226,9 @@ SINKS_MAX_QUEUED = env_int("REGISTRY__SINKS_MAX_QUEUED", 10000)
 # or when a sink with meshes or devices attached has had nobody connected for this long.
 # Checked on each lifecycle pass. 0 turns either alert off.
 SOURCE_ALERT_HOURS = env_int("REGISTRY__SOURCE_ALERT_HOURS", 2)
+# Superusers, and an operator who opted in, are emailed once when a source averages more
+# messages per second than this between two lifecycle passes. 0 turns it off.
+SOURCE_RATE_ALERT_MSGS_PER_S = env_int("REGISTRY__SOURCE_RATE_ALERT_MSGS_PER_S", 20)
 SINK_ALERT_HOURS = env_int("REGISTRY__SINK_ALERT_HOURS", 24)
 
 # Off for an instance run by its own mesh owner, where there is no second party to

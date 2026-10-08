@@ -182,6 +182,31 @@ def send_source_disconnected_email(source, status: str, since) -> None:
     )
 
 
+def send_source_busy_email(source, rate: float) -> None:
+    """Tell every active superuser, and the source's operator if they opted in, that a source is busy."""
+    recipients = {
+        owner.email: owner for owner in Owner.objects.filter(is_superuser=True, is_active=True).exclude(email="")
+    }
+    operator = source.created_by
+    if operator and operator.is_active and operator.email and operator.source_rate_alerts_enabled:
+        recipients.setdefault(operator.email, operator)
+    for owner in recipients.values():
+        send_templated_email(
+            to_email=owner.email,
+            subject="A source is unusually busy - Mesh Things",
+            template_name="source_busy",
+            context={
+                "name": owner.name,
+                "source": str(source),
+                "server": source.server,
+                "topic": source.topic,
+                "rate": f"{rate:.1f}",
+                "threshold": settings.SOURCE_RATE_ALERT_MSGS_PER_S,
+                "source_link": console_url("sources", source.id),
+            },
+        )
+
+
 def send_sink_unused_email(sink, since) -> None:
     operator = sink.created_by
     send_templated_email(

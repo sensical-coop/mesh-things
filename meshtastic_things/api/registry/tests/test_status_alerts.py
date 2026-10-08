@@ -155,3 +155,71 @@ class SinkAlertTests(StatusAlertTestCase):
 
         self.assertEqual(status_alerts.check_sinks(NOW), 0)
         self.fake_emqx.sink_connections.assert_not_called()
+
+
+@override_settings(SOURCE_RATE_ALERT_MSGS_PER_S=20)
+class SourceRateAlertTests(StatusAlertTestCase):
+    def setUp(self):
+        super().setUp()
+        self.source = self.create_source(self.operator)
+        self.admin = self.create_owner(name="Admin", email="rate-admin@example.com")
+        self.promote_to_superuser(self.admin)
+        self.counts = {"value": 0}
+        self.fake_emqx.source_message_count.side_effect = lambda source_id: self.counts["value"]
+        mail.outbox.clear()
+
+    def _pass(self, at, count):
+        self.counts["value"] = count
+        return status_alerts.check_source_rates(at)
+
+    def test_a_busy_hour_emails_superusers_once(self):
+        self.assertEqual(self._pass(NOW, 0), 0)
+
+        self.assertEqual(self._pass(NOW + timedelta(hours=1), 3600 * 25), 1)
+        self.assertEqual(self._pass(NOW + timedelta(hours=2), 3600 * 50), 0)
+
+        self.assertEqual([m.to for m in mail.outbox], [["rate-admin@example.com"]])
+        self.assertIn("25.0 messages", mail.outbox[0].body)
+
+    def test_a_quiet_source_sends_nothing(self):
+        self._pass(NOW, 0)
+
+        self.assertEqual(self._pass(NOW + timedelta(hours=1), 3600 * 5), 0)
+        self.assertEqual(mail.outbox, [])
+
+    def test_calming_down_starts_a_new_episode(self):
+        self._pass(NOW, 0)
+        self._pass(NOW + timedelta(hours=1), 3600 * 25)
+        self._pass(NOW + timedelta(hours=2), 3600 * 26)
+
+        self.assertEqual(self._pass(NOW + timedelta(hours=3), 3600 * 51), 1)
+        self.assertEqual(len(mail.outbox), 2)
+
+    def test_the_operator_is_emailed_only_when_opted_in(self):
+        resp = self.client.put(
+            "/owners/me", {"source_rate_alerts_enabled": True}, format="json", **self.auth_headers(self.operator)
+        )
+        self.assertEqual(resp.status_code, 200, resp.content)
+        self._pass(NOW, 0)
+
+        self._pass(NOW + timedelta(hours=1), 3600 * 25)
+
+        self.assertCountEqual([m.to[0] for m in mail.outbox], ["rate-admin@example.com", "alerts-op@example.com"])
+
+    def test_the_operator_opt_in_is_off_by_default(self):
+        me = self.client.get("/owners/me", **self.auth_headers(self.operator)).json()
+
+        self.assertFalse(me["source_rate_alerts_enabled"])
+
+    def test_an_emqx_restart_skips_that_pass(self):
+        self._pass(NOW, 3600 * 100)
+
+        self.assertEqual(self._pass(NOW + timedelta(hours=1), 3600 * 30), 0)
+        self.assertEqual(self._pass(NOW + timedelta(hours=2), 3600 * 60), 1)
+
+    @override_settings(SOURCE_RATE_ALERT_MSGS_PER_S=0)
+    def test_zero_turns_it_off(self):
+        self._pass(NOW, 0)
+
+        self.assertEqual(self._pass(NOW + timedelta(hours=1), 3600 * 500), 0)
+        self.fake_emqx.source_message_count.assert_not_called()
