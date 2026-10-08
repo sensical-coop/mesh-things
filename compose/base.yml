@@ -3,6 +3,10 @@ services:
     mem_limit: 1600m
     image: apache/kafka:latest
     env_file: "../.env"
+    environment:
+      # Caps every topic that deletes old data, so a busy source or a loop cannot fill
+      # the disk. Compacted state topics ignore it. Per partition; every topic has one.
+      KAFKA_LOG_RETENTION_BYTES: "1073741824"
     container_name: kafka
     hostname: kafka
     restart: unless-stopped
