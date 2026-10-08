@@ -93,6 +93,16 @@ class EmqxClientTests(SimpleTestCase):
 
         self.assertEqual(self.client.source_status(str(SOURCE_ID)), "missing")
 
+    def test_the_message_count_is_the_rule_matched_counter(self):
+        self.responses[("GET", f"/rules/{NAME}/metrics")] = _response(body={"metrics": {"matched": 1234}})
+
+        self.assertEqual(self.client.source_message_count(str(SOURCE_ID)), 1234)
+
+    def test_a_source_without_a_rule_has_no_count(self):
+        self.responses[("GET", f"/rules/{NAME}/metrics")] = _response(404)
+
+        self.assertIsNone(self.client.source_message_count(str(SOURCE_ID)))
+
     def test_managed_ids_ignore_other_namespaces_and_foreign_resources(self):
         other = uuid.uuid4()
         self.responses[("GET", "/connectors")] = _response(body=[{"name": NAME}, {"name": "someone-elses"}])

@@ -1,0 +1,15 @@
+{% autoescape off %}Hi {{ name }},
+
+The source "{{ source }}" ({{ server }}, {{ topic }}) has averaged {{ rate }} messages
+per second over the last hour, more than the {{ threshold }} this instance is set to
+expect from one source.
+
+Everything it bridges reaches this instance's broker and Kafka, so a source this busy
+costs bandwidth and disk even when few of its gateways are registered. A narrower
+topic filter, such as one channel instead of a whole region, usually fixes it.
+
+{{ source_link }}
+
+You will not be emailed again while it stays this busy. If it calms down and gets
+busy again later, you will be.
+{% endautoescape %}

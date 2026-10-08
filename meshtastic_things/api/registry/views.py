@@ -770,7 +770,7 @@ class OwnerMeView(APIView):
 
     @extend_schema(request=OwnerUpdateSerializer, responses=OwnerReadSerializer)
     def put(self, request):
-        """Update the authenticated owner's name, email address, or alarm email frequency.
+        """Update the authenticated owner's name, email address, or email preferences.
 
         Changing the email address deactivates the account until the new one
         is verified, and sends a fresh verification email.
@@ -782,6 +782,13 @@ class OwnerMeView(APIView):
                 sent as one summary when it ends. Accepts 0 (email on every
                 alarm, no summaries) up to 2592000 (30 days). Leave unset or
                 null to use the server default.
+            status_alerts_enabled: Email me when a source I created stays
+                disconnected, or a sink I created with meshes or devices
+                attached has nobody connected. Defaults to false.
+            source_rate_alerts_enabled: Email me when a source I created
+                averages more messages per second over an hour than this
+                instance allows. Defaults to false. Superusers are always
+                emailed about busy sources.
         """
         email_changing = "email" in request.data and request.data["email"] != request.user.email
         serializer = OwnerUpdateSerializer(request.user, data=request.data, partial=True)

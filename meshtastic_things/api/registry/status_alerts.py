@@ -1,4 +1,5 @@
-"""Tell operators who opted in when a source stays disconnected or a sink has nobody connected.
+"""Tell operators who opted in when a source stays disconnected or a sink has nobody connected,
+and superusers when a source is unusually busy.
 
 Each lifecycle pass reads EMQX's view and keeps, in the cache, when a problem was first
 seen. The operator is emailed once per outage, after it lasts the configured hours, and
@@ -14,7 +15,7 @@ from django.db.models import Exists, OuterRef
 
 from common.env import env_str
 
-from .emailing import send_sink_unused_email, send_source_disconnected_email
+from .emailing import send_sink_unused_email, send_source_busy_email, send_source_disconnected_email
 from .emqx_client import get_emqx_client
 from .models import DeviceSink, MeshSink, Sink, Source
 
@@ -67,6 +68,51 @@ def check_sources(now: datetime) -> int:
         since = _outage_due("source", source.id, status != "connected", now, settings.SOURCE_ALERT_HOURS)
         if since and _alerted("source", source.id, send_source_disconnected_email, source, status, since):
             log.warning("source_disconnected", source_id=str(source.id), status=status, since=since.isoformat())
+            sent += 1
+    return sent
+
+
+def _rate_since_last_pass(source_id, count: int, now: datetime) -> float | None:
+    """Messages per second since the previous pass, or None on the first pass or after EMQX restarted."""
+    key = f"registry:source-count:{source_id}"
+    previous = cache.get(key)
+    cache.set(key, {"count": count, "at": now.isoformat()}, timeout=STATE_SECONDS)
+    if not previous:
+        return None
+    elapsed = (now - datetime.fromisoformat(previous["at"])).total_seconds()
+    # EMQX counts from its own start, so a lower count means it restarted.
+    if elapsed <= 0 or count < previous["count"]:
+        return None
+    return (count - previous["count"]) / elapsed
+
+
+def check_source_rates(now: datetime) -> int:
+    """Email superusers, and the operator if opted in, once while a source averages over SOURCE_RATE_ALERT_MSGS_PER_S.
+
+    The rate is the average between two lifecycle passes, so a short burst does not count.
+    """
+    threshold = settings.SOURCE_RATE_ALERT_MSGS_PER_S
+    if not threshold or not env_str("REGISTRY__EMQX_API_URL"):
+        return 0
+    client = get_emqx_client()
+    sent = 0
+    for source in Source.objects.filter(paused_at__isnull=True).select_related("created_by"):
+        try:
+            count = client.source_message_count(str(source.id))
+        except Exception as e:
+            log.warning("source_rate_unavailable", source_id=str(source.id), error=str(e))
+            continue
+        if count is None:
+            continue
+        rate = _rate_since_last_pass(source.id, count, now)
+        if rate is None:
+            continue
+        busy = rate > threshold
+        if busy:
+            log.warning("source_busy", source_id=str(source.id), msgs_per_s=round(rate, 1))
+        if _outage_due("source-rate", source.id, busy, now, 0) and _alerted(
+            "source-rate", source.id, send_source_busy_email, source, rate
+        ):
             sent += 1
     return sent
 

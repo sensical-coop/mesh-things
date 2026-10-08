@@ -141,6 +141,7 @@ class OwnerReadSerializer(serializers.ModelSerializer):
             "created_at",
             "alarm_email_cooldown_seconds",
             "status_alerts_enabled",
+            "source_rate_alerts_enabled",
             "terms_accepted_version",
         ]
         read_only_fields = fields
@@ -176,13 +177,20 @@ class OwnerUpdateSerializer(serializers.ModelSerializer):
 
     class Meta:
         model = Owner
-        fields = ["name", "email", "alarm_email_cooldown_seconds", "status_alerts_enabled"]
+        fields = ["name", "email", "alarm_email_cooldown_seconds", "status_alerts_enabled", "source_rate_alerts_enabled"]
         extra_kwargs = {
             "name": {"required": False},
             "status_alerts_enabled": {
                 "help_text": (
                     "Email me when a source I created stays disconnected, or a sink I created with "
                     "meshes or devices attached has nobody connected. Off by default."
+                )
+            },
+            "source_rate_alerts_enabled": {
+                "help_text": (
+                    "Email me when a source I created stays busier than this instance allows, in "
+                    "messages per second averaged over an hour. Off by default. Superusers are "
+                    "always emailed."
                 )
             },
         }

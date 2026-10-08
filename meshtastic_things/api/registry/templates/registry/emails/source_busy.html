@@ -1,0 +1,10 @@
+{% extends "emails/base.html" %}
+{% block content %}
+{% include "emails/_chip.html" with label="Busy" tone="warning" %}
+{% include "emails/_title.html" with title="A source is unusually busy" %}
+<p style="margin:12px 0 0 0;font-size:15px;line-height:22px;color:#1b1c1f;">Hi {{ name }}, the source <strong>{{ source }}</strong> (<span style="font-family:'Geist Mono',ui-monospace,Menlo,Consolas,monospace;font-size:14px;">{{ server }}</span>, <span style="font-family:'Geist Mono',ui-monospace,Menlo,Consolas,monospace;font-size:14px;">{{ topic }}</span>) has averaged {{ rate }} messages per second over the last hour, more than the {{ threshold }} this instance is set to expect from one source.</p>
+<p style="margin:12px 0 0 0;font-size:15px;line-height:22px;color:#1b1c1f;">Everything it bridges reaches this instance's broker and Kafka, so a source this busy costs bandwidth and disk even when few of its gateways are registered. A narrower topic filter, such as one channel instead of a whole region, usually fixes it.</p>
+{% include "emails/_button.html" with href=source_link label="Open source" %}
+<p style="margin:20px 0 0 0;font-size:13px;line-height:20px;color:#6d6d6d;">You will not be emailed again while it stays this busy. If it calms down and gets busy again later, you will be.</p>
+{% endblock %}
+{% block footer %}You are receiving this because you administer this instance, or operate this source and asked for these alerts.{% endblock %}

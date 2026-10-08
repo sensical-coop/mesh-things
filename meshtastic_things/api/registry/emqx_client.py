@@ -113,6 +113,14 @@ class EmqxClient:
                 statuses[source_id] = item.get("status", "unknown")
         return statuses
 
+    def source_message_count(self, source_id: str) -> int | None:
+        """Messages the source's rule has handled since EMQX started, or None when it has no rule."""
+        resp = self._request("GET", f"/rules/{sources.resource_name(source_id)}/metrics")
+        if resp.status_code == 404:
+            return None
+        resp.raise_for_status()
+        return resp.json().get("metrics", {}).get("matched")
+
     def managed_source_ids(self) -> set[str]:
         """Ids of every source with any resource in this instance's namespace."""
         found = set()

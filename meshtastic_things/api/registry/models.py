@@ -59,6 +59,8 @@ class Owner(AbstractBaseUser, PermissionsMixin):
     alarm_email_cooldown_seconds = models.PositiveIntegerField(null=True, blank=True)
     # Emails about the sources and sinks this owner created that stay disconnected or unused.
     status_alerts_enabled = models.BooleanField(default=False)
+    # Emails about the sources this owner created that stay busier than the instance allows.
+    source_rate_alerts_enabled = models.BooleanField(default=False)
     role = models.CharField(max_length=16, choices=OwnerRole.choices, default=OwnerRole.MEMBER)
 
     objects = OwnerManager()
