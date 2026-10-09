@@ -285,11 +285,15 @@ class MeshStatsTests(SimpleTestCase):
             [self._table({"gateway_id": "100", "_field": "receptions", "_value": 6})],
             [self._table({"hops": "0", "_field": "packets", "_value": 3})],
             [self._table({"metric": "snr", "bucket": "5", "_field": "receptions", "_value": 6})],
+            [self._table({"gateway_a": "100", "gateway_b": "200", "_field": "common_packets", "_value": 2})],
+            [self._table({"gateway_id": "100", "relay": "77", "_field": "receptions", "_value": 4})],
+            [self._table({"_value": 3})],
+            [self._table({"_value": 1})],
             [self._table({"_field": "channel_utilization", "_value": 12.5})],
             [self._table({"_field": "channel_utilization", "_value": 40.0})],
             [self._table({"_field": "channel_utilization", "_value": 12.5})],
         ]
-        result = self.client.mesh_stats(MESH_ID, "-24h", "2026-09-30T00:00:00Z", "15m")
+        result = self.client.mesh_stats(MESH_ID, "-24h", "2026-09-30T00:00:00Z", "15m", "1h")
         return result, [c.args[0] for c in self.client._query_api.query.call_args_list]
 
     def test_reads_traffic_per_minute_and_the_rest_from_whole_hours(self):
@@ -300,10 +304,14 @@ class MeshStatsTests(SimpleTestCase):
             self.assertIn(f'r.mesh_id == "{MESH_ID}"', flux)
         self.assertIn("range(start: -24h)", queries[0])
         self.assertIn("aggregateWindow(every: 15m, fn: sum, createEmpty: false)", queries[1])
-        for flux in queries[2:6]:
+        for flux in queries[2:10]:
             self.assertIn("range(start: 2026-09-30T00:00:00Z)", flux)
         self.assertIn('group(columns: ["metric", "bucket", "_field"])', queries[5])
-        self.assertIn('from(bucket: "telemetry")', queries[6])
+        self.assertIn('group(columns: ["gateway_a", "gateway_b", "_field"])', queries[6])
+        self.assertIn('group(columns: ["node_id"])', queries[8])
+        self.assertIn('aggregateWindow(every: 1h, fn: sum, createEmpty: false, timeSrc: "_start")', queries[8])
+        self.assertIn("r._value > 0", queries[8])
+        self.assertIn('from(bucket: "telemetry")', queries[10])
 
     def test_folds_tables_by_their_tags(self):
         result, _ = self._run()
@@ -316,9 +324,30 @@ class MeshStatsTests(SimpleTestCase):
         self.assertEqual(result["gateways"], {"100": {"receptions": 6}})
         self.assertEqual(result["hops"], {"0": {"packets": 3}})
         self.assertEqual(result["signal"], {("snr", "5"): {"receptions": 6}})
+        self.assertEqual(result["gateway_pairs"], {("100", "200"): {"common_packets": 2}})
+        self.assertEqual(result["relays"], {("100", "77"): {"receptions": 4}})
+        self.assertEqual(result["activity"]["nodes"], [{"time": self.T0.isoformat(), "value": 3}])
         self.assertEqual(result["airtime"]["channel_utilization"]["peak"], 40.0)
 
     def test_rejects_an_invalid_window_before_querying(self):
         with self.assertRaises(ValueError):
-            self.client.mesh_stats(MESH_ID, "-24h", "2026-09-30T00:00:00Z", "15m) |> drop(")
+            self.client.mesh_stats(MESH_ID, "-24h", "2026-09-30T00:00:00Z", "15m) |> drop(", "1h")
         self.client._query_api.query.assert_not_called()
+
+
+class NodeTrafficTests(MeshStatsTests):
+    def test_filters_every_query_to_the_node(self):
+        self.client._query_api.query.side_effect = [
+            [self._table({"portnum": "67", "_field": "packets", "_value": 5})],
+            [self._table({"node_id": "7", "_field": "packets", "_value": 5}, {"node_id": "7", "_field": "receptions", "_value": 9})],
+            [self._table({"_value": 5})],
+        ]
+
+        result = self.client.node_traffic(MESH_ID, 7, "2026-09-30T00:00:00Z", "6h")
+
+        queries = [c.args[0] for c in self.client._query_api.query.call_args_list]
+        for flux in queries:
+            self.assertIn('r.node_id == "7"', flux)
+        self.assertEqual(result["ports"], {"67": 5})
+        self.assertEqual(result["totals"], {"packets": 5, "receptions": 9})
+        self.assertEqual(result["points"], [{"time": self.T0.isoformat(), "value": 5}])

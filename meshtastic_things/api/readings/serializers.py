@@ -120,10 +120,43 @@ class MeshSignalSerializer(serializers.Serializer):
     rssi = MeshSignalBucketSerializer(many=True, help_text="Receptions per 10 dBm of RSSI.")
 
 
+class MeshGatewayPairSerializer(serializers.Serializer):
+    gateway_a = serializers.IntegerField()
+    gateway_b = serializers.IntegerField()
+    device_uuid_a = serializers.UUIDField(allow_null=True)
+    device_uuid_b = serializers.UUIDField(allow_null=True)
+    common_packets = serializers.IntegerField(help_text="Packets both gateways heard.")
+    snr_diff_mean = serializers.FloatField(
+        allow_null=True, help_text="Mean SNR of `gateway_a` minus `gateway_b`, in dB, over packets both heard over the air."
+    )
+    rssi_diff_mean = serializers.FloatField(allow_null=True, help_text="The same for RSSI, in dBm.")
+
+
+class MeshRelayCandidateSerializer(serializers.Serializer):
+    node_id = serializers.IntegerField()
+    device_uuid = serializers.UUIDField()
+
+
+class MeshRelaySerializer(serializers.Serializer):
+    gateway_id = serializers.IntegerField()
+    device_uuid = serializers.UUIDField(allow_null=True)
+    relay = serializers.IntegerField(help_text="Last byte of the relaying node's number, as the firmware reports it.")
+    receptions = serializers.IntegerField()
+    candidates = MeshRelayCandidateSerializer(
+        many=True, help_text="Registered nodes of the mesh whose number ends in `relay`."
+    )
+
+
+class MeshActivitySerializer(serializers.Serializer):
+    nodes = PointSerializer(many=True, help_text="Nodes that sent at least one packet, per `activity_window`.")
+    gateways = PointSerializer(many=True, help_text="Gateways that heard at least one packet, per `activity_window`.")
+
+
 class MeshStatsResponseSerializer(serializers.Serializer):
     mesh_id = serializers.CharField()
     range = serializers.CharField()
-    window = serializers.CharField(help_text="Bucket size of every series.")
+    window = serializers.CharField(help_text="Bucket size of the traffic and airtime series.")
+    activity_window = serializers.CharField(help_text="Bucket size of the `activity` series.")
     hourly_start = serializers.DateTimeField(
         help_text="Start of the hourly figures: nodes, gateways, hops and signal."
     )
@@ -135,6 +168,27 @@ class MeshStatsResponseSerializer(serializers.Serializer):
     gateways = MeshGatewayTrafficSerializer(many=True)
     hops = MeshHopsSerializer(many=True)
     signal = MeshSignalSerializer()
+    gateway_pairs = MeshGatewayPairSerializer(many=True)
+    relays = MeshRelaySerializer(many=True)
+    activity = MeshActivitySerializer()
+
+
+class NodePortSerializer(serializers.Serializer):
+    portnum = serializers.IntegerField(allow_null=True)
+    name = serializers.CharField()
+    packets = serializers.IntegerField()
+
+
+class NodeTrafficResponseSerializer(serializers.Serializer):
+    mesh_id = serializers.CharField()
+    node_id = serializers.IntegerField()
+    range = serializers.CharField()
+    window = serializers.CharField()
+    hourly_start = serializers.DateTimeField()
+    packets = serializers.IntegerField()
+    receptions = serializers.IntegerField()
+    ports = NodePortSerializer(many=True)
+    points = PointSerializer(many=True, help_text="Packets sent per `window`.")
 
 
 class ArchivePartitionSerializer(serializers.Serializer):

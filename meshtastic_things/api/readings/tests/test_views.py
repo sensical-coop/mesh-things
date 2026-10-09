@@ -429,6 +429,12 @@ class MeshStatsTests(ReadingsTestCase):
             },
             "hops": {"unknown": {"packets": 1}, "2": {"packets": 2}, "0": {"packets": 3}},
             "signal": {("snr", "5"): {"receptions": 3}, ("snr", "-2.5"): {"receptions": 1}, ("rssi", "-100"): {"receptions": 4}},
+            "gateway_pairs": {
+                ("100", "200"): {"common_packets": 3, "signal_pairs": 2, "snr_diff_sum": 5.0, "rssi_diff_sum": 20.0},
+                ("100", "300"): {"common_packets": 1, "signal_pairs": 0, "snr_diff_sum": 0.0, "rssi_diff_sum": 0.0},
+            },
+            "relays": {("100", str(self.NODE_ID & 0xFF)): {"receptions": 4}},
+            "activity": {"nodes": [{"time": "2026-10-01T00:00:00+00:00", "value": 2}], "gateways": []},
             "airtime": {"channel_utilization": {"mean": 10.0, "peak": 30.0, "points": []}},
         }
 
@@ -440,8 +446,8 @@ class MeshStatsTests(ReadingsTestCase):
 
         self.assertEqual(resp.status_code, 200)
         body = resp.json()
-        mesh_id, start, hourly_start, window = self.fake_client.mesh_stats.call_args.args
-        self.assertEqual((mesh_id, start, window), (self.mesh_id, "-7d", "1h"))
+        mesh_id, start, hourly_start, window, activity_window = self.fake_client.mesh_stats.call_args.args
+        self.assertEqual((mesh_id, start, window, activity_window), (self.mesh_id, "-7d", "1h", "1d"))
         self.assertTrue(hourly_start.endswith(":00:00Z"))
         self.assertEqual(
             body["summary"],
@@ -489,6 +495,26 @@ class MeshStatsTests(ReadingsTestCase):
         self.assertEqual([b["bucket"] for b in body["signal"]["snr"]], [-2.5, 5.0])
         self.assertEqual(body["signal"]["rssi"], [{"bucket": -100.0, "receptions": 4}])
 
+    def test_pairs_gateways_and_offers_relay_candidates(self):
+        body = self.client.get(self.stats_url(), **self.auth_headers()).json()
+
+        self.assertEqual(
+            body["gateway_pairs"][0],
+            {
+                "gateway_a": 100,
+                "gateway_b": 200,
+                "device_uuid_a": str(self.gateway.id),
+                "device_uuid_b": None,
+                "common_packets": 3,
+                "snr_diff_mean": 2.5,
+                "rssi_diff_mean": 10.0,
+            },
+        )
+        self.assertIsNone(body["gateway_pairs"][1]["snr_diff_mean"])
+        self.assertEqual(body["relays"][0]["relay"], self.NODE_ID & 0xFF)
+        self.assertEqual(body["relays"][0]["candidates"], [{"node_id": self.NODE_ID, "device_uuid": self.device_uuid}])
+        self.assertEqual(body["activity"]["nodes"][0]["value"], 2)
+
     def test_defaults_to_24h_and_rejects_other_ranges(self):
         self.client.get(self.stats_url(), **self.auth_headers())
         self.assertEqual(self.fake_client.mesh_stats.call_args.args[1], "-24h")
@@ -516,3 +542,33 @@ class MeshStatsTests(ReadingsTestCase):
 
         self.assertEqual(resp.status_code, 404)
         self.fake_client.mesh_stats.assert_not_called()
+
+
+class NodeTrafficTests(ReadingsTestCase):
+    def setUp(self):
+        super().setUp()
+        self.fake_client.node_traffic.return_value = {
+            "ports": {"67": 5, "unknown": 2, "3": 1},
+            "totals": {"packets": 8, "receptions": 14},
+            "points": [{"time": "2026-10-01T00:00:00+00:00", "value": 8}],
+        }
+
+    def test_packets_by_port_busiest_first(self):
+        resp = self.client.get(self.uuid_url("traffic"), {"range": "7d"}, **self.auth_headers())
+
+        self.assertEqual(resp.status_code, 200)
+        body = resp.json()
+        mesh_id, node_id, _, window = self.fake_client.node_traffic.call_args.args
+        self.assertEqual((mesh_id, node_id, window), (self.mesh_id, self.NODE_ID, "6h"))
+        self.assertEqual((body["packets"], body["receptions"]), (8, 14))
+        self.assertEqual(
+            [(p["portnum"], p["name"], p["packets"]) for p in body["ports"]],
+            [(67, "TELEMETRY_APP", 5), (None, "ENCRYPTED", 2), (3, "POSITION_APP", 1)],
+        )
+
+    def test_public_meshes_only_without_credentials(self):
+        self.assertEqual(self.client.get(self.node_url("traffic")).status_code, 404)
+        self.mesh.is_public = True
+        self.mesh.save(update_fields=["is_public"])
+        self.assertEqual(self.client.get(self.node_url("traffic")).status_code, 200)
+        self.assertEqual(self.client.get(self.node_url("traffic"), {"range": "2d"}).status_code, 400)
