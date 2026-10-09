@@ -27,6 +27,14 @@ class RegistryClient:
         """Superuser key -> every owner's devices"""
         return self._get("/devices", **filters)
 
+    def device(self, device_uuid: str) -> dict | None:
+        """One device, or None once it has been deleted."""
+        resp = self._session.get(f"{self.base_url}/devices/{device_uuid}", timeout=self._timeout)
+        if resp.status_code == 404:
+            return None
+        resp.raise_for_status()
+        return resp.json()
+
     def pending_backfills(self) -> list[dict]:
         return self._get("/postprocessing-backfills", status="pending")
 

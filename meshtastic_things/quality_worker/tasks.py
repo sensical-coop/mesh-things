@@ -1,5 +1,6 @@
 """Celery tasks: the scheduling/IO shell around executor.py's pure logic."""
 import os
+import time
 from datetime import datetime, timedelta, timezone
 
 import structlog
@@ -48,12 +49,21 @@ QUALITY_FIELDS = tuple(QUALITY_CHANNELS)
 QUALITY_FIELD_UNITS = {field: unit for field, (unit, _) in QUALITY_CHANNELS.items()}
 
 
+# Every device's check in a scan needs the same variants, and a scan queues one check per device.
+VARIANTS_CACHE_SECONDS = 300
+_variants_cache: tuple[float, dict[str, int | None]] | None = None
+
+
 def _variant_intervals() -> dict[str, int | None]:
     """payload_kind -> default_reading_interval_seconds, the per-device fallback."""
-    return {
-        variant["payload_kind"]: variant.get("default_reading_interval_seconds")
-        for variant in get_registry_client().telemetry_variants()
-    }
+    global _variants_cache
+    if _variants_cache is None or time.monotonic() - _variants_cache[0] > VARIANTS_CACHE_SECONDS:
+        intervals = {
+            variant["payload_kind"]: variant.get("default_reading_interval_seconds")
+            for variant in get_registry_client().telemetry_variants()
+        }
+        _variants_cache = (time.monotonic(), intervals)
+    return _variants_cache[1]
 
 
 def _utcnow() -> datetime:
@@ -139,8 +149,8 @@ def check_completeness(device_uuid: str, lookback: str | None = None) -> dict:
     lookback = lookback or COMPLETENESS_LOOKBACK
     registry, influx = get_registry_client(), get_influx_io()
 
-    devices = {d["uuid"]: d for d in registry.devices()}
-    device = devices.get(device_uuid)
+    # One device, not the whole list: a scan runs this once per device.
+    device = registry.device(device_uuid)
     if device is None:
         return {"status": "device_not_found"}
 
