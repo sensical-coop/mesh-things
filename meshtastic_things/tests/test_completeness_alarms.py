@@ -26,19 +26,26 @@ class FakeRegistry:
     def __init__(self, interval, absence):
         self.interval = interval
         self.absence = absence
+        self.calls = []
 
     def devices(self, **_):
-        return [
-            {
-                "uuid": "d",
-                "mesh_id": "m",
-                "node_id": 1,
-                "reading_interval_seconds": self.interval,
-                "absence_detection_enabled": self.absence,
-            }
-        ]
+        self.calls.append("devices")
+        return [self.device("d")]
+
+    def device(self, uuid):
+        self.calls.append("device")
+        if uuid != "d":
+            return None
+        return {
+            "uuid": "d",
+            "mesh_id": "m",
+            "node_id": 1,
+            "reading_interval_seconds": self.interval,
+            "absence_detection_enabled": self.absence,
+        }
 
     def telemetry_variants(self):
+        self.calls.append("telemetry_variants")
         return []
 
     def device_measurements(self, _):
@@ -82,6 +89,11 @@ class FakeMemory:
             return False
         self.seen.add(key)
         return True
+
+
+@pytest.fixture(autouse=True)
+def _fresh_variants_cache(monkeypatch):
+    monkeypatch.setattr(tasks, "_variants_cache", None)
 
 
 @pytest.fixture
@@ -193,3 +205,22 @@ def test_an_outage_absence_reported_does_not_lower_the_ratio(worker):
     tasks.check_completeness("d")
 
     assert publisher.alarms == []
+
+
+def test_a_check_fetches_its_own_device_and_shares_the_variants(monkeypatch):
+    """A scan queues one check per device: none may list every device."""
+    registry = FakeRegistry(60, False)
+    influx = FakeInflux()
+    influx.series = _every(1, START, START + timedelta(hours=1))
+    monkeypatch.setattr(tasks, "_utcnow", lambda: influx.series[-1][0] + timedelta(minutes=1))
+    monkeypatch.setattr(tasks, "get_registry_client", lambda: registry)
+    monkeypatch.setattr(tasks, "get_influx_io", lambda: influx)
+    monkeypatch.setattr(tasks, "get_alarm_publisher", lambda: FakePublisher())
+    monkeypatch.setattr(tasks, "get_alarm_memory", lambda: FakeMemory())
+
+    tasks.check_completeness("d")
+    tasks.check_completeness("d")
+
+    assert "devices" not in registry.calls
+    assert registry.calls.count("telemetry_variants") == 1
+    assert tasks.check_completeness("gone") == {"status": "device_not_found"}
