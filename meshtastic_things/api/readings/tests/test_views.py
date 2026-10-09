@@ -406,3 +406,113 @@ class RoleTrimmingTests(ReadingsTestCase):
     def test_the_old_prefixed_paths_are_gone(self):
         for path in (f"/data/meshes/{self.mesh_id}/nodes/{self.NODE_ID}/latest", self.node_url("timeseries")):
             self.assertEqual(self.client.get(path, **self.auth_headers()).status_code, 404, path)
+
+
+class MeshStatsTests(ReadingsTestCase):
+    def setUp(self):
+        super().setUp()
+        self.gateway = Device.objects.create(mesh=self.mesh, device_id=100, is_gateway=True)
+        self.fake_client.mesh_stats.return_value = {
+            "traffic": {
+                "67": {"packets": 2, "receptions": 4, "bytes": 80, "rejected_packets": 0, "points": []},
+                "1": {"packets": 3, "receptions": 6, "bytes": 30, "rejected_packets": 0, "points": []},
+                "unknown": {"packets": 1, "receptions": 1, "bytes": 40, "rejected_packets": 1, "points": []},
+            },
+            "nodes": {
+                str(self.NODE_ID): {"packets": 2, "receptions": 4},
+                "4242": {"packets": 3, "receptions": 6},
+                "5": {"receptions": 1},
+            },
+            "gateways": {
+                "100": {"receptions": 8, "direct_receptions": 3, "signal_receptions": 4, "rx_snr_sum": 20.0, "rx_rssi_sum": -400.0},
+                "200": {"receptions": 2},
+            },
+            "hops": {"unknown": {"packets": 1}, "2": {"packets": 2}, "0": {"packets": 3}},
+            "signal": {("snr", "5"): {"receptions": 3}, ("snr", "-2.5"): {"receptions": 1}, ("rssi", "-100"): {"receptions": 4}},
+            "airtime": {"channel_utilization": {"mean": 10.0, "peak": 30.0, "points": []}},
+        }
+
+    def stats_url(self, mesh_id=None):
+        return f"/readings/meshes/{mesh_id or self.mesh_id}/stats"
+
+    def test_summarises_packets_receptions_and_nodes(self):
+        resp = self.client.get(self.stats_url(), {"range": "7d"}, **self.auth_headers())
+
+        self.assertEqual(resp.status_code, 200)
+        body = resp.json()
+        mesh_id, start, hourly_start, window = self.fake_client.mesh_stats.call_args.args
+        self.assertEqual((mesh_id, start, window), (self.mesh_id, "-7d", "1h"))
+        self.assertTrue(hourly_start.endswith(":00:00Z"))
+        self.assertEqual(
+            body["summary"],
+            {
+                "packets": 6,
+                "receptions": 11,
+                "receptions_per_packet": 11 / 6,
+                "bytes": 150,
+                "decoded_packets": 5,
+                "rejected_packets": 1,
+                "active_nodes": 2,
+                "channel_utilization_mean": 10.0,
+                "channel_utilization_peak": 30.0,
+            },
+        )
+        self.assertEqual(
+            [(t["portnum"], t["name"]) for t in body["traffic"]],
+            [(1, "TEXT_MESSAGE_APP"), (67, "TELEMETRY_APP"), (None, "ENCRYPTED")],
+        )
+
+    def test_ranks_nodes_by_packets_and_links_registered_ones(self):
+        body = self.client.get(self.stats_url(), **self.auth_headers()).json()
+
+        self.assertEqual([n["node_id"] for n in body["nodes"]], [4242, self.NODE_ID])
+        self.assertIsNone(body["nodes"][0]["device_uuid"])
+        self.assertEqual(body["nodes"][1]["device_uuid"], self.device_uuid)
+        self.assertEqual(
+            body["gateways"][0],
+            {
+                "node_id": 100,
+                "device_uuid": str(self.gateway.id),
+                "receptions": 8,
+                "share": 0.8,
+                "direct_receptions": 3,
+                "rx_snr_mean": 5.0,
+                "rx_rssi_mean": -100.0,
+            },
+        )
+        self.assertIsNone(body["gateways"][1]["rx_snr_mean"])
+
+    def test_orders_hops_and_signal_buckets(self):
+        body = self.client.get(self.stats_url(), **self.auth_headers()).json()
+
+        self.assertEqual([h["hops"] for h in body["hops"]], [0, 2, None])
+        self.assertEqual([b["bucket"] for b in body["signal"]["snr"]], [-2.5, 5.0])
+        self.assertEqual(body["signal"]["rssi"], [{"bucket": -100.0, "receptions": 4}])
+
+    def test_defaults_to_24h_and_rejects_other_ranges(self):
+        self.client.get(self.stats_url(), **self.auth_headers())
+        self.assertEqual(self.fake_client.mesh_stats.call_args.args[1], "-24h")
+
+        self.assertEqual(self.client.get(self.stats_url(), {"range": "2h"}, **self.auth_headers()).status_code, 400)
+
+    def test_repeated_calls_within_a_minute_are_served_from_the_cache(self):
+        self.client.get(self.stats_url(), **self.auth_headers())
+        self.client.get(self.stats_url(), **self.auth_headers())
+
+        self.fake_client.mesh_stats.assert_called_once()
+
+    def test_a_private_mesh_is_404_without_credentials_and_a_public_one_is_readable(self):
+        self.assertEqual(self.client.get(self.stats_url()).status_code, 404)
+
+        self.mesh.is_public = True
+        self.mesh.save(update_fields=["is_public"])
+        self.assertEqual(self.client.get(self.stats_url()).status_code, 200)
+
+    def test_someone_elses_private_mesh_is_404(self):
+        other = Owner.objects.create_user(email="stats-other@example.com", name="Other")
+        other_mesh = Mesh.objects.create(owner=other, channel_id=self.OTHER_CHANNEL, psk_b64="AQ==")
+
+        resp = self.client.get(self.stats_url(str(other_mesh.id)), **self.auth_headers())
+
+        self.assertEqual(resp.status_code, 404)
+        self.fake_client.mesh_stats.assert_not_called()

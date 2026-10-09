@@ -1,4 +1,8 @@
+from datetime import datetime, timedelta, timezone
+
+from django.core.cache import cache
 from drf_spectacular.utils import OpenApiParameter, OpenApiResponse, OpenApiTypes, extend_schema
+from meshtastic.protobuf import portnums_pb2
 from rest_framework import status
 from rest_framework.exceptions import NotFound, ValidationError
 from rest_framework.permissions import AllowAny, IsAuthenticated
@@ -12,12 +16,15 @@ from common.channels import (
     payload_kind_of_measurement,
     split_channel,
 )
+from common.influx_query import duration_seconds
+from common.mesh_stats import UNKNOWN
 from registry.models import Device, visible_meshes_for
 from .influx_client import get_client
 from .measurement_catalog import get_measurement_types
 from .serializers import (
     DeviceQualityResponseSerializer,
     LatestReadingsResponseSerializer,
+    MeshStatsResponseSerializer,
     ReadingsResponseSerializer,
 )
 
@@ -286,6 +293,169 @@ class QualityView(ReadingsAPIView):
             raise ValidationError(str(e))
         body = {"mesh_id": mesh_id, "node_id": node_id, "start": start, "stop": stop, **metrics}
         return Response(DeviceQualityResponseSerializer(body).data)
+
+
+# Range -> bucket size, so every range yields at most a few hundred points per series.
+MESH_STATS_RANGES = {"1h": "1m", "24h": "15m", "7d": "1h", "30d": "6h"}
+MESH_STATS_TOP_NODES = 20
+MESH_STATS_CACHE_SECONDS = 60
+
+
+def _registrations(mesh_id, node_ids) -> dict[int, str]:
+    """Registration ID of each of the nodes registered on the mesh."""
+    rows = Device.objects.filter(
+        mesh_id=mesh_id, device_id__in=[n for n in node_ids if n is not None], is_allowed=True
+    ).values_list("device_id", "id")
+    return {node: str(pk) for node, pk in rows}
+
+
+def _portnum_name(portnum: int | None) -> str:
+    if portnum is None:
+        return "ENCRYPTED"
+    try:
+        return portnums_pb2.PortNum.Name(portnum)
+    except ValueError:
+        return f"PORTNUM_{portnum}"
+
+
+def _int_or_none(value: str) -> int | None:
+    return None if value == UNKNOWN else int(value)
+
+
+def _mesh_stats(mesh_id, range_, now: datetime) -> dict:
+    window = MESH_STATS_RANGES[range_]
+    since = now - timedelta(seconds=duration_seconds(f"-{range_}"))
+    hourly_start = since.replace(minute=0, second=0, microsecond=0)
+    raw = get_client().mesh_stats(
+        mesh_id, f"-{range_}", hourly_start.strftime("%Y-%m-%dT%H:%M:%SZ"), window
+    )
+
+    traffic = sorted(
+        (
+            {
+                "portnum": _int_or_none(portnum),
+                "name": _portnum_name(_int_or_none(portnum)),
+                "packets": int(row.get("packets", 0)),
+                "receptions": int(row.get("receptions", 0)),
+                "points": row["points"],
+            }
+            for portnum, row in raw["traffic"].items()
+        ),
+        key=lambda t: -t["receptions"],
+    )
+    totals = {
+        field: int(sum(row.get(field, 0) for row in raw["traffic"].values()))
+        for field in ("packets", "receptions", "bytes", "rejected_packets")
+    }
+    totals["decoded_packets"] = totals["packets"] - int(raw["traffic"].get(UNKNOWN, {}).get("packets", 0))
+
+    sent = {int(node): row for node, row in raw["nodes"].items() if row.get("packets")}
+    busiest = sorted(sent.items(), key=lambda item: (-item[1]["packets"], item[0]))[:MESH_STATS_TOP_NODES]
+    gateway_rows = {int(gateway): row for gateway, row in raw["gateways"].items()}
+    registered = _registrations(mesh_id, [node for node, _ in busiest] + list(gateway_rows))
+    nodes = [
+        {
+            "node_id": node,
+            "device_uuid": registered.get(node),
+            "packets": int(row.get("packets", 0)),
+            "receptions": int(row.get("receptions", 0)),
+        }
+        for node, row in busiest
+    ]
+    gateway_total = sum(row.get("receptions", 0) for row in gateway_rows.values())
+    gateways = []
+    for gateway, row in sorted(gateway_rows.items(), key=lambda item: -item[1].get("receptions", 0)):
+        heard = row.get("signal_receptions", 0)
+        gateways.append(
+            {
+                "node_id": gateway,
+                "device_uuid": registered.get(gateway),
+                "receptions": int(row.get("receptions", 0)),
+                "share": row.get("receptions", 0) / gateway_total if gateway_total else 0.0,
+                "direct_receptions": int(row.get("direct_receptions", 0)),
+                "rx_snr_mean": row.get("rx_snr_sum", 0) / heard if heard else None,
+                "rx_rssi_mean": row.get("rx_rssi_sum", 0) / heard if heard else None,
+            }
+        )
+
+    hops = sorted(
+        ({"hops": _int_or_none(h), "packets": int(row.get("packets", 0))} for h, row in raw["hops"].items()),
+        key=lambda h: (h["hops"] is None, h["hops"] or 0),
+    )
+    signal = {"snr": [], "rssi": []}
+    for (metric, bucket), row in raw["signal"].items():
+        if metric in signal:
+            signal[metric].append({"bucket": float(bucket), "receptions": int(row.get("receptions", 0))})
+    for buckets in signal.values():
+        buckets.sort(key=lambda b: b["bucket"])
+
+    airtime = [
+        {"channel": channel_name("device_metrics", field), **values}
+        for field, values in sorted(raw["airtime"].items())
+    ]
+    utilization = raw["airtime"].get("channel_utilization", {})
+    return {
+        "mesh_id": mesh_id,
+        "range": range_,
+        "window": window,
+        "hourly_start": hourly_start,
+        "generated_at": now,
+        "summary": {
+            **totals,
+            "receptions_per_packet": totals["receptions"] / totals["packets"] if totals["packets"] else None,
+            "active_nodes": len(sent),
+            "channel_utilization_mean": utilization.get("mean"),
+            "channel_utilization_peak": utilization.get("peak"),
+        },
+        "traffic": traffic,
+        "airtime": airtime,
+        "nodes": nodes,
+        "gateways": gateways,
+        "hops": hops,
+        "signal": signal,
+    }
+
+
+class MeshStatsView(ReadingsAPIView):
+    """Return traffic and congestion figures for a mesh over a fixed range.
+
+    Counts every packet the mesh's registered gateways hear, including text
+    messages, routing traffic and packets that could not be decrypted. A packet
+    heard by several gateways is one packet and several receptions. Packets from
+    nodes the owner rejected count towards the totals but are never listed as
+    nodes. Channel utilization and airtime are the figures the nodes report
+    about themselves.
+
+    Busiest nodes, gateways, hops and signal are kept per hour, so they start at
+    `hourly_start`, the whole hour on or before the start of the range. Figures
+    from the last few minutes are still being counted and may grow.
+
+    Results are computed at most once a minute per mesh and range, so a repeated
+    call within that minute returns the same figures. A public mesh is readable
+    without credentials.
+
+    Args:
+        range: Period to cover, ending now. One of `1h`, `24h`, `7d` or `30d`.
+            Defaults to `24h`.
+    """
+
+    permission_classes = [AllowAny]
+
+    @extend_schema(
+        parameters=[_query("range", "Period to cover, ending now.", enum=list(MESH_STATS_RANGES), default="24h")],
+        responses=MeshStatsResponseSerializer,
+    )
+    def get(self, request, mesh_id):
+        _require_visible_mesh(request, mesh_id)
+        range_ = request.query_params.get("range", "24h")
+        if range_ not in MESH_STATS_RANGES:
+            raise ValidationError(f"range must be one of {', '.join(MESH_STATS_RANGES)}")
+        key = f"mesh-stats:{mesh_id}:{range_}"
+        body = cache.get(key)
+        if body is None:
+            body = MeshStatsResponseSerializer(_mesh_stats(str(mesh_id), range_, datetime.now(timezone.utc))).data
+            cache.set(key, body, MESH_STATS_CACHE_SECONDS)
+        return Response(body)
 
 
 class DeviceQualityView(QualityView):

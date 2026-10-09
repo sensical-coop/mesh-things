@@ -6,6 +6,7 @@ from django.test import SimpleTestCase
 from influxdb_client.client.flux_table import FluxRecord
 
 from common.alarm_counts import ALARM_COUNTS_BUCKET, ALARMS_BUCKET
+from common.mesh_stats import MESH_STATS_BUCKET
 from readings.influx_client import InfluxQueryClient
 
 MESH_ID = "11111111-2222-3333-4444-555555555555"
@@ -261,3 +262,63 @@ class DayRowsTests(SimpleTestCase):
         self.assertIn("range(start: 2026-09-01T00:00:00Z, stop: 2026-09-02T00:00:00Z)", flux)
         self.assertIn('r._measurement != "quality"', flux)
         self.assertIn('(r.node_id == "7" or r.node_id == "10")', flux)
+
+
+class MeshStatsTests(SimpleTestCase):
+    """Flux shape and how the result tables are folded"""
+
+    T0 = datetime(2026, 10, 1, tzinfo=timezone.utc)
+
+    def setUp(self):
+        self.client = InfluxQueryClient.__new__(InfluxQueryClient)
+        self.client.bucket = "telemetry"
+        self.client._query_api = MagicMock()
+
+    def _table(self, *values):
+        return _FakeTable([FluxRecord(table=0, values={"_time": self.T0, **v}) for v in values])
+
+    def _run(self):
+        self.client._query_api.query.side_effect = [
+            [self._table({"portnum": "67", "_field": "packets", "_value": 3}, {"portnum": "67", "_field": "receptions", "_value": 6})],
+            [self._table({"portnum": "67", "_value": 6})],
+            [self._table({"node_id": "7", "_field": "packets", "_value": 3})],
+            [self._table({"gateway_id": "100", "_field": "receptions", "_value": 6})],
+            [self._table({"hops": "0", "_field": "packets", "_value": 3})],
+            [self._table({"metric": "snr", "bucket": "5", "_field": "receptions", "_value": 6})],
+            [self._table({"_field": "channel_utilization", "_value": 12.5})],
+            [self._table({"_field": "channel_utilization", "_value": 40.0})],
+            [self._table({"_field": "channel_utilization", "_value": 12.5})],
+        ]
+        result = self.client.mesh_stats(MESH_ID, "-24h", "2026-09-30T00:00:00Z", "15m")
+        return result, [c.args[0] for c in self.client._query_api.query.call_args_list]
+
+    def test_reads_traffic_per_minute_and_the_rest_from_whole_hours(self):
+        _, queries = self._run()
+
+        for flux in queries[:6]:
+            self.assertIn(f'from(bucket: "{MESH_STATS_BUCKET}")', flux)
+            self.assertIn(f'r.mesh_id == "{MESH_ID}"', flux)
+        self.assertIn("range(start: -24h)", queries[0])
+        self.assertIn("aggregateWindow(every: 15m, fn: sum, createEmpty: false)", queries[1])
+        for flux in queries[2:6]:
+            self.assertIn("range(start: 2026-09-30T00:00:00Z)", flux)
+        self.assertIn('group(columns: ["metric", "bucket", "_field"])', queries[5])
+        self.assertIn('from(bucket: "telemetry")', queries[6])
+
+    def test_folds_tables_by_their_tags(self):
+        result, _ = self._run()
+
+        self.assertEqual(
+            result["traffic"],
+            {"67": {"packets": 3, "receptions": 6, "points": [{"time": self.T0.isoformat(), "value": 6}]}},
+        )
+        self.assertEqual(result["nodes"], {"7": {"packets": 3}})
+        self.assertEqual(result["gateways"], {"100": {"receptions": 6}})
+        self.assertEqual(result["hops"], {"0": {"packets": 3}})
+        self.assertEqual(result["signal"], {("snr", "5"): {"receptions": 6}})
+        self.assertEqual(result["airtime"]["channel_utilization"]["peak"], 40.0)
+
+    def test_rejects_an_invalid_window_before_querying(self):
+        with self.assertRaises(ValueError):
+            self.client.mesh_stats(MESH_ID, "-24h", "2026-09-30T00:00:00Z", "15m) |> drop(")
+        self.client._query_api.query.assert_not_called()

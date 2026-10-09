@@ -11,6 +11,7 @@ urlpatterns = [
     path("meshes/<uuid:mesh_id>/nodes/<int:node_id>", views.ReadingsView.as_view()),
     path("meshes/<uuid:mesh_id>/nodes/<int:node_id>/latest", views.LatestView.as_view()),
     path("meshes/<uuid:mesh_id>/nodes/<int:node_id>/quality", views.QualityView.as_view()),
+    path("meshes/<uuid:mesh_id>/stats", views.MeshStatsView.as_view()),
     path("exports", export_views.ExportListView.as_view()),
     path("meshes/<uuid:mesh_id>/exports", export_views.ExportListCreateView.as_view()),
     path("meshes/<uuid:mesh_id>/exports/<uuid:export_id>", export_views.ExportDetailView.as_view()),
