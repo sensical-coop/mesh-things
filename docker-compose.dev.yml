@@ -102,6 +102,9 @@ services:
   registry_gateway_discovery:
     <<: *registry-dev
 
+  registry_topology_consumer:
+    <<: *registry-dev
+
   registry_sensor_discovery_consumer:
     <<: *registry-dev
 

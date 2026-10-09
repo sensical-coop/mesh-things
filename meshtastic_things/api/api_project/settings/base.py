@@ -179,6 +179,7 @@ SPECTACULAR_SETTINGS = {
         "DataDeletionStatusEnum": "registry.models.DataDeletionStatus",
         "BackfillStatusEnum": "registry.models.BackfillStatus",
         "BackfillResultStatusEnum": [("done", "done"), ("failed", "failed")],
+        "RfLinkSourceEnum": "registry.models.RfLinkSource",
     },
 }
 

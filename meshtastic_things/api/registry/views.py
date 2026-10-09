@@ -34,14 +34,16 @@ from .data_lifecycle import (
     resume_source,
     schedule_mesh_deletion,
 )
-from . import email_health, postprocessing, sinks
+from . import email_health, postprocessing, sinks, topology
 from .emqx_client import get_emqx_client
 from .exceptions import BadGateway, Conflict
 from .gateways import save_gateway
 from .kafka_publisher import get_publisher, publish_gateway_state
+from common import node_ids
 from common.algorithms import REGISTRY, discover
 from common.env import env_str
 from common.detectors import DETECTOR_SPECS
+from common.topology import distance_km, traceroute_paths
 
 from .models import (
     BackfillStatus,
@@ -68,6 +70,7 @@ from .models import (
     TermsKind,
     TelemetryVariant,
     TelemetryVariantMeasurement,
+    Traceroute,
     can_edit_mesh,
     can_view_mesh,
     visible_meshes_for,
@@ -113,6 +116,7 @@ from .serializers import (
     PostprocessingBlueprintUpdateSerializer,
     StepCalibrationSerializer,
     DataDeletionSerializer,
+    RfLinkSerializer,
     SinkCreateSerializer,
     SinkCredentialsSerializer,
     SinkReadSerializer,
@@ -125,6 +129,7 @@ from .serializers import (
     SourceTermsAcceptanceSerializer,
     SourceUpdateSerializer,
     TermsSerializer,
+    TracerouteSerializer,
     DeviceMeasurementSerializer,
     DeviceMeasurementUpdateSerializer,
     DetectorSerializer,
@@ -1178,6 +1183,170 @@ class MeshDevicesView(APIView):
         return Response(
             DeviceReadSerializer(devices, many=True, context=_viewer_context(request)).data
         )
+
+
+LINK_WINDOWS = {"24h": timedelta(hours=24), "7d": timedelta(days=7), "30d": timedelta(days=30)}
+TRACEROUTE_PAGE = 50
+TRACEROUTE_PAGE_MAX = 500
+
+
+def _node_filter(request) -> int | None:
+    raw = request.query_params.get("node_id")
+    if raw in (None, ""):
+        return None
+    parsed = node_ids.to_num(raw) if str(raw).startswith("!") else None
+    if parsed is None:
+        try:
+            parsed = int(raw)
+        except ValueError:
+            raise ValidationError({"node_id": ["Expected a node number or its !aabbccdd form."]})
+    return parsed
+
+
+def _mesh_positions(mesh: Mesh, user) -> dict[int, tuple[str, tuple[float, float] | None]]:
+    """Registration ID and position of each device the caller may see on the mesh."""
+    devices = mesh.devices.all()
+    if not can_edit_mesh(user, mesh):
+        devices = devices.filter(is_allowed=True)
+    return {
+        device_id: (str(pk), (lat, lon) if lat is not None and lon is not None else None)
+        for device_id, pk, lat, lon in devices.values_list("device_id", "id", "latitude", "longitude")
+    }
+
+
+class MeshLinksView(APIView):
+    permission_classes = [AllowAny]
+
+    @extend_schema(
+        parameters=[
+            _query("since", "How far back a link must have been heard.", enum=list(LINK_WINDOWS), default="7d"),
+            _query("node_id", "Only links to or from this node, as a number or in its `!aabbccdd` form."),
+        ],
+        responses=RfLinkSerializer(many=True),
+    )
+    def get(self, request, mesh_id):
+        """List the radio links heard on this mesh, longest first.
+
+        A link is one node heard by another, as one source reports it:
+        `traceroute` hops, `neighborinfo` reports, or `direct` receptions by a
+        gateway with no hop in between. Each is directional, since the SNR is
+        measured by the receiving node, so a pair heard both ways has two links.
+        Direct links are added once an hour. Links not heard for 30 days are
+        deleted. A public mesh's links are readable without credentials.
+
+        Args:
+            since: How far back a link must have been heard, one of `24h`, `7d`
+                or `30d`. Defaults to `7d`.
+            node_id: Only links to or from this node.
+        """
+        mesh = _get_mesh_or_404(mesh_id)
+        _require_mesh_visible(mesh, request.user)
+        window = LINK_WINDOWS.get(request.query_params.get("since", "7d"))
+        if window is None:
+            raise ValidationError({"since": [f"Expected one of {', '.join(LINK_WINDOWS)}."]})
+        links = mesh.rf_links.filter(last_seen__gte=timezone.now() - window)
+        node = _node_filter(request)
+        if node is not None:
+            links = links.filter(Q(from_node=node) | Q(to_node=node))
+        known = _mesh_positions(mesh, request.user)
+        body = []
+        for link in links:
+            src, dst = known.get(link.from_node), known.get(link.to_node)
+            body.append(
+                {
+                    "from_node": link.from_node,
+                    "to_node": link.to_node,
+                    "from_device_uuid": src[0] if src else None,
+                    "to_device_uuid": dst[0] if dst else None,
+                    "source": link.source,
+                    "samples": link.samples,
+                    "snr_mean": link.snr_sum / link.samples if link.samples else 0.0,
+                    "last_snr": link.last_snr,
+                    "first_seen": link.first_seen,
+                    "last_seen": link.last_seen,
+                    "distance_km": distance_km(src and src[1], dst and dst[1]),
+                }
+            )
+        body.sort(key=lambda row: (row["distance_km"] is None, -(row["distance_km"] or 0), -row["samples"]))
+        return Response(RfLinkSerializer(body, many=True).data)
+
+
+class MeshTraceroutesView(APIView):
+    permission_classes = [AllowAny]
+
+    @extend_schema(
+        parameters=[
+            _query("limit", "How many to return.", OpenApiTypes.INT, default=TRACEROUTE_PAGE),
+            _query("before", "Only traceroutes heard before this time, for the next page."),
+            _query("node_id", "Only traceroutes through, from or to this node."),
+        ],
+        responses=TracerouteSerializer(many=True),
+    )
+    def get(self, request, mesh_id):
+        """List the traceroutes heard on this mesh, newest first.
+
+        A traceroute heard by several gateways is listed once, with the most
+        complete route any of them saw. `towards` runs from the node that started
+        the traceroute to its target and `back` returns; each SNR is the one
+        measured on arriving at the next node. A reply carries both directions,
+        a request only the hops taken so far. Traceroutes are kept 30 days. A
+        public mesh's traceroutes are readable without credentials.
+
+        Args:
+            limit: How many to return, up to 500. Defaults to 50.
+            before: Only traceroutes heard before this time, as an ISO 8601
+                timestamp. Pass the `heard_at` of the last one received to read
+                the next page.
+            node_id: Only traceroutes from, to or through this node.
+        """
+        mesh = _get_mesh_or_404(mesh_id)
+        _require_mesh_visible(mesh, request.user)
+        try:
+            limit = min(int(request.query_params.get("limit", TRACEROUTE_PAGE)), TRACEROUTE_PAGE_MAX)
+        except ValueError:
+            raise ValidationError({"limit": ["Expected a number."]})
+        traceroutes = mesh.traceroutes.order_by("-heard_at", "-id")
+        before = request.query_params.get("before")
+        if before:
+            try:
+                traceroutes = traceroutes.filter(heard_at__lt=datetime.fromisoformat(before.replace("Z", "+00:00")))
+            except ValueError:
+                raise ValidationError({"before": ["Expected an ISO 8601 timestamp."]})
+        node = _node_filter(request)
+        known = _mesh_positions(mesh, request.user)
+        body = []
+        for traceroute in traceroutes.iterator():
+            paths = traceroute_paths(topology.as_event(traceroute))
+            nodes = set(paths["towards"]) | set(paths["back"])
+            if node is not None and node not in nodes:
+                continue
+            body.append(_traceroute_row(traceroute, paths, known))
+            if len(body) >= limit:
+                break
+        return Response(TracerouteSerializer(body, many=True).data)
+
+
+def _traceroute_row(traceroute: Traceroute, paths: dict, known: dict) -> dict:
+    towards = paths["towards"]
+    positions = [known.get(n, (None, None))[1] for n in towards]
+    hops = [distance_km(a, b) for a, b in zip(positions, positions[1:])]
+    return {
+        "id": traceroute.id,
+        "from_node": traceroute.from_node,
+        "to_node": traceroute.to_node,
+        "packet_id": traceroute.packet_id,
+        "request_id": traceroute.request_id,
+        "origin": paths["origin"],
+        "target": paths["target"],
+        "towards": towards,
+        "snr_towards": paths["snr_towards"],
+        "back": paths["back"],
+        "snr_back": paths["snr_back"],
+        "complete": bool(towards) and towards[-1] == paths["target"],
+        "gateway_ids": traceroute.gateway_ids,
+        "heard_at": traceroute.heard_at,
+        "distance_km": sum(hops) if hops and None not in hops else None,
+    }
 
 
 class DeviceListCreateView(APIView):

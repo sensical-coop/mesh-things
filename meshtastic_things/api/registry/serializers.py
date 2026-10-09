@@ -26,6 +26,7 @@ from . import postprocessing
 from .terms import DEFAULT_LOCALE, LOCALES, VERSIONS, is_current, terms_enforced
 from .models import (
     BlueprintVersion,
+    RfLinkSource,
     Device,
     DevicePostprocessing,
     DeviceTelemetryVariant,
@@ -1475,3 +1476,40 @@ class BackfillResultSerializer(serializers.Serializer):
     points_published = serializers.IntegerField(min_value=0, required=False, default=0)
     error = serializers.CharField(required=False, allow_null=True, allow_blank=True)
 
+
+
+class RfLinkSerializer(serializers.Serializer):
+    from_node = serializers.IntegerField(help_text="The node that transmitted.")
+    to_node = serializers.IntegerField(help_text="The node that heard it and measured the SNR.")
+    from_device_uuid = serializers.UUIDField(allow_null=True)
+    to_device_uuid = serializers.UUIDField(allow_null=True)
+    source = serializers.ChoiceField(
+        choices=RfLinkSource.choices,
+        help_text="`traceroute` hops, `neighborinfo` reports, or `direct` receptions by a gateway with no hop.",
+    )
+    samples = serializers.IntegerField()
+    snr_mean = serializers.FloatField(help_text="Mean SNR in dB over every sample.")
+    last_snr = serializers.FloatField(allow_null=True)
+    first_seen = serializers.DateTimeField()
+    last_seen = serializers.DateTimeField()
+    distance_km = serializers.FloatField(allow_null=True, help_text="Null unless both nodes have a position.")
+
+
+class TracerouteSerializer(serializers.Serializer):
+    id = serializers.IntegerField()
+    from_node = serializers.IntegerField(help_text="The node that sent this packet.")
+    to_node = serializers.IntegerField()
+    packet_id = serializers.IntegerField()
+    request_id = serializers.IntegerField(allow_null=True, help_text="Set on a reply, to the request it answers.")
+    origin = serializers.IntegerField(help_text="The node that started the traceroute.")
+    target = serializers.IntegerField()
+    towards = serializers.ListField(child=serializers.IntegerField(), help_text="Nodes from origin towards target.")
+    snr_towards = serializers.ListField(child=serializers.FloatField(allow_null=True))
+    back = serializers.ListField(child=serializers.IntegerField(), help_text="Nodes from target back to origin.")
+    snr_back = serializers.ListField(child=serializers.FloatField(allow_null=True))
+    complete = serializers.BooleanField(help_text="Whether the route reached the target.")
+    gateway_ids = serializers.ListField(child=serializers.IntegerField())
+    heard_at = serializers.DateTimeField()
+    distance_km = serializers.FloatField(
+        allow_null=True, help_text="Length of the route towards the target, when every node on it has a position."
+    )

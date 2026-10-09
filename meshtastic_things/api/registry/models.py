@@ -503,6 +503,64 @@ class Device(models.Model):
         return f"{'gateway' if self.is_gateway else 'node'} {node_ids.to_hex(self.device_id)}"
 
 
+class Traceroute(models.Model):
+    """A traceroute packet, stored once however many gateways heard it.
+
+    `from_node` sent the packet and `to_node` was its destination; for a reply
+    (`request_id` set) that is the reverse of the traceroute's own direction.
+    Routes are node numbers and SNRs are in dB, null where not measured.
+    """
+
+    id = models.BigAutoField(primary_key=True)
+    mesh = models.ForeignKey(Mesh, on_delete=models.CASCADE, related_name="traceroutes")
+    from_node = models.BigIntegerField()
+    to_node = models.BigIntegerField()
+    packet_id = models.BigIntegerField()
+    request_id = models.BigIntegerField(null=True, blank=True)
+    route = models.JSONField(default=list)
+    snr_towards = models.JSONField(default=list)
+    route_back = models.JSONField(default=list)
+    snr_back = models.JSONField(default=list)
+    gateway_ids = models.JSONField(default=list)
+    heard_at = models.DateTimeField(db_index=True)
+
+    class Meta:
+        db_table = "traceroutes"
+        constraints = [
+            models.UniqueConstraint(fields=["mesh", "from_node", "packet_id"], name="uq_traceroutes_packet"),
+        ]
+
+
+class RfLinkSource(models.TextChoices):
+    TRACEROUTE = "traceroute"
+    NEIGHBORINFO = "neighborinfo"
+    DIRECT = "direct"
+
+
+class RfLink(models.Model):
+    """One node heard by another over radio, as one source reports it.
+
+    Directional: `from_node` transmitted and `to_node` measured the SNR.
+    """
+
+    id = models.BigAutoField(primary_key=True)
+    mesh = models.ForeignKey(Mesh, on_delete=models.CASCADE, related_name="rf_links")
+    from_node = models.BigIntegerField()
+    to_node = models.BigIntegerField()
+    source = models.CharField(max_length=16, choices=RfLinkSource.choices)
+    samples = models.PositiveIntegerField(default=0)
+    snr_sum = models.FloatField(default=0.0)
+    last_snr = models.FloatField(null=True, blank=True)
+    first_seen = models.DateTimeField()
+    last_seen = models.DateTimeField(db_index=True)
+
+    class Meta:
+        db_table = "rf_links"
+        constraints = [
+            models.UniqueConstraint(fields=["mesh", "from_node", "to_node", "source"], name="uq_rf_links_pair_source"),
+        ]
+
+
 def _default_streams() -> list[str]:
     return ["decoded"]
 
