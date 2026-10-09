@@ -35,6 +35,7 @@ from .emailing import (
 )
 from .emqx_client import get_emqx_client
 from .kafka_publisher import get_publisher
+from .source_bridges import channel_filters, sync_all_sources
 from .models import (
     DataDeletion,
     DataDeletionReason,
@@ -142,7 +143,7 @@ def resume_source(source: Source) -> None:
     """
     if source.paused_at is None:
         return
-    get_emqx_client().apply_source(source)
+    get_emqx_client().apply_source(source, channel_filters(source))
     with transaction.atomic():
         source.paused_at = None
         source.save(update_fields=["paused_at"])
@@ -388,6 +389,7 @@ def run_pass(now: datetime | None = None) -> dict:
         "paused_meshes": pause_lapsed_meshes(now),
         "paused_sinks": pause_lapsed_sinks(now),
         "resumed": resume_paused(),
+        "source_sync_failures": sync_all_sources(),
         "deletions_done": purge_due_deletions(now),
         "sink_sessions_discarded": discard_stale_sink_sessions(now),
         "source_alerts": check_sources(now),

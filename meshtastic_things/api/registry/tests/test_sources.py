@@ -22,7 +22,7 @@ class SourcePermissionTests(RegistryTestCase):
 
     def test_a_member_cannot_create_a_source(self):
         resp = self.client.post(
-            "/sources", {"server": "r.example.org:1883", "topic": "msh/#", "terms_version": VERSIONS[TermsKind.SOURCE]},
+            "/sources", {"server": "r.example.org:1883", "root": "msh/EU_868", "terms_version": VERSIONS[TermsKind.SOURCE]},
             format="json",
             **self.auth_headers(self.member),
         )
@@ -117,7 +117,7 @@ class SourceValidationTests(RegistryTestCase):
         self.promote_to_operator(self.operator)
 
     def _post(self, **fields):
-        body = {"server": "r.example.org:1883", "topic": "msh/#", "terms_version": VERSIONS[TermsKind.SOURCE], **fields}
+        body = {"server": "r.example.org:1883", "root": "msh/EU_868", "terms_version": VERSIONS[TermsKind.SOURCE], **fields}
         return self.client.post("/sources", body, format="json", **self.auth_headers(self.operator))
 
     def test_server_must_be_host_and_port(self):
@@ -127,9 +127,19 @@ class SourceValidationTests(RegistryTestCase):
     def test_qos_2_is_rejected(self):
         self.assertEqual(self._post(qos=2).status_code, 400)
 
-    def test_share_and_sys_topics_are_rejected(self):
-        self.assertEqual(self._post(topic="$share/g/msh/#").status_code, 400)
-        self.assertEqual(self._post(topic="$SYS/#").status_code, 400)
+    def test_a_root_must_be_a_literal_prefix(self):
+        for root in ("$SYS/x", "$share/g/msh", "msh/+", "msh/#", "msh//EU", "msh"):
+            self.assertEqual(self._post(root=root).status_code, 400, root)
+
+    def test_a_root_stops_before_the_channel_levels(self):
+        self.assertEqual(self._post(root="msh/EU_868/2/e").status_code, 400)
+        self.assertEqual(self._post(root="msh/EU_868/2").status_code, 400)
+
+    def test_a_trailing_slash_is_dropped(self):
+        resp = self._post(root=" msh/EU_868/ES/ ")
+
+        self.assertEqual(resp.status_code, 201)
+        self.assertEqual(resp.json()["root"], "msh/EU_868/ES")
 
     def test_our_own_broker_is_rejected(self):
         with patch.dict("os.environ", {"REGISTRY__EMQX_API_URL": "https://mqtt.sensical.es:18084/api/v5"}):
@@ -151,10 +161,10 @@ class SourceValidationTests(RegistryTestCase):
             self.assertEqual(self._post(server="bridge.example.org:8883").status_code, 400)
             self.assertEqual(self._post(server="sinks.example.org:1883").status_code, 400)
 
-    def test_topics_reaching_republished_sources_or_sinks_are_rejected(self):
-        for topic in ("+/#", "+/+/LongFast/#", "mt-sources/#", "mt-sources-sinks/abc/#", "mt-sources-dev/x/#"):
-            self.assertEqual(self._post(topic=topic).status_code, 400, topic)
-        self.assertEqual(self._post(topic="test/#").status_code, 201)
+    def test_roots_reaching_republished_sources_or_sinks_are_rejected(self):
+        for root in ("mt-sources/x", "mt-sources-sinks/abc", "mt-sources-dev/x"):
+            self.assertEqual(self._post(root=root).status_code, 400, root)
+        self.assertEqual(self._post(root="test/x").status_code, 201)
         self.fake_emqx.apply_source.assert_called_once()
 
     @override_settings(SOURCES_BLOCKED_BROKERS=["*.meshtastic.org", "blocked.example.org:1883"])
@@ -163,21 +173,18 @@ class SourceValidationTests(RegistryTestCase):
         self.assertEqual(self._post(server="blocked.example.org:1883").status_code, 400)
         self.assertEqual(self._post(server="blocked.example.org:8883").status_code, 201)
 
-    @override_settings(SOURCES_BLOCKED_TOPICS=["#", "msh/#"])
-    def test_blocked_topics_are_rejected(self):
-        self.assertEqual(self._post(topic="#").status_code, 400)
-        self.assertEqual(self._post(topic=" msh/# ").status_code, 400)
-        self.assertEqual(self._post(topic="msh/EU_868/#").status_code, 201)
-
-    def test_hash_is_blocked_by_default(self):
-        self.assertEqual(self._post(topic="#").status_code, 400)
+    @override_settings(SOURCES_BLOCKED_ROOTS=["msh/EU_868", "msh/US*"])
+    def test_blocked_roots_are_rejected(self):
+        self.assertEqual(self._post(root=" msh/EU_868 ").status_code, 400)
+        self.assertEqual(self._post(root="msh/US/CA").status_code, 400)
+        self.assertEqual(self._post(root="msh/EU_868/ES").status_code, 201)
 
     def test_an_update_is_validated_against_the_blocklist(self):
         source = self._post().json()
 
-        with override_settings(SOURCES_BLOCKED_TOPICS=["msh/EU_868/#"]):
+        with override_settings(SOURCES_BLOCKED_ROOTS=["msh/EU_433"]):
             resp = self.client.put(
-                f"/sources/{source['id']}", {"topic": "msh/EU_868/#"}, format="json", **self.auth_headers(self.operator)
+                f"/sources/{source['id']}", {"root": "msh/EU_433"}, format="json", **self.auth_headers(self.operator)
             )
 
         self.assertEqual(resp.status_code, 400)
@@ -193,7 +200,7 @@ class SourceFailurePolicyTests(RegistryTestCase):
         self.fake_emqx.apply_source.side_effect = RuntimeError("emqx down")
 
         resp = self.client.post(
-            "/sources", {"server": "r.example.org:1883", "topic": "msh/#", "terms_version": VERSIONS[TermsKind.SOURCE]},
+            "/sources", {"server": "r.example.org:1883", "root": "msh/EU_868", "terms_version": VERSIONS[TermsKind.SOURCE]},
             format="json",
             **self.auth_headers(self.operator),
         )
@@ -202,30 +209,30 @@ class SourceFailurePolicyTests(RegistryTestCase):
         self.assertFalse(Source.objects.exists())
 
     def test_update_is_rolled_back_and_reapplied_when_the_bridge_fails(self):
-        source = self.create_source(self.operator, topic="msh/old/#")
+        source = self.create_source(self.operator, root="msh/old")
         self.fake_emqx.apply_source.reset_mock()
         self.fake_emqx.apply_source.side_effect = [RuntimeError("emqx down"), None]
 
         resp = self.client.put(
-            f"/sources/{source['id']}", {"topic": "msh/new/#"}, format="json", **self.auth_headers(self.operator)
+            f"/sources/{source['id']}", {"root": "msh/new"}, format="json", **self.auth_headers(self.operator)
         )
 
         self.assertEqual(resp.status_code, 502)
-        self.assertEqual(Source.objects.get(pk=source["id"]).topic, "msh/old/#")
+        self.assertEqual(Source.objects.get(pk=source["id"]).root, "msh/old")
         self.assertEqual(self.fake_emqx.apply_source.call_count, 2)
-        self.assertEqual(self.fake_emqx.apply_source.call_args.args[0].topic, "msh/old/#")
+        self.assertEqual(self.fake_emqx.apply_source.call_args.args[0].root, "msh/old")
 
     def test_update_reapplies_the_bridge(self):
         source = self.create_source(self.operator)
         self.fake_emqx.apply_source.reset_mock()
 
         resp = self.client.put(
-            f"/sources/{source['id']}", {"topic": "msh/US/#"}, format="json", **self.auth_headers(self.operator)
+            f"/sources/{source['id']}", {"root": "msh/US"}, format="json", **self.auth_headers(self.operator)
         )
 
         self.assertEqual(resp.status_code, 200)
-        self.assertEqual(resp.json()["topic"], "msh/US/#")
-        self.assertEqual(self.fake_emqx.apply_source.call_args.args[0].topic, "msh/US/#")
+        self.assertEqual(resp.json()["root"], "msh/US")
+        self.assertEqual(self.fake_emqx.apply_source.call_args.args[0].root, "msh/US")
 
     def test_delete_removes_the_bridge_then_the_row(self):
         source = self.create_source(self.operator)
@@ -460,7 +467,7 @@ class SyncSourcesCommandTests(RegistryTestCase):
         self.operator = self.create_owner(name="Operator", email="sync-op@example.com")
         self.promote_to_operator(self.operator)
         self.kept = self.create_source(self.operator)
-        self.missing = self.create_source(self.operator, topic="msh/US/#")
+        self.missing = self.create_source(self.operator, root="msh/US")
         self.orphan = str(uuid.uuid4())
         self.fake_emqx.managed_source_ids.return_value = {self.kept["id"], self.orphan}
         self.fake_emqx.apply_source.reset_mock()

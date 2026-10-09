@@ -81,7 +81,7 @@ class SourceServerTests(RegistryTestCase):
 
     def post(self, server):
         return self.client.post(
-            "/sources", {"server": server, "topic": "msh/EU/#", "terms_version": VERSIONS[TermsKind.SOURCE]}, format="json",
+            "/sources", {"server": server, "root": "msh/EU", "terms_version": VERSIONS[TermsKind.SOURCE]}, format="json",
             **self.auth_headers(self.operator),
         )
 

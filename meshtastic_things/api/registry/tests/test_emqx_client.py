@@ -1,4 +1,5 @@
 """The EMQX REST calls behind a source. The shapes were verified against EMQX 6.3.1."""
+import hashlib
 import types
 import uuid
 from unittest.mock import MagicMock, patch
@@ -9,6 +10,8 @@ from registry.emqx_client import EmqxClient
 
 SOURCE_ID = uuid.UUID("5b1f3c1e-8a55-4a8e-9a0f-1d2b3c4d5e6f")
 NAME = f"mt-sources-src-{SOURCE_ID}"
+LONGFAST = f"{NAME}-{hashlib.sha1(b'LongFast').hexdigest()[:12]}"
+PRIVATE = f"{NAME}-{hashlib.sha1(b'Private').hexdigest()[:12]}"
 
 
 def _response(status_code=200, body=None):
@@ -21,7 +24,7 @@ def _response(status_code=200, body=None):
 
 def _source(**fields):
     defaults = dict(
-        id=SOURCE_ID, server="r.example.org:8883", ssl=True, username="u", password="p", topic="msh/#", qos=1
+        id=SOURCE_ID, server="r.example.org:8883", ssl=True, username="u", password="p", root="msh/EU_868", qos=1
     )
     return types.SimpleNamespace(**{**defaults, **fields})
 
@@ -43,53 +46,99 @@ class EmqxClientTests(SimpleTestCase):
     def test_authenticates_with_the_key_and_secret(self):
         self.assertEqual(EmqxClient("https://x", "key", "secret")._session.auth, ("key", "secret"))
 
-    def test_apply_updates_connector_then_source_then_rule(self):
-        self.client.apply_source(_source())
+    def test_apply_updates_the_connector_then_each_channel_source_and_rule(self):
+        self.client.apply_source(_source(), {"LongFast": ["!aabbccdd"]})
 
         self.assertEqual(
             [(m, p) for m, p, _ in self.calls],
-            [("PUT", f"/connectors/mqtt:{NAME}"), ("PUT", f"/sources/mqtt:{NAME}"), ("PUT", f"/rules/{NAME}")],
+            [
+                ("PUT", f"/connectors/mqtt:{NAME}"),
+                ("PUT", f"/sources/mqtt:{LONGFAST}"),
+                ("PUT", f"/rules/{LONGFAST}"),
+                ("GET", "/sources"),
+                ("GET", "/rules?limit=10000"),
+            ],
         )
-        connector, bridge, rule = (body for _, _, body in self.calls)
+        connector, bridge, rule = (body for _, _, body in self.calls[:3])
         self.assertEqual(connector["server"], "r.example.org:8883")
         self.assertEqual(connector["pool_size"], 1)
         self.assertEqual(connector["ssl"], {"enable": True})
         # EMQX refuses name and type on an update.
         self.assertNotIn("name", connector)
-        self.assertEqual(bridge, {"connector": NAME, "parameters": {"topic": "msh/#", "qos": 1}})
-        self.assertEqual(rule["sql"], f'SELECT * FROM "$bridges/mqtt:{NAME}"')
+        self.assertEqual(bridge, {"connector": NAME, "parameters": {"topic": "msh/EU_868/2/e/LongFast/+", "qos": 1}})
+        self.assertEqual(
+            rule["sql"], f'SELECT * FROM "$bridges/mqtt:{LONGFAST}" WHERE regex_match(topic, \'/(!aabbccdd)$\')'
+        )
         self.assertEqual(rule["actions"][0]["args"]["topic"], f"mt-sources/{SOURCE_ID}/${{topic}}")
         self.assertEqual(rule["actions"][0]["args"]["payload"], "${payload}")
 
+    def test_a_rule_lists_every_gateway_of_its_channel(self):
+        self.client.apply_source(_source(), {"LongFast": ["!22222222", "!11111111"]})
+
+        rule = self.calls[2][2]
+        self.assertTrue(rule["sql"].endswith("WHERE regex_match(topic, '/(!11111111|!22222222)$')"))
+
+    def test_a_discovering_channel_passes_every_gateway(self):
+        self.client.apply_source(_source(), {"Private": None})
+
+        self.assertEqual(self.calls[2][2]["sql"], f'SELECT * FROM "$bridges/mqtt:{PRIVATE}"')
+
+    def test_channels_no_longer_used_are_removed_and_others_kept(self):
+        other = f"mt-sources-src-{uuid.uuid4()}-abc"
+        self.responses[("GET", "/sources")] = _response(body=[{"name": LONGFAST}, {"name": PRIVATE}, {"name": other}])
+        self.responses[("GET", "/rules?limit=10000")] = _response(body={"data": [{"id": LONGFAST}, {"id": NAME}]})
+
+        self.client.apply_source(_source(), {"LongFast": ["!aabbccdd"]})
+
+        deletes = [p for m, p, _ in self.calls if m == "DELETE"]
+        self.assertCountEqual(
+            deletes, [f"/rules/{PRIVATE}", f"/sources/mqtt:{PRIVATE}", f"/rules/{NAME}", f"/sources/mqtt:{NAME}"]
+        )
+
+    def test_a_source_with_no_channels_keeps_only_its_connector(self):
+        self.responses[("GET", "/sources")] = _response(body=[{"name": LONGFAST}])
+
+        self.client.apply_source(_source(), {})
+
+        self.assertEqual(self.calls[0][:2], ("PUT", f"/connectors/mqtt:{NAME}"))
+        self.assertEqual(
+            [p for m, p, _ in self.calls if m == "DELETE"], [f"/rules/{LONGFAST}", f"/sources/mqtt:{LONGFAST}"]
+        )
+
     def test_apply_creates_what_emqx_does_not_know(self):
         self.responses[("PUT", f"/connectors/mqtt:{NAME}")] = _response(404)
-        self.responses[("PUT", f"/rules/{NAME}")] = _response(404)
+        self.responses[("PUT", f"/rules/{LONGFAST}")] = _response(404)
 
-        self.client.apply_source(_source())
+        self.client.apply_source(_source(), {"LongFast": ["!aabbccdd"]})
 
         posts = {path: body for method, path, body in self.calls if method == "POST"}
         self.assertEqual(set(posts), {"/connectors", "/rules"})
         self.assertEqual((posts["/connectors"]["type"], posts["/connectors"]["name"]), ("mqtt", NAME))
-        self.assertEqual(posts["/rules"]["id"], NAME)
+        self.assertEqual(posts["/rules"]["id"], LONGFAST)
 
     def test_apply_raises_on_an_emqx_error(self):
-        self.responses[("PUT", f"/sources/mqtt:{NAME}")] = _response(400)
+        self.responses[("PUT", f"/sources/mqtt:{LONGFAST}")] = _response(400)
 
         with self.assertRaises(RuntimeError):
-            self.client.apply_source(_source())
+            self.client.apply_source(_source(), {"LongFast": ["!aabbccdd"]})
 
-    def test_delete_goes_rule_then_source_then_connector_and_tolerates_missing(self):
-        self.responses[("DELETE", f"/rules/{NAME}")] = _response(404)
+    def test_delete_goes_rules_then_sources_then_connector_and_tolerates_missing(self):
+        self.responses[("GET", "/sources")] = _response(body=[{"name": LONGFAST}])
+        self.responses[("DELETE", f"/rules/{LONGFAST}")] = _response(404)
 
         self.client.delete_source(str(SOURCE_ID))
 
         self.assertEqual(
-            [(m, p) for m, p, _ in self.calls],
-            [("DELETE", f"/rules/{NAME}"), ("DELETE", f"/sources/mqtt:{NAME}"), ("DELETE", f"/connectors/mqtt:{NAME}")],
+            [(m, p) for m, p, _ in self.calls if m == "DELETE"],
+            [
+                ("DELETE", f"/rules/{LONGFAST}"),
+                ("DELETE", f"/sources/mqtt:{LONGFAST}"),
+                ("DELETE", f"/connectors/mqtt:{NAME}"),
+            ],
         )
 
-    def test_status_is_missing_when_emqx_has_no_source(self):
-        self.responses[("GET", f"/sources/mqtt:{NAME}")] = _response(404)
+    def test_status_is_missing_when_emqx_has_no_connector(self):
+        self.responses[("GET", f"/connectors/mqtt:{NAME}")] = _response(404)
 
         self.assertEqual(self.client.source_status(str(SOURCE_ID)), "missing")
 
@@ -112,21 +161,21 @@ class EmqxClientTests(SimpleTestCase):
         self.assertEqual(self.client.managed_source_ids(), {str(SOURCE_ID), str(other)})
 
     def test_credentials_are_sent_when_set(self):
-        self.client.apply_source(_source())
+        self.client.apply_source(_source(), {})
 
         connector = self.calls[0][2]
         self.assertEqual((connector["username"], connector["password"]), ("u", "p"))
 
     def test_a_removed_password_is_left_out_rather_than_sent_empty(self):
-        self.client.apply_source(_source(username=None, password=None))
+        self.client.apply_source(_source(username=None, password=None), {})
 
         connector = self.calls[0][2]
         self.assertNotIn("username", connector)
         self.assertNotIn("password", connector)
 
-    def test_statuses_come_from_one_call_and_skip_other_namespaces(self):
+    def test_statuses_come_from_the_connectors_in_one_call_and_skip_other_namespaces(self):
         other = uuid.uuid4()
-        self.responses[("GET", "/sources")] = _response(
+        self.responses[("GET", "/connectors")] = _response(
             body=[
                 {"name": NAME, "status": "connected"},
                 {"name": f"mt-sources-dev-src-{other}", "status": "disconnected"},

@@ -18,7 +18,7 @@ class SourceTermsTestCase(RegistryTestCase):
         self.promote_to_operator(self.operator)
 
     def post_source(self, **fields):
-        body = {"server": "r.example.org:1883", "topic": "msh/EU/#", "terms_version": SOURCE_VERSION, **fields}
+        body = {"server": "r.example.org:1883", "root": "msh/EU", "terms_version": SOURCE_VERSION, **fields}
         return self.client.post("/sources", body, format="json", **self.auth_headers(self.operator))
 
 
@@ -103,7 +103,7 @@ class AcceptanceOnCreateTests(SourceTermsTestCase):
         source = self.post_source().json()
 
         resp = self.client.put(
-            f"/sources/{source['id']}", {"topic": "msh/US/#"}, format="json", **self.auth_headers(self.operator)
+            f"/sources/{source['id']}", {"root": "msh/US"}, format="json", **self.auth_headers(self.operator)
         )
 
         self.assertEqual(resp.status_code, 200)

@@ -2,7 +2,9 @@
 import json
 from unittest.mock import MagicMock
 
-from pipeline.config_state import apply_config_event, replay_to_end
+import pytest
+
+from pipeline.config_state import CatchUpCheck, FellBehind, apply_config_event, replay_to_end
 
 
 def _value(**event) -> bytes:
@@ -82,3 +84,95 @@ def test_a_bad_record_does_not_stop_the_replay():
         raise ValueError("bad")
 
     assert replay_to_end(_FakeConsumer({"a": 2}), explode) == 2
+
+
+class _Clock:
+    def __init__(self):
+        self.now = 0.0
+
+    def __call__(self):
+        return self.now
+
+
+def _check(consumer, clock):
+    return CatchUpCheck(consumer, interval_s=30, max_behind_s=120, clock=clock)
+
+
+def test_a_caught_up_consumer_passes_the_check():
+    consumer, clock = _FakeConsumer({"a": 2}), _Clock()
+    replay_to_end(consumer, lambda record: None)
+    check = _check(consumer, clock)
+
+    for _ in range(10):
+        clock.now += 60
+        check.check()
+
+
+def test_a_consumer_that_stops_advancing_fails_after_the_grace_period():
+    consumer, clock = _FakeConsumer({"a": 0}), _Clock()
+    check = _check(consumer, clock)
+    consumer._end["a"] = 5
+
+    clock.now += 30
+    check.check()
+    clock.now += 120
+    check.check()
+    clock.now += 30
+    with pytest.raises(FellBehind):
+        check.check()
+
+
+def test_catching_up_resets_the_grace_period():
+    consumer, clock = _FakeConsumer({"a": 0}), _Clock()
+    check = _check(consumer, clock)
+    consumer._end["a"] = 1
+
+    clock.now += 100
+    check.check()
+    consumer._position["a"] = 1
+    clock.now += 100
+    check.check()
+    consumer._end["a"] = 2
+    clock.now += 100
+    check.check()
+    clock.now += 100
+    check.check()
+
+
+def test_a_position_past_the_end_means_the_topic_was_recreated():
+    consumer, clock = _FakeConsumer({"a": 5}), _Clock()
+    consumer._position["a"] = 5
+    check = _check(consumer, clock)
+    consumer._end["a"] = 0
+
+    clock.now += 30
+    with pytest.raises(FellBehind):
+        check.check()
+
+
+def test_an_unreadable_end_counts_as_behind():
+    consumer, clock = _FakeConsumer({"a": 0}), _Clock()
+    check = _check(consumer, clock)
+
+    def unreachable(partitions):
+        raise TimeoutError("kafka down")
+
+    consumer.end_offsets = unreachable
+    clock.now += 30
+    check.check()
+    clock.now += 150
+    with pytest.raises(FellBehind):
+        check.check()
+
+
+def test_the_check_runs_at_most_once_per_interval():
+    consumer, clock = _FakeConsumer({"a": 0}), _Clock()
+    check = _check(consumer, clock)
+    reads = []
+    consumer.end_offsets = lambda partitions: reads.append(clock.now) or {"a": 0}
+
+    for _ in range(90):
+        clock.now += 1
+        check.check()
+
+    assert reads == [30, 60, 90]

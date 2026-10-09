@@ -10,6 +10,7 @@ from common import codec, node_ids
 from .exceptions import BadGateway
 from .kafka_publisher import get_publisher, publish_gateway_state
 from .models import Device, Mesh
+from .source_bridges import sync_sources
 
 log = structlog.get_logger()
 
@@ -19,14 +20,15 @@ def save_gateway(device: Device, update_fields: list[str] | None = None) -> None
 
     Raises:
         IntegrityError: Another allowed gateway already has this node number.
-        BadGateway: The registration could not be published; the save is rolled back.
+        BadGateway: The source's bridge or the decoder could not be updated; the save is rolled back.
     """
     with transaction.atomic():
         device.save(update_fields=update_fields)
         try:
+            sync_sources(device.mesh.source_id)
             publish_gateway_state(get_publisher(), device, device.mesh)
         except Exception as e:
-            raise BadGateway(f"Failed to publish gateway registration, rolled back: {e}")
+            raise BadGateway(f"Failed to register the gateway, rolled back: {e}")
 
 
 def _matching_mesh(source_id: str | None, channel_id: str, raw: bytes) -> Mesh | None:

@@ -12,7 +12,7 @@ from paho.mqtt.properties import Properties
 
 from bridge import discovery
 from common import sources
-from pipeline.config_state import replay_consumer, replay_to_end
+from pipeline.config_state import CatchUpCheck, replay_consumer, replay_to_end
 from tools.healthcheck import HealthState, KakfaProducerHealth, MQTTHealth
 from tools.env import get_bool_env
 
@@ -118,6 +118,7 @@ class MQTTHandler(object):
         # gateway_id -> the source its mesh is bridged from, None for the own topic.
         self.gateway_sources: dict[str, str | None] = {}
         self.source_mismatch_drops = 0
+        self.unregistered_drops = 0
         self.config_consumer = None
         self.discovery_pacer = discovery.DiscoveryPacer.from_env()
         self.discovery_topic = discovery.candidate_topic()
@@ -141,6 +142,9 @@ class MQTTHandler(object):
         log.info('Loaded gateway sources', records=read, gateways=len(self.gateway_sources))
 
     async def follow_gateway_sources(self):
+        """Apply gateway changes as they arrive. Raising FellBehind ends the bridge, so it
+        is restarted rather than dropping newly registered gateways on stale state."""
+        catch_up = CatchUpCheck(self.config_consumer)
         while True:
             messages = await asyncio.to_thread(self.config_consumer.poll, timeout_ms=1000)
             for records in messages.values():
@@ -149,21 +153,23 @@ class MQTTHandler(object):
                         self._apply_gateway_record(record)
                     except Exception as e:
                         log.exception("Bad config message skipped", exc_info=e)
+            await asyncio.to_thread(catch_up.check)
+
+    def is_registered(self, topic: str) -> bool:
+        return topic.split('/')[-1] in self.gateway_sources
 
     def accepts(self, topic: str) -> bool:
-        """False when a registered gateway arrives through a source its mesh is not on.
+        """Whether a packet of a registered gateway arrived through the source its mesh is on.
 
         Stops the same gateway being ingested twice, for example directly and again
-        through a bridged public broker. Unregistered gateways pass; decode drops them.
+        through a bridged public broker.
         """
         gateway_id = topic.split('/')[-1]
-        if gateway_id not in self.gateway_sources:
-            return True
-        return self.gateway_sources[gateway_id] == sources.source_id_from_topic(topic)
+        return gateway_id in self.gateway_sources and self.gateway_sources[gateway_id] == sources.source_id_from_topic(topic)
 
     def observe_candidate(self, topic: str, payload: bytes) -> None:
         """Send a paced sample of an unregistered gateway's traffic to the registry for discovery."""
-        if topic.split('/')[-1] in self.gateway_sources:
+        if self.is_registered(topic):
             return
         candidate = discovery.parse_candidate(topic)
         if candidate is None or not self.discovery_pacer.should_send(candidate):
@@ -205,15 +211,20 @@ class MQTTHandler(object):
                     async for message in client.messages:
                         self.mqtt_health.mark_connected()
                         log.debug(f'Got message: {message.topic}: {message.payload}')
-                        if not self.accepts(message.topic.value):
+                        topic = message.topic.value
+                        # Decode would drop an unregistered gateway, so only discovery's samples go on.
+                        if not self.is_registered(topic):
+                            self.unregistered_drops += 1
+                            try:
+                                self.observe_candidate(topic, message.payload)
+                            except Exception as e:
+                                log.warning('Gateway discovery sample not sent', topic=topic, error=str(e))
+                            continue
+                        if not self.accepts(topic):
                             self.source_mismatch_drops += 1
-                            log.debug('Dropping packet from a gateway outside its source', topic=message.topic.value)
+                            log.debug('Dropping packet from a gateway outside its source', topic=topic)
                             continue
                         self.kafka_producer.send(os.environ['MQTT_BRIDGE__KAFKA_TOPIC'], key=_partition_key(message.topic), value=message.payload)
-                        try:
-                            self.observe_candidate(message.topic.value, message.payload)
-                        except Exception as e:
-                            log.warning('Gateway discovery sample not sent', topic=message.topic.value, error=str(e))
             except aiomqtt.MqttError as e:
                 self.mqtt_health.mark_disconnected()
                 log.warning(f"Connection lost ({e}); Reconnecting in {int(os.environ['MQTT_BRIDGE__RECONNECT'])} seconds ...")
@@ -244,6 +255,7 @@ class MQTTHandler(object):
 
         body = {
             "source_mismatch_drops": self.source_mismatch_drops,
+            "unregistered_drops": self.unregistered_drops,
             "discovery_candidates_sent": self.discovery_candidates_sent,
             "discovery_gateways_tracked": len(self.discovery_pacer),
         }

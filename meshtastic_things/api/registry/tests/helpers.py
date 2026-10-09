@@ -110,10 +110,10 @@ class RegistryTestCase(APITestCase):
         assert resp.status_code == 201, resp.content
         return resp.json()
 
-    def create_source(self, operator, server="remote.example.org:8883", topic="msh/EU_868/#", **fields) -> dict:
+    def create_source(self, operator, server="remote.example.org:8883", root="msh/EU_868", **fields) -> dict:
         resp = self.client.post(
             "/sources",
-            {"server": server, "topic": topic, "terms_version": VERSIONS[TermsKind.SOURCE], **fields},
+            {"server": server, "root": root, "terms_version": VERSIONS[TermsKind.SOURCE], **fields},
             format="json",
             **self.auth_headers(operator),
         )
