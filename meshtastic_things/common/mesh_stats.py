@@ -15,6 +15,12 @@ Measurements, all tagged with mesh_id:
     (heard with no hop), signal_receptions, rx_snr_sum, rx_rssi_sum.
   - mesh_hops, per hour and hops ("unknown" on firmware without hop_start): packets.
   - mesh_signal, per hour, metric ("snr" or "rssi") and bucket (its lower bound): receptions.
+  - mesh_node_ports, per hour, node_id and portnum: packets. Rejected nodes are left out.
+  - mesh_gateway_pairs, per hour, gateway_a and gateway_b (a < b): common_packets, the
+    packets both heard, and over those both heard over the air, signal_pairs,
+    snr_diff_sum and rssi_diff_sum (a minus b).
+  - mesh_relays, per hour, gateway_id and relay (the last byte of the node that relayed
+    the packet to the gateway, as the firmware reports it): receptions.
 
 Direct links, a node heard by a gateway with no hop in between, are summed per
 hour too, and handed back by close() once their hour is over rather than stored
@@ -33,6 +39,9 @@ MESH_NODE_TRAFFIC = "mesh_node_traffic"
 MESH_GATEWAY_TRAFFIC = "mesh_gateway_traffic"
 MESH_HOPS = "mesh_hops"
 MESH_SIGNAL = "mesh_signal"
+MESH_NODE_PORTS = "mesh_node_ports"
+MESH_GATEWAY_PAIRS = "mesh_gateway_pairs"
+MESH_RELAYS = "mesh_relays"
 # Not a measurement: direct links leave through close() for the registry.
 DIRECT_LINKS = "direct_links"
 
@@ -45,12 +54,15 @@ GRAINS = {
     MESH_GATEWAY_TRAFFIC: HOUR_MS,
     MESH_HOPS: HOUR_MS,
     MESH_SIGNAL: HOUR_MS,
+    MESH_NODE_PORTS: HOUR_MS,
+    MESH_GATEWAY_PAIRS: HOUR_MS,
+    MESH_RELAYS: HOUR_MS,
     DIRECT_LINKS: HOUR_MS,
 }
 # Histogram steps: SNR in dB, RSSI in dBm.
 SIGNAL_STEPS = {"snr": 2.5, "rssi": 10}
 # Every other field is a count. InfluxDB fixes a field's type on its first write.
-FLOAT_FIELDS = frozenset({"rx_snr_sum", "rx_rssi_sum"})
+FLOAT_FIELDS = frozenset({"rx_snr_sum", "rx_rssi_sum", "snr_diff_sum", "rssi_diff_sum"})
 # A packet relayed back to a gateway is still the same packet well within this.
 DEDUP_TTL_MS = 10 * MINUTE_MS
 
@@ -85,6 +97,8 @@ class MeshStatsAggregator:
         self._next_offset: dict = {}
         self._closed_until = {measurement: 0 for measurement in GRAINS}
         self._seen: dict[tuple, int] = {}
+        # Packet key -> {gateway: (snr, rssi) or None}, for as long as the packet is in _seen.
+        self._heard_by: dict[tuple, dict] = {}
         # (mesh_id, node_id, gateway_id, bucket_start) -> samples, snr_sum, first_seen, last_seen
         self._links: dict[tuple, dict] = {}
         self.watermark = 0
@@ -99,6 +113,7 @@ class MeshStatsAggregator:
         first = self._seen.get(key, 0) < at_ms
         if first:
             self._seen[key] = at_ms + DEDUP_TTL_MS
+            self._heard_by[key] = {}
         rejected = bool(event.get("rejected"))
         portnum = event.get("portnum")
         hops = hops_of(event)
@@ -133,6 +148,16 @@ class MeshStatsAggregator:
             )
         if first:
             count(MESH_HOPS, {"mesh_id": mesh_id, "hops": hops}, packets=1)
+        if first and not rejected:
+            count(
+                MESH_NODE_PORTS,
+                {
+                    "mesh_id": mesh_id,
+                    "node_id": str(event.get("node_id")),
+                    "portnum": UNKNOWN if portnum is None else str(portnum),
+                },
+                packets=1,
+            )
 
         snr, rssi = event.get("rx_snr"), event.get("rx_rssi")
         heard = snr is not None and rssi is not None
@@ -148,6 +173,24 @@ class MeshStatsAggregator:
             )
         gateway = event.get("gateway_id")
         node = event.get("node_id")
+        heard_by = self._heard_by.setdefault(key, {})
+        if gateway is not None and gateway not in heard_by:
+            signal = (snr, rssi) if heard else None
+            for other, other_signal in heard_by.items():
+                (a, sa), (b, sb) = sorted(((gateway, signal), (other, other_signal)), key=lambda g: g[0])
+                both = sa is not None and sb is not None
+                count(
+                    MESH_GATEWAY_PAIRS,
+                    {"mesh_id": mesh_id, "gateway_a": str(a), "gateway_b": str(b)},
+                    common_packets=1,
+                    signal_pairs=int(both),
+                    snr_diff_sum=sa[0] - sb[0] if both else 0,
+                    rssi_diff_sum=sa[1] - sb[1] if both else 0,
+                )
+            heard_by[gateway] = signal
+        relay = event.get("relay_node")
+        if relay and gateway is not None and hops not in ("0", UNKNOWN) and not event.get("via_mqtt"):
+            count(MESH_RELAYS, {"mesh_id": mesh_id, "gateway_id": str(gateway), "relay": str(relay)}, receptions=1)
         if heard and hops == "0" and not rejected and not event.get("via_mqtt") and gateway not in (None, node):
             bucket = self._bucket(DIRECT_LINKS, at_ms)
             link = self._links.setdefault(
@@ -218,6 +261,7 @@ class MeshStatsAggregator:
             dict, {key: lowest for key, lowest in self._offsets.items() if key[1] >= self._closed_until[key[0]]}
         )
         self._seen = {key: expiry for key, expiry in self._seen.items() if expiry > watermark}
+        self._heard_by = {key: heard for key, heard in self._heard_by.items() if key in self._seen}
         closed_links, open_until = [], self._closed_until[DIRECT_LINKS]
         for key in [key for key in self._links if key[3] < open_until]:
             mesh_id, node, gateway, _ = key

@@ -163,3 +163,42 @@ def test_rejected_nodes_and_a_gateway_hearing_itself_make_no_link():
     agg.add(_event(packet_id=2, node_id=100), T0)
 
     assert agg.close(watermark=T0 + HOUR_MS + 2 * MINUTE_MS) == []
+
+
+def test_gateways_hearing_the_same_packet_are_paired_once_with_their_signal_difference():
+    agg = MeshStatsAggregator()
+    agg.add(_event(gateway_id=300, rx_snr=2.0, rx_rssi=-100), T0)
+    agg.add(_event(gateway_id=100, rx_snr=6.0, rx_rssi=-90), T0 + 100)
+    agg.add(_event(gateway_id=200, rx_snr=None, rx_rssi=None), T0 + 200)
+    agg.add(_event(gateway_id=100, rx_snr=6.0, rx_rssi=-90), T0 + 300)  # the same gateway again
+
+    pairs = _rows(agg, "mesh_gateway_pairs")
+    assert pairs[(("gateway_a", "100"), ("gateway_b", "300"), ("mesh_id", "m1"))] == {
+        "common_packets": 1, "signal_pairs": 1, "snr_diff_sum": 4.0, "rssi_diff_sum": 10.0,
+    }
+    assert pairs[(("gateway_a", "100"), ("gateway_b", "200"), ("mesh_id", "m1"))]["signal_pairs"] == 0
+    assert len(pairs) == 3
+
+
+def test_relays_are_counted_per_gateway_for_relayed_receptions_only():
+    agg = MeshStatsAggregator()
+    agg.add(_event(packet_id=1, hop_limit=2, relay_node=0x4D), T0)
+    agg.add(_event(packet_id=2, relay_node=0x4D), T0)  # direct: the relay byte is the sender's
+    agg.add(_event(packet_id=3, hop_start=0, hop_limit=0, relay_node=0x4D), T0)  # hops unknown
+
+    assert _rows(agg, "mesh_relays") == {
+        (("gateway_id", "100"), ("mesh_id", "m1"), ("relay", "77")): {"receptions": 1}
+    }
+
+
+def test_packet_types_are_counted_per_node_once_per_packet():
+    agg = MeshStatsAggregator()
+    agg.add(_event(gateway_id=100), T0)
+    agg.add(_event(gateway_id=200), T0 + 100)
+    agg.add(_event(packet_id=2, portnum=None), T0)
+    agg.add(_event(packet_id=3, rejected=True), T0)
+
+    assert _rows(agg, "mesh_node_ports") == {
+        (("mesh_id", "m1"), ("node_id", "7"), ("portnum", "67")): {"packets": 1},
+        (("mesh_id", "m1"), ("node_id", "7"), ("portnum", "unknown")): {"packets": 1},
+    }
