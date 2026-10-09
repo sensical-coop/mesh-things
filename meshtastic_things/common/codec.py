@@ -68,14 +68,35 @@ def build_decoded_message(se: mqtt_pb2.ServiceEnvelope, portnum: int, pb_dict: d
     mp = se.packet
     return {
         "node_id": getattr(mp, "from"),
+        "to": mp.to,
         "packet_id": mp.id,
         "portnum": portnum,
+        "request_id": mp.decoded.request_id or None,
         "rx_time": mp.rx_time,
-        "hop_start": mp.hop_start,
+        **routing_fields(mp),
         "channel_id": se.channel_id,
         "gateway_id": node_ids.to_num(se.gateway_id),
         "payload_kind": payload_kind,
         "payload": pb_dict,
+    }
+
+
+def routing_fields(mp: mesh_pb2.MeshPacket) -> dict:
+    """How a packet travelled to the gateway that heard it.
+
+    `hop_start` is 0 on firmware that predates it, which leaves the hop count
+    unknown. Signal readings are 0 when the gateway did not receive the packet
+    over the air (via MQTT, or relayed from its own phone), so both become None.
+    """
+    heard_over_air = mp.rx_rssi != 0
+    return {
+        "hop_start": mp.hop_start,
+        "hop_limit": mp.hop_limit,
+        "rx_snr": mp.rx_snr if heard_over_air else None,
+        "rx_rssi": mp.rx_rssi if heard_over_air else None,
+        "relay_node": mp.relay_node or None,
+        "next_hop": mp.next_hop or None,
+        "via_mqtt": mp.via_mqtt,
     }
 
 def decode_message(raw: bytes, key_bytes: bytes | None) -> dict | None:

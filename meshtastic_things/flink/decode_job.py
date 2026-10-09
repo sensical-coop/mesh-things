@@ -19,6 +19,7 @@ from pyflink.datastream.connectors.kafka import (
 from pyflink.datastream.functions import KeySelector, KeyedBroadcastProcessFunction
 from pyflink.datastream.state import MapStateDescriptor
 from pyflink.common.serialization import SimpleStringSchema
+from pyflink.java_gateway import get_gateway
 
 log = structlog.get_logger()
 
@@ -112,6 +113,7 @@ class DecodeWithBroadcastKey(KeyedBroadcastProcessFunction):
                 _BroadcastGatewayState(gateway_state_map),
                 _BroadcastRejectedSet(rejected_state),
                 on_drop=_udf_log_drop,
+                received_at=ctx.timestamp(),
             )
         except Exception:
             _udf_log_exception("Failed to decode packet")
@@ -119,11 +121,8 @@ class DecodeWithBroadcastKey(KeyedBroadcastProcessFunction):
         if events is None:
             return
 
-        yield json.dumps({"kind": "decoded", "payload": events["decoded"]})
-        if "sighting" in events:
-            yield json.dumps({"kind": "sighting", "payload": events["sighting"]})
-        if "discovery" in events:
-            yield json.dumps({"kind": "discovery", "payload": events["discovery"]})
+        for kind, payload in events.items():
+            yield json.dumps({"kind": kind, "payload": payload})
 
     def process_broadcast_element(self, value: str, ctx):
         try:
@@ -157,6 +156,23 @@ class DecodeWithBroadcastKey(KeyedBroadcastProcessFunction):
         yield from ()  # this method only changes broadcast state
 
 
+def _committed_offsets_or_earliest() -> KafkaOffsetsInitializer:
+    """The group's committed offsets, or the earliest ones where it has none.
+
+    KafkaOffsetsInitializer.committed_offsets passes the shaded
+    OffsetResetStrategy, but which of the two Kafka connector jars in lib/
+    provides OffsetsInitializer depends on classpath order, so the enum is
+    taken from the signature that actually loaded.
+    """
+    initializers = get_gateway().jvm.org.apache.flink.connector.kafka.source.enumerator.initializer.OffsetsInitializer
+    for method in initializers._java_lang_class.getMethods():
+        if method.getName() == "committedOffsets" and len(method.getParameterTypes()) == 1:
+            strategy_class = method.getParameterTypes()[0]
+            earliest = next(c for c in strategy_class.getEnumConstants() if c.name() == "EARLIEST")
+            return KafkaOffsetsInitializer(initializers.committedOffsets(earliest))
+    raise RuntimeError("OffsetsInitializer.committedOffsets(OffsetResetStrategy) not found")
+
+
 def build_pipeline(
     env,
     kafka_bootstrap: str,
@@ -166,17 +182,21 @@ def build_pipeline(
     devices_topic: str,
     node_rejections_topic: str,
     sensor_discovery_topic: str,
+    traffic_topic: str,
 ):
     source = (
         KafkaSource.builder()
         .set_bootstrap_servers(kafka_bootstrap)
         .set_topics(raw_topic)
         .set_group_id("flink-decode-group")
-        .set_starting_offsets(KafkaOffsetsInitializer.earliest())
+        # Without a checkpoint, resume from the offsets the last run committed
+        # rather than re-decoding the whole raw topic.
+        .set_starting_offsets(_committed_offsets_or_earliest())
         .set_value_only_deserializer(SimpleStringSchema(RAW_BYTES_CHARSET))
         .build()
     )
-    stream = env.from_source(source, WatermarkStrategy.no_watermarks(), "raw-mesh-packets")
+    # Kafka record timestamps survive no_watermarks(), so ctx.timestamp() is when the bridge received a packet.
+    stream = env.from_source(source, WatermarkStrategy.no_watermarks(), "raw-mesh-packets").uid("raw-mesh-packets")
 
     keys_source = (
         KafkaSource.builder()
@@ -187,7 +207,9 @@ def build_pipeline(
         .set_value_only_deserializer(SimpleStringSchema())
         .build()
     )
-    keys_stream = env.from_source(keys_source, WatermarkStrategy.no_watermarks(), "gateway-key-config")
+    keys_stream = env.from_source(keys_source, WatermarkStrategy.no_watermarks(), "gateway-key-config").uid(
+        "gateway-key-config"
+    )
 
     node_rejections_source = (
         KafkaSource.builder()
@@ -200,67 +222,46 @@ def build_pipeline(
     )
     node_rejections_stream = env.from_source(
         node_rejections_source, WatermarkStrategy.no_watermarks(), "node-rejection-config"
-    )
+    ).uid("node-rejection-config")
 
     keyed_stream = stream.key_by(PacketKeySelector(), key_type=Types.STRING())
     # Both config topics feed one broadcast connection - "kind" routes each
     # event to the right state map in process_broadcast_element.
     broadcast_stream = keys_stream.union(node_rejections_stream).broadcast(GATEWAY_KEY_STATE, NODE_REJECTED_STATE)
 
-    combined_stream = keyed_stream.connect(broadcast_stream).process(
-        DecodeWithBroadcastKey(), output_type=Types.STRING()
+    # Stable uids let a savepoint restore after operators are added or removed.
+    combined_stream = (
+        keyed_stream.connect(broadcast_stream)
+        .process(DecodeWithBroadcastKey(), output_type=Types.STRING())
+        .uid("decode")
     )
 
-    decoded_stream = combined_stream.filter(lambda v: json.loads(v)["kind"] == "decoded").map(
-        lambda v: json.dumps(json.loads(v)["payload"]), output_type=Types.STRING()
-    )
+    for kind, topic in (
+        ("decoded", decoded_topic),
+        ("sighting", devices_topic),
+        ("discovery", sensor_discovery_topic),
+        ("traffic", traffic_topic),
+    ):
+        _sink_kind(combined_stream, kafka_bootstrap, kind, topic)
+
+
+def _sink_kind(combined_stream, kafka_bootstrap: str, kind: str, topic: str) -> None:
+    """Route one kind of event from the decode output to its own topic."""
     sink = (
         KafkaSink.builder()
         .set_bootstrap_servers(kafka_bootstrap)
         .set_record_serializer(
             KafkaRecordSerializationSchema.builder()
-            .set_topic(decoded_topic)
+            .set_topic(topic)
             .set_value_serialization_schema(SimpleStringSchema())
             .build()
         )
         .set_delivery_guarantee(DeliveryGuarantee.AT_LEAST_ONCE)
         .build()
     )
-    decoded_stream.sink_to(sink)
-
-    device_sightings_stream = combined_stream.filter(lambda v: json.loads(v)["kind"] == "sighting").map(
+    combined_stream.filter(lambda v: json.loads(v)["kind"] == kind).map(
         lambda v: json.dumps(json.loads(v)["payload"]), output_type=Types.STRING()
-    )
-    devices_sink = (
-        KafkaSink.builder()
-        .set_bootstrap_servers(kafka_bootstrap)
-        .set_record_serializer(
-            KafkaRecordSerializationSchema.builder()
-            .set_topic(devices_topic)
-            .set_value_serialization_schema(SimpleStringSchema())
-            .build()
-        )
-        .set_delivery_guarantee(DeliveryGuarantee.AT_LEAST_ONCE)
-        .build()
-    )
-    device_sightings_stream.sink_to(devices_sink)
-
-    sensor_discovery_stream = combined_stream.filter(lambda v: json.loads(v)["kind"] == "discovery").map(
-        lambda v: json.dumps(json.loads(v)["payload"]), output_type=Types.STRING()
-    )
-    sensor_discovery_sink = (
-        KafkaSink.builder()
-        .set_bootstrap_servers(kafka_bootstrap)
-        .set_record_serializer(
-            KafkaRecordSerializationSchema.builder()
-            .set_topic(sensor_discovery_topic)
-            .set_value_serialization_schema(SimpleStringSchema())
-            .build()
-        )
-        .set_delivery_guarantee(DeliveryGuarantee.AT_LEAST_ONCE)
-        .build()
-    )
-    sensor_discovery_stream.sink_to(sensor_discovery_sink)
+    ).sink_to(sink).uid(f"{kind}-sink")
 
 
 def main():
@@ -301,6 +302,7 @@ def main():
         sensor_discovery_topic=os.environ.get(
             "REGISTRY__SENSOR_DISCOVERY_KAFKA_TOPIC", "mesh.sensor_discovery.v1"
         ),
+        traffic_topic=os.environ.get("PROTO_DECODE__TRAFFIC_KAFKA_TOPIC", "mesh.traffic.v1"),
     )
 
     env.execute("mesh-decode-decrypt")

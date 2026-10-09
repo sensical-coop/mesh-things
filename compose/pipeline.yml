@@ -69,6 +69,30 @@ services:
       retries: 5
       start_period: 30s
 
+  # Per-mesh traffic statistics from mesh.traffic.v1, in both lite and full.
+  mesh_stats_writer:
+    mem_limit: 256m
+    container_name: mesh-stats-writer
+    <<: *pipeline-image
+    depends_on:
+      kafka:
+        condition: service_healthy
+      kafka-topics-init:
+        condition: service_completed_successfully
+      influxdb:
+        condition: service_healthy
+      influx_init:
+        condition: service_completed_successfully
+    env_file: "../.env"
+    restart: unless-stopped
+    command: ["mesh_stats_writer"]
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:${MESH_STATS_WRITER__HEALTHCHECK_PORT:-19094}/health"]
+      interval: 1m30s
+      timeout: 30s
+      retries: 5
+      start_period: 30s
+
   # lite-only
   decode_consumer:
     profiles: ["lite"]

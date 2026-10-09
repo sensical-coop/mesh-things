@@ -1,4 +1,6 @@
-from common import codec
+from meshtastic.protobuf import portnums_pb2
+
+from common import codec, node_ids
 from common.channels import NODEINFO_KIND, POSITION_KIND, TELEMETRY
 
 
@@ -54,18 +56,47 @@ def _drop(on_drop, reason: str) -> None:
     return None
 
 
-def decode_packet(raw: bytes, gateway_state, rejected_nodes, on_drop=None) -> dict | None:
+_KNOWN_PORTNUMS = frozenset(portnums_pb2.PortNum.values())
+
+
+def _build_traffic(mesh_id: str, se, rejected: bool, received_at: int | None) -> dict:
+    """One reception of a packet, whether or not it can be decoded.
+
+    Carries no payload. `portnum` is None for a packet still encrypted, and
+    for one whose portnum is unknown, which is also what a wrong key that
+    happens to parse looks like.
+    """
+    mp = se.packet
+    plain = mp.HasField("decoded")
+    known = plain and mp.decoded.portnum in _KNOWN_PORTNUMS
+    return {
+        "mesh_id": mesh_id,
+        "gateway_id": node_ids.to_num(se.gateway_id),
+        "node_id": getattr(mp, "from"),
+        "to": mp.to,
+        "packet_id": mp.id,
+        "portnum": mp.decoded.portnum if known else None,
+        "size": len(mp.decoded.payload) if plain else len(mp.encrypted),
+        "rx_time": mp.rx_time,
+        "received_at": received_at,
+        **codec.routing_fields(mp),
+        "rejected": rejected,
+    }
+
+
+def decode_packet(raw: bytes, gateway_state, rejected_nodes, on_drop=None, received_at: int | None = None) -> dict | None:
     """Decrypt/decode one raw ServiceEnvelope.
 
-    Returns None to drop the packet (unregistered gateway, rejected node, or
-    undecodable). Otherwise a dict with a "decoded" event and, when the
-    gateway's mesh is known, "sighting" and possibly "discovery" events.
+    Returns None only for a packet from an unregistered gateway, which belongs
+    to no mesh. Otherwise a dict of events: "traffic" for every packet of a
+    gateway whose mesh is known, and "decoded", plus "sighting" and possibly
+    "discovery", when the packet decodes and its node is not rejected.
 
     Args:
-        on_drop: Called with the reason whenever a packet is dropped. A wrong
-            mesh key and an unsupported portnum are otherwise indistinguishable
-            from no traffic at all. The two runtimes log differently, so each
-            supplies its own.
+        on_drop: Called with the reason whenever a packet yields no decoded
+            event. A wrong mesh key and an unsupported portnum are otherwise
+            indistinguishable from no traffic at all. The two runtimes log
+            differently, so each supplies its own.
     """
     se = codec.parse_envelope(raw)
     gateway_id = se.gateway_id or "unparseable"
@@ -76,31 +107,39 @@ def decode_packet(raw: bytes, gateway_state, rejected_nodes, on_drop=None) -> di
     key_b64 = state.get("psk_b64")
     mesh_id = state.get("mesh_id")
     key_bytes = codec.decode_psk(key_b64) if key_b64 else None
+    events = {}
 
     node_id = getattr(se.packet, "from")
     if mesh_id and f"{mesh_id}:{node_id}" in rejected_nodes:
-        return _drop(on_drop, f"rejected node {mesh_id}:{node_id}")
+        events["traffic"] = _build_traffic(mesh_id, se, rejected=True, received_at=received_at)
+        _drop(on_drop, f"rejected node {mesh_id}:{node_id}")
+        return events
 
     mp = se.packet
     if mp.HasField("encrypted") and not mp.HasField("decoded"):
         decrypted = codec.decrypt_packet(mp, key_bytes)
-        if decrypted is None:
-            return _drop(
-                on_drop,
-                f"could not decrypt packet from node {node_id} via gateway {gateway_id}; "
-                f"the mesh key does not match what the channel is transmitting with",
-            )
-        mp.decoded.CopyFrom(decrypted)
+        if decrypted is not None:
+            mp.decoded.CopyFrom(decrypted)
+    if mesh_id:
+        events["traffic"] = _build_traffic(mesh_id, se, rejected=False, received_at=received_at)
+    if not mp.HasField("decoded"):
+        _drop(
+            on_drop,
+            f"could not decrypt packet from node {node_id} via gateway {gateway_id}; "
+            f"the mesh key does not match what the channel is transmitting with",
+        )
+        return events
 
     result = codec.decode_payload(mp)
     if result is None:
-        return _drop(on_drop, f"portnum {mp.decoded.portnum} has no protobuf schema, nothing to store")
+        _drop(on_drop, f"portnum {mp.decoded.portnum} has no protobuf schema, nothing to store")
+        return events
     portnum, pb_dict, payload_kind = result
     decoded = codec.build_decoded_message(se, portnum, pb_dict, payload_kind)
     if mesh_id:
         decoded["mesh_id"] = mesh_id
 
-    events = {"decoded": decoded}
+    events["decoded"] = decoded
     if mesh_id:
         events["sighting"] = _build_sighting(mesh_id, decoded)
         fields = _discovered_fields(decoded["payload_kind"], decoded["payload"])
