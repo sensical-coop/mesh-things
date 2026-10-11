@@ -7,6 +7,17 @@ from common.alarm_counts import ALARM_COUNTS, ALARM_COUNTS_BUCKET, ALARMS_BUCKET
 from common.channels import ALARMS, QUALITY
 from common.detectors import RANGE
 from common.influx_query import bound_to_datetime
+from common.mesh_stats import (
+    MESH_GATEWAY_PAIRS,
+    MESH_GATEWAY_TRAFFIC,
+    MESH_HOPS,
+    MESH_NODE_PORTS,
+    MESH_NODE_TRAFFIC,
+    MESH_RELAYS,
+    MESH_SIGNAL,
+    MESH_STATS_BUCKET,
+    MESH_TRAFFIC,
+)
 
 from common.influx_query import (  # noqa: F401
     ALLOWED_AGG,
@@ -204,6 +215,150 @@ from(bucket: "{self.bucket}")
             "alarms_by_detector": alarms_by_detector,
             "channels": channels,
         }
+
+    def mesh_stats(self, mesh_id: str, start: str, hourly_start: str, window: str, activity_window: str) -> dict:
+        """Traffic and congestion figures for a mesh, from the mesh stats bucket and node reports.
+
+        Args:
+            start: Start of the per-minute traffic.
+            hourly_start: Start of the hourly figures, rounded down to a whole hour.
+            window: Bucket size of the traffic and airtime series.
+            activity_window: Bucket size of the active nodes and gateways series.
+
+        Returns:
+            {"traffic": {portnum: {"points": [...], **sums}}, "nodes": {node_id: sums},
+             "gateways": {gateway_id: sums}, "hops": {hops: sums}, "signal": {(metric, bucket): sums},
+             "gateway_pairs": {(a, b): sums}, "relays": {(gateway_id, relay): sums},
+             "activity": {"nodes": [points], "gateways": [points]},
+             "airtime": {field: {"mean", "peak", "points"}}}, where sums maps each field to its total.
+        """
+        mesh_id = _validate_mesh_id(mesh_id)
+        start = _validate_range_bound(start, "start")
+        hourly_start = _validate_range_bound(hourly_start, "hourly_start")
+        window = _validate_duration(window, "window")
+        activity_window = _validate_duration(activity_window, "activity_window")
+
+        traffic = {
+            portnum: {**totals, "points": []}
+            for portnum, totals in self._sums(mesh_id, MESH_TRAFFIC, start, "portnum").items()
+        }
+        series = f'''
+from(bucket: "{MESH_STATS_BUCKET}")
+  |> range(start: {start})
+  |> filter(fn: (r) => r._measurement == "{MESH_TRAFFIC}" and r.mesh_id == "{mesh_id}" and r._field == "receptions")
+  |> group(columns: ["portnum"])
+  |> aggregateWindow(every: {window}, fn: sum, createEmpty: false)
+'''
+        for table in self._query_api.query(series):
+            for record in table.records:
+                traffic.setdefault(record.values.get("portnum"), {"points": []})["points"].append(
+                    {"time": record.get_time().isoformat(), "value": int(record.get_value())}
+                )
+
+        return {
+            "traffic": traffic,
+            "nodes": self._sums(mesh_id, MESH_NODE_TRAFFIC, hourly_start, "node_id"),
+            "gateways": self._sums(mesh_id, MESH_GATEWAY_TRAFFIC, hourly_start, "gateway_id"),
+            "hops": self._sums(mesh_id, MESH_HOPS, hourly_start, "hops"),
+            "signal": self._sums(mesh_id, MESH_SIGNAL, hourly_start, "metric", "bucket"),
+            "gateway_pairs": self._sums(mesh_id, MESH_GATEWAY_PAIRS, hourly_start, "gateway_a", "gateway_b"),
+            "relays": self._sums(mesh_id, MESH_RELAYS, hourly_start, "gateway_id", "relay"),
+            "activity": {
+                "nodes": self._active(mesh_id, MESH_NODE_TRAFFIC, "packets", "node_id", hourly_start, activity_window),
+                "gateways": self._active(
+                    mesh_id, MESH_GATEWAY_TRAFFIC, "receptions", "gateway_id", hourly_start, activity_window
+                ),
+            },
+            "airtime": self._airtime(mesh_id, start, window),
+        }
+
+    def node_traffic(self, mesh_id: str, node_id: int, hourly_start: str, window: str) -> dict:
+        """One node's packets by portnum and over time, from the hourly mesh stats.
+
+        Returns:
+            {"ports": {portnum: packets}, "totals": {"packets", "receptions"}, "points": [packets per window]}
+        """
+        mesh_id = _validate_mesh_id(mesh_id)
+        hourly_start = _validate_range_bound(hourly_start, "hourly_start")
+        window = _validate_duration(window, "window")
+        node = f'r.node_id == "{int(node_id)}"'
+        ports = {
+            portnum: int(fields.get("packets", 0))
+            for portnum, fields in self._sums(mesh_id, MESH_NODE_PORTS, hourly_start, "portnum", where=node).items()
+        }
+        totals = self._sums(mesh_id, MESH_NODE_TRAFFIC, hourly_start, "node_id", where=node).get(str(int(node_id)), {})
+        flux = f'''
+from(bucket: "{MESH_STATS_BUCKET}")
+  |> range(start: {hourly_start})
+  |> filter(fn: (r) => r._measurement == "{MESH_NODE_TRAFFIC}" and r.mesh_id == "{mesh_id}" and {node}
+       and r._field == "packets")
+  |> aggregateWindow(every: {window}, fn: sum, createEmpty: false, timeSrc: "_start")
+'''
+        points = [
+            {"time": record.get_time().isoformat(), "value": int(record.get_value())}
+            for table in self._query_api.query(flux)
+            for record in table.records
+        ]
+        return {"ports": ports, "totals": totals, "points": points}
+
+    def _sums(self, mesh_id: str, measurement: str, since: str, *tags: str, where: str = "true") -> dict:
+        """Each field of a mesh stats measurement summed per tag value (or tuple of values)."""
+        group = ", ".join(f'"{t}"' for t in (*tags, "_field"))
+        flux = f'''
+from(bucket: "{MESH_STATS_BUCKET}")
+  |> range(start: {since})
+  |> filter(fn: (r) => r._measurement == "{measurement}" and r.mesh_id == "{mesh_id}" and {where})
+  |> group(columns: [{group}])
+  |> sum()
+'''
+        found: dict = {}
+        for table in self._query_api.query(flux):
+            for record in table.records:
+                key = tuple(record.values.get(t) for t in tags)
+                found.setdefault(key[0] if len(key) == 1 else key, {})[record.get_field()] = record.get_value()
+        return found
+
+    def _active(self, mesh_id: str, measurement: str, field: str, tag: str, since: str, every: str) -> list[dict]:
+        """How many distinct `tag` values had a non-zero `field` in each bucket, stamped at its start."""
+        flux = f'''
+from(bucket: "{MESH_STATS_BUCKET}")
+  |> range(start: {since})
+  |> filter(fn: (r) => r._measurement == "{measurement}" and r.mesh_id == "{mesh_id}" and r._field == "{field}")
+  |> group(columns: ["{tag}"])
+  |> aggregateWindow(every: {every}, fn: sum, createEmpty: false, timeSrc: "_start")
+  |> filter(fn: (r) => r._value > 0)
+  |> group(columns: ["_time"])
+  |> count()
+  |> group()
+  |> sort(columns: ["_time"])
+'''
+        return [
+            {"time": record.get_time().isoformat(), "value": int(record.get_value())}
+            for table in self._query_api.query(flux)
+            for record in table.records
+        ]
+
+    def _airtime(self, mesh_id: str, start: str, window: str) -> dict:
+        """The channel utilization and airtime nodes report, across the mesh's nodes."""
+        airtime = f'''
+from(bucket: "{self.bucket}")
+  |> range(start: {start})
+  |> filter(fn: (r) => r.mesh_id == "{mesh_id}" and r._measurement == "device_metrics"
+       and (r._field == "channel_utilization" or r._field == "air_util_tx"))
+  |> group(columns: ["_field"])'''
+        fields: dict[str, dict] = {}
+        for stage, key in (("mean()", "mean"), ("max()", "peak")):
+            for table in self._query_api.query(f"{airtime}\n  |> {stage}"):
+                for record in table.records:
+                    fields.setdefault(record.get_field(), {"points": []})[key] = record.get_value()
+        for table in self._query_api.query(
+            f"{airtime}\n  |> aggregateWindow(every: {window}, fn: mean, createEmpty: false)"
+        ):
+            for record in table.records:
+                fields.setdefault(record.get_field(), {"points": []})["points"].append(
+                    {"time": record.get_time().isoformat(), "value": record.get_value()}
+                )
+        return fields
 
     def day_rows(self, mesh_id: str, day: date, node_ids: list[int] | None = None) -> dict[str, dict]:
         """A mesh's readings for one UTC day, per measurement, as rows of one time and

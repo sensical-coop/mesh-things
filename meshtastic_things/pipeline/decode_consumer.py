@@ -69,6 +69,7 @@ class DecodeConsumer(object):
         self.sensor_discovery_topic = os.environ.get(
             'REGISTRY__SENSOR_DISCOVERY_KAFKA_TOPIC', 'mesh.sensor_discovery.v1'
         )
+        self.traffic_topic = os.environ.get('PROTO_DECODE__TRAFFIC_KAFKA_TOPIC', 'mesh.traffic.v1')
         self.producer = KafkaProducer(
             bootstrap_servers=kafka_bootstrap_server,
             value_serializer=lambda v: json.dumps(v).encode('utf-8'),
@@ -127,6 +128,7 @@ class DecodeConsumer(object):
                         self.gateway_state,
                         self.rejected_nodes,
                         on_drop=lambda reason: log.debug("Dropping packet", reason=reason),
+                        received_at=record.timestamp,
                     )
                 except Exception as e:
                     # Not retryable - a malformed record won't decode differently next time.
@@ -148,11 +150,15 @@ class DecodeConsumer(object):
         self.raw_consumer.commit()
 
     def _publish(self, events):
-        self.producer.send(self.decoded_topic, value=events["decoded"]).get(timeout=10)
-        if "sighting" in events:
-            self.producer.send(self.devices_topic, value=events["sighting"]).get(timeout=10)
-        if "discovery" in events:
-            self.producer.send(self.sensor_discovery_topic, value=events["discovery"]).get(timeout=10)
+        topics = {
+            "decoded": self.decoded_topic,
+            "sighting": self.devices_topic,
+            "discovery": self.sensor_discovery_topic,
+            "traffic": self.traffic_topic,
+        }
+        for kind, topic in topics.items():
+            if kind in events:
+                self.producer.send(topic, value=events[kind]).get(timeout=10)
 
     async def health_handler(self, request):
         healthy = (

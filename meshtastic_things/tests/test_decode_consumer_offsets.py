@@ -8,6 +8,7 @@ class _Record:
     def __init__(self, offset, value=b"raw"):
         self.offset = offset
         self.value = value
+        self.timestamp = 1_700_000_000_000
 
 
 class _Partition:

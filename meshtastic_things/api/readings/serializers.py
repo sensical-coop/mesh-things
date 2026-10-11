@@ -57,6 +57,138 @@ class DeviceQualityResponseSerializer(serializers.Serializer):
     channels = ChannelQualitySerializer(many=True)
 
 
+class MeshStatsSummarySerializer(serializers.Serializer):
+    packets = serializers.IntegerField(help_text="Distinct packets, counted once however many gateways heard them.")
+    receptions = serializers.IntegerField(help_text="Packets counted once per gateway that heard them.")
+    receptions_per_packet = serializers.FloatField(allow_null=True)
+    bytes = serializers.IntegerField(help_text="Payload bytes of the distinct packets.")
+    decoded_packets = serializers.IntegerField(
+        help_text="Packets that decrypted to a known portnum. Rejected nodes' packets are never decrypted."
+    )
+    rejected_packets = serializers.IntegerField(
+        help_text="Packets from nodes the owner rejected. Included in `packets`, never in `nodes`."
+    )
+    active_nodes = serializers.IntegerField(help_text="Nodes that sent at least one packet since `hourly_start`.")
+    channel_utilization_mean = serializers.FloatField(allow_null=True)
+    channel_utilization_peak = serializers.FloatField(allow_null=True)
+
+
+class MeshTrafficSerializer(serializers.Serializer):
+    portnum = serializers.IntegerField(allow_null=True, help_text="Null for packets that could not be decrypted.")
+    name = serializers.CharField(help_text="The portnum's Meshtastic name, for example `TELEMETRY_APP`.")
+    packets = serializers.IntegerField()
+    receptions = serializers.IntegerField()
+    points = PointSerializer(many=True, help_text="Receptions per `window`.")
+
+
+class MeshAirtimeSerializer(serializers.Serializer):
+    channel = serializers.CharField()
+    mean = serializers.FloatField(allow_null=True)
+    peak = serializers.FloatField(allow_null=True)
+    points = PointSerializer(many=True)
+
+
+class MeshNodeTrafficSerializer(serializers.Serializer):
+    node_id = serializers.IntegerField()
+    device_uuid = serializers.UUIDField(allow_null=True, help_text="Registration ID, when the node is registered.")
+    packets = serializers.IntegerField()
+    receptions = serializers.IntegerField()
+
+
+class MeshGatewayTrafficSerializer(serializers.Serializer):
+    node_id = serializers.IntegerField()
+    device_uuid = serializers.UUIDField(allow_null=True)
+    receptions = serializers.IntegerField()
+    share = serializers.FloatField(help_text="Fraction of all receptions since `hourly_start`.")
+    direct_receptions = serializers.IntegerField(help_text="Receptions heard straight from the sender, with no hop.")
+    rx_snr_mean = serializers.FloatField(allow_null=True, help_text="Mean SNR in dB of receptions heard over the air.")
+    rx_rssi_mean = serializers.FloatField(allow_null=True, help_text="Mean RSSI in dBm of receptions heard over the air.")
+
+
+class MeshHopsSerializer(serializers.Serializer):
+    hops = serializers.IntegerField(allow_null=True, help_text="Hops taken. Null for firmware that does not report it.")
+    packets = serializers.IntegerField()
+
+
+class MeshSignalBucketSerializer(serializers.Serializer):
+    bucket = serializers.FloatField(help_text="Lower bound of the bucket.")
+    receptions = serializers.IntegerField()
+
+
+class MeshSignalSerializer(serializers.Serializer):
+    snr = MeshSignalBucketSerializer(many=True, help_text="Receptions per 2.5 dB of SNR.")
+    rssi = MeshSignalBucketSerializer(many=True, help_text="Receptions per 10 dBm of RSSI.")
+
+
+class MeshGatewayPairSerializer(serializers.Serializer):
+    gateway_a = serializers.IntegerField()
+    gateway_b = serializers.IntegerField()
+    device_uuid_a = serializers.UUIDField(allow_null=True)
+    device_uuid_b = serializers.UUIDField(allow_null=True)
+    common_packets = serializers.IntegerField(help_text="Packets both gateways heard.")
+    snr_diff_mean = serializers.FloatField(
+        allow_null=True, help_text="Mean SNR of `gateway_a` minus `gateway_b`, in dB, over packets both heard over the air."
+    )
+    rssi_diff_mean = serializers.FloatField(allow_null=True, help_text="The same for RSSI, in dBm.")
+
+
+class MeshRelayCandidateSerializer(serializers.Serializer):
+    node_id = serializers.IntegerField()
+    device_uuid = serializers.UUIDField()
+
+
+class MeshRelaySerializer(serializers.Serializer):
+    gateway_id = serializers.IntegerField()
+    device_uuid = serializers.UUIDField(allow_null=True)
+    relay = serializers.IntegerField(help_text="Last byte of the relaying node's number, as the firmware reports it.")
+    receptions = serializers.IntegerField()
+    candidates = MeshRelayCandidateSerializer(
+        many=True, help_text="Registered nodes of the mesh whose number ends in `relay`."
+    )
+
+
+class MeshActivitySerializer(serializers.Serializer):
+    nodes = PointSerializer(many=True, help_text="Nodes that sent at least one packet, per `activity_window`.")
+    gateways = PointSerializer(many=True, help_text="Gateways that heard at least one packet, per `activity_window`.")
+
+
+class MeshStatsResponseSerializer(serializers.Serializer):
+    mesh_id = serializers.CharField()
+    range = serializers.CharField()
+    window = serializers.CharField(help_text="Bucket size of the traffic and airtime series.")
+    activity_window = serializers.CharField(help_text="Bucket size of the `activity` series.")
+    hourly_start = serializers.DateTimeField(
+        help_text="Start of the hourly figures: nodes, gateways, hops and signal."
+    )
+    generated_at = serializers.DateTimeField()
+    summary = MeshStatsSummarySerializer()
+    traffic = MeshTrafficSerializer(many=True)
+    airtime = MeshAirtimeSerializer(many=True)
+    nodes = MeshNodeTrafficSerializer(many=True)
+    gateways = MeshGatewayTrafficSerializer(many=True)
+    hops = MeshHopsSerializer(many=True)
+    signal = MeshSignalSerializer()
+    gateway_pairs = MeshGatewayPairSerializer(many=True)
+    relays = MeshRelaySerializer(many=True)
+    activity = MeshActivitySerializer()
+
+
+class NodePortSerializer(serializers.Serializer):
+    portnum = serializers.IntegerField(allow_null=True)
+    name = serializers.CharField()
+    packets = serializers.IntegerField()
+
+
+class NodeTrafficResponseSerializer(serializers.Serializer):
+    mesh_id = serializers.CharField()
+    node_id = serializers.IntegerField()
+    range = serializers.CharField()
+    window = serializers.CharField()
+    hourly_start = serializers.DateTimeField()
+    packets = serializers.IntegerField()
+    receptions = serializers.IntegerField()
+    ports = NodePortSerializer(many=True)
+    points = PointSerializer(many=True, help_text="Packets sent per `window`.")
 
 
 class ArchivePartitionSerializer(serializers.Serializer):

@@ -141,6 +141,22 @@ services:
         condition: service_healthy
     command: ["python", "manage.py", "consume_device_sightings"]
 
+  # Traceroutes and RF links, from decoded packets and mesh_stats_writer's direct links.
+  registry_topology_consumer:
+    <<: *registry-role
+    mem_limit: 256m
+    container_name: registry-topology-consumer
+    depends_on:
+      kafka:
+        condition: service_healthy
+      kafka-topics-init:
+        condition: service_completed_successfully
+      postgres:
+        condition: service_healthy
+      registry_api:
+        condition: service_healthy
+    command: ["python", "manage.py", "consume_topology"]
+
   registry_gateway_discovery:
     <<: *registry-role
     mem_limit: 256m

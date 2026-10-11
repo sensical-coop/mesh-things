@@ -47,14 +47,15 @@ def test_unregistered_gateway_returns_none():
 
     assert decode.decode_packet(raw, gateway_state={}, rejected_nodes=set()) is None
 
-def test_rejected_node_returns_none():
+def test_rejected_node_yields_traffic_only():
     data = mesh_pb2.Data(portnum=67, payload=b"irrelevant")
     raw = _build_envelope(_plaintext_packet(1, 111, data))
 
     result = decode.decode_packet(
         raw, gateway_state=_gateway_state(), rejected_nodes={f"{MESH_ID}:111"}
     )
-    assert result is None
+    assert set(result) == {"traffic"}
+    assert result["traffic"]["rejected"] is True
 
 def test_encrypted_with_correct_key_produces_decoded_and_sighting():
     key_bytes = os.urandom(32)
@@ -72,12 +73,13 @@ def test_encrypted_with_correct_key_produces_decoded_and_sighting():
     assert result["sighting"]["longitude"] == -98.7654321
     assert "discovery" not in result
 
-def test_encrypted_with_wrong_key_returns_none():
+def test_encrypted_with_wrong_key_yields_traffic_without_a_portnum():
     data = mesh_pb2.Data(portnum=67, payload=b"irrelevant")
     raw = _build_envelope(_encrypted_packet(1, 1, data, RIGHT_KEY))
 
     result = decode.decode_packet(raw, gateway_state=_gateway_state(WRONG_KEY), rejected_nodes=set())
-    assert result is None
+    assert set(result) == {"traffic"}
+    assert result["traffic"]["portnum"] is None
 
 def test_nodeinfo_sighting_promotes_identity_fields():
     info = mesh_pb2.User(long_name="Node One", short_name="N1", hw_model="TBEAM")
@@ -105,7 +107,7 @@ def _drops(raw, gateway_state, rejected_nodes=frozenset()):
     """decode_packet's drop reasons, which are otherwise invisible."""
     reasons = []
     result = decode.decode_packet(raw, gateway_state, rejected_nodes, on_drop=reasons.append)
-    assert result is None
+    assert result is None or "decoded" not in result
     return reasons
 
 def test_a_wrong_mesh_key_says_so_rather_than_dropping_silently():
@@ -163,3 +165,66 @@ def test_no_mesh_id_skips_sighting_and_discovery():
     assert "mesh_id" not in result["decoded"]
     assert "sighting" not in result
     assert "discovery" not in result
+
+
+def _routed_packet(**fields) -> mesh_pb2.MeshPacket:
+    tel = telemetry_pb2.Telemetry()
+    tel.device_metrics.battery_level = 50
+    mp = _plaintext_packet(7, 777, mesh_pb2.Data(portnum=67, payload=tel.SerializeToString()))
+    for name, value in fields.items():
+        setattr(mp, name, value)
+    return mp
+
+
+def test_traffic_carries_routing_and_signal_but_no_payload():
+    mp = _routed_packet(to=0xFFFFFFFF, hop_start=3, hop_limit=1, rx_snr=6.25, rx_rssi=-97, relay_node=0x4D)
+    raw = _build_envelope(mp)
+
+    traffic = decode.decode_packet(raw, _gateway_state(), set(), received_at=1_700_000_000_000)["traffic"]
+
+    assert traffic == {
+        "mesh_id": MESH_ID,
+        "gateway_id": 0xAABBCCDD,
+        "node_id": 777,
+        "to": 0xFFFFFFFF,
+        "packet_id": 7,
+        "portnum": 67,
+        "size": len(mp.decoded.payload),
+        "rx_time": 0,
+        "received_at": 1_700_000_000_000,
+        "hop_start": 3,
+        "hop_limit": 1,
+        "rx_snr": 6.25,
+        "rx_rssi": -97,
+        "relay_node": 0x4D,
+        "next_hop": None,
+        "via_mqtt": False,
+        "rejected": False,
+    }
+
+
+def test_decoded_event_carries_the_routing_fields():
+    decoded = decode.decode_packet(_build_envelope(_routed_packet(hop_start=3, hop_limit=2, rx_snr=1.5, rx_rssi=-110)), _gateway_state(), set())["decoded"]
+
+    assert (decoded["hop_start"], decoded["hop_limit"], decoded["rx_snr"], decoded["rx_rssi"]) == (3, 2, 1.5, -110)
+
+
+def test_signal_is_unknown_for_a_packet_not_heard_over_the_air():
+    traffic = decode.decode_packet(_build_envelope(_routed_packet(via_mqtt=True)), _gateway_state(), set())["traffic"]
+
+    assert traffic["rx_snr"] is None and traffic["rx_rssi"] is None
+
+
+def test_text_messages_are_counted_but_not_decoded():
+    data = mesh_pb2.Data(portnum=1, payload=b"hello")  # TEXT_MESSAGE_APP
+    result = decode.decode_packet(_build_envelope(_plaintext_packet(8, 888, data)), _gateway_state(), set())
+
+    assert set(result) == {"traffic"}
+    assert result["traffic"]["portnum"] == 1
+
+
+def test_no_mesh_id_yields_no_traffic():
+    data = mesh_pb2.Data(portnum=1, payload=b"hello")
+    result = decode.decode_packet(_build_envelope(_plaintext_packet(9, 999, data)), _gateway_state(mesh_id=None), set())
+
+    assert result == {}

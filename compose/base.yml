@@ -71,6 +71,20 @@ services:
         /opt/kafka/bin/kafka-configs.sh --bootstrap-server kafka:29092 --alter \
           --entity-type topics --entity-name "$$PATTERN_DETECTION__ALARMS_TOPIC" \
           --add-config retention.ms=259200000,retention.bytes=536870912
+        # Every reception, without payload, only until mesh_stats_writer has counted it.
+        /opt/kafka/bin/kafka-topics.sh --bootstrap-server kafka:29092 \
+          --create --if-not-exists --topic "$${PROTO_DECODE__TRAFFIC_KAFKA_TOPIC:-mesh.traffic.v1}" \
+          --partitions 1 --replication-factor 1
+        /opt/kafka/bin/kafka-configs.sh --bootstrap-server kafka:29092 --alter \
+          --entity-type topics --entity-name "$${PROTO_DECODE__TRAFFIC_KAFKA_TOPIC:-mesh.traffic.v1}" \
+          --add-config retention.ms=86400000
+        # Hourly direct-link summaries, kept only until the registry has stored them.
+        /opt/kafka/bin/kafka-topics.sh --bootstrap-server kafka:29092 \
+          --create --if-not-exists --topic "$${MESH_STATS_WRITER__LINKS_KAFKA_TOPIC:-mesh.links.v1}" \
+          --partitions 1 --replication-factor 1
+        /opt/kafka/bin/kafka-configs.sh --bootstrap-server kafka:29092 --alter \
+          --entity-type topics --entity-name "$${MESH_STATS_WRITER__LINKS_KAFKA_TOPIC:-mesh.links.v1}" \
+          --add-config retention.ms=86400000
         # Gateway discovery samples are retried by the bridge, so a day is plenty.
         /opt/kafka/bin/kafka-configs.sh --bootstrap-server kafka:29092 --alter \
           --entity-type topics --entity-name "$${REGISTRY__GATEWAY_CANDIDATES_KAFKA_TOPIC:-mesh.gateway_candidates.v1}" \
@@ -92,7 +106,7 @@ services:
       retries: 5
       start_period: 30s
 
-  # One-shot: the alarm buckets, and the retention of individual alarms. Idempotent,
+  # One-shot: the alarm and mesh stats buckets and their retention. Idempotent,
   # so it runs on every `up`. INFLUX__TOKEN must be allowed to create buckets.
   influx_init:
     mem_limit: 128m
@@ -117,6 +131,7 @@ services:
         }
         ensure_bucket "$${INFLUX__ALARMS_BUCKET:-alarms}" "$${INFLUX__ALARMS_RETENTION_DAYS:-30}d"
         ensure_bucket "$${INFLUX__ALARM_COUNTS_BUCKET:-alarm_counts}" 0
+        ensure_bucket "$${INFLUX__MESH_STATS_BUCKET:-mesh_stats}" "$${INFLUX__MESH_STATS_RETENTION_DAYS:-30}d"
 
   postgres:
     mem_limit: 512m

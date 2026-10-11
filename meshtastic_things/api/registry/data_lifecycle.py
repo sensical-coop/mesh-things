@@ -46,6 +46,7 @@ from .models import (
     TermsAcceptance,
     TermsKind,
 )
+from . import topology
 from .status_alerts import check_sinks, check_source_rates, check_sources
 from .terms import terms, terms_enforced, text_hash
 
@@ -394,4 +395,5 @@ def run_pass(now: datetime | None = None) -> dict:
         "source_rate_alerts": check_source_rates(now),
         "sink_alerts": check_sinks(now),
         "disk_alerts": int(check_disk()),
+        "topology_pruned": topology.prune(now),
     }
