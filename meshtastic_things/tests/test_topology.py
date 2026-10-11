@@ -52,6 +52,12 @@ def test_a_request_only_shows_the_hops_taken_so_far():
     assert traceroute_links(paths) == [(A, R1, 2.0)]
 
 
+def test_return_snrs_without_a_return_path_make_no_link():
+    request = _traceroute(node_id=A, to=B, route=[R1], snr_towards=[8], route_back=[R1], snr_back=[4])
+
+    assert traceroute_links(traceroute_paths(request)) == [(A, R1, 2.0)]
+
+
 def test_unknown_snrs_and_unknown_hops_make_no_link():
     reply = _traceroute(node_id=B, to=A, request_id=1, route=[UNKNOWN_NODE], snr_towards=[-128, 8])
 
