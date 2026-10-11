@@ -64,8 +64,7 @@ def traceroute_paths(decoded: dict) -> dict:
 
 def _path_links(nodes: list[int], snrs: list[float | None]) -> list[tuple[int, int, float]]:
     links = []
-    for i, snr in enumerate(snrs[: len(nodes) - 1]):
-        a, b = nodes[i], nodes[i + 1]
+    for a, b, snr in zip(nodes, nodes[1:], snrs):
         if snr is None or UNKNOWN_NODE in (a, b) or a == b:
             continue
         links.append((a, b, snr))
