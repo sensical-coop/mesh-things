@@ -72,6 +72,9 @@ if wants influx; then
 	if [ -n "${INFLUX__TOKEN:-}" ] && docker compose exec -T influxdb true 2>/dev/null; then
 		log "backing up influxdb..."
 		REMOTE_DIR="/tmp/influx-backup-$DATE"
+		# The copy is unencrypted and the prune below only matches files, so a failed run
+		# must not leave it behind.
+		trap 'rm -rf "${BACKUP_DIR:?}/influx-$DATE"; docker compose exec -T influxdb rm -rf "$REMOTE_DIR" 2>/dev/null' EXIT
 		docker compose exec -T influxdb influx backup "$REMOTE_DIR" \
 			--org "$INFLUX__ORG" --token "$INFLUX__TOKEN" >/dev/null
 		docker compose cp "influxdb:$REMOTE_DIR" "$BACKUP_DIR/influx-$DATE"
