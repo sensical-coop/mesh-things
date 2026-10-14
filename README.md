@@ -1,55 +1,45 @@
-# Meshtastic Things
+# Mesh Things
 
-Meshtastic Things is an advanced system for ingesting Meshtastic mesh telemetry via MQTT into a data processing and storage pipeline. It allows you to:
+Mesh Things is a system for ingesting Meshtastic-based mesh telemetry from MQTT into a data processing and storage pipeline. It lets you:
 
-- Store telemetry data on timeseries databases (InfluxDB) and S3-like buckets as Parquet archives
-- Process data on-the-fly or in batch to perform:
-  + Sensor calibration
-  + Pattern detection and data-quality checks
-  + Alarms (thresholds, malfunctioning, etc.) via email
-- Retrieve historic sensor data
-- Fleet management (register meshes, devices and data processing pipelines)
-- Remote calibration and adaptive sensing strategies
+- Register meshes and their devices, and decrypt and decode their packets
+- Discover a mesh's gateways from its traffic, and the nodes under each automatically
+- Bridge meshes from remote MQTT brokers (`sources`) and share readings with third parties over MQTT (`sinks`)
+- Store readings in a timeseries database (InfluxDB) and in a Parquet archive on S3 or MinIO
+- Process readings as they arrive:
+  + Sensor calibration and derived channels
+  + Data-quality checks and pattern detection
+  + Alarms (thresholds, flat or missing readings, gaps) with notifications (email and more)
+- REST API
 
 ## Technology stack
 
-Meshtastic Things has two modes: `lite` and `full`. Ideally, the `lite` version can be deployed on a Raspberry pi, while `full` needs a bigger machine.
-
 - Message store and pipeline: [Apache Kafka](https://kafka.apache.org/)
-- Decode and on-the-fly processing: pure python (Lite) and [Apache Flink](https://flink.apache.org/) (Full)
-- Storage: InfluxDB and S3/MinIO
-- APIs (keys and query): Django
+- Decode and stream processing: Python (`lite`) or [Apache Flink](https://flink.apache.org/) (`full`)
+- MQTT broker: [EMQX](https://www.emqx.io/)
+- Storage: InfluxDB, PostgreSQL, Redis, and S3 or MinIO
+- APIs: Django (registry and readings), behind Caddy
 
 ## Getting started
 
-To deploy, simply use `docker compose`. There are two modes (`lite` and `full`), which can be selected with
-`COMPOSE_PROFILES`:
+Everything runs with `docker compose`. Two tiers are selected with compose profiles:
 
-- **lite**: includes MQTT ingestion, decode/decrypt packets, store data in InfluxDB, manage meshes/devices and access data back over the API.
-- **full**: everything in `lite`, plus data processing on the fly with Flink streams (decode, device postprocessing and calibration, and the per-point quality checks), and a Parquet archive that operators switch on per device. Add the `minio` profile to keep the archive on the bundled MinIO, or leave it out and point the archive at an external S3.
+- **lite**: MQTT ingestion, decrypting and decoding packets, storing readings in InfluxDB, managing meshes and devices, and reading the data back over the API. This should be small enough for a single board computer (SBC).
+- **full**: everything in `lite`, plus the `Flink` stream jobs (decode, postprocessing and calibration, pattern and absence detection), the batch quality worker, MQTT sinks and the Parquet archive that operators switch on per device. Add the `minio` profile to keep the archive on the bundled MinIO, or leave it out and point the archive at an external S3.
 
-```bash
-cp env.example .env                    # edit .env with your settings
-docker compose up -d                   # lite
-docker compose --profile full --profile minio up -d    # or the full stack: Flink streams, and the archive on MinIO
-```
-
-Note: `lite` can add an optional batch quality worker (completeness/gap analysis) with `--profile quality`. Postprocessing runs in the Flink tier, so it needs `full`:
+Optional profiles on top of either tier: `quality` (the batch quality worker on `lite`), `sinks` (MQTT sinks on `lite`), `monitor` (the server monitor) and `kafka-ui` (a topic browser).
 
 ```bash
-docker compose up -d --profile quality # lite with profile quality
+cp env.example .env    # then edit .env, see below
+docker compose --profile lite up -d                     # lite
+docker compose --profile lite --profile quality up -d   # lite with the batch quality worker
+docker compose --profile full --profile minio up -d     # full, with the archive on MinIO
 ```
 
-### Local development
-
-For local development, a special compose configuration is used with: `docker-compose.dev.yml`. This publishes admin UI ports, and switches Django to `dev` settings). Edit `COMPOSE_FILE` in `env.example` or:
-
-```
-docker compose -f docker-compose.yml -f docker-compose.dev.yml up -d
-```
+`env.example` is set up for local development: its `COMPOSE_FILE` adds the dev overlay `docker-compose.dev.yml`, which publishes the admin UI ports and switches Django to its `dev` settings. In production, delete the `COMPOSE_FILE` line so the base file runs alone, and set `COMPOSE_PROFILES` instead of passing `--profile`. Both API secret keys must be set before the APIs start.
 
 ## Work in progress
 
-This repository is still WIP. Documentation and licensing is on-going.
+This repository is still a work in progress. Documentation and licensing are ongoing.
 
 Feel free to open issues or PRs. Contact us at info@sensical.es for more information.
