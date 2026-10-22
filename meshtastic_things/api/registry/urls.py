@@ -35,6 +35,7 @@ urlpatterns = [
     path("sources/terms", views.SourceTermsView.as_view()),
     path("sources/<uuid:source_id>", views.SourceDetailView.as_view()),
     path("sources/<uuid:source_id>/terms-acceptance", views.SourceTermsAcceptanceView.as_view()),
+    path("sources/<uuid:source_id>/restart", views.SourceRestartView.as_view()),
     path("sinks", views.SinkListCreateView.as_view()),
     path("sinks/terms", views.SinkTermsView.as_view()),
     path("sinks/<uuid:sink_id>", views.SinkDetailView.as_view()),

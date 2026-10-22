@@ -5,6 +5,7 @@ from unittest.mock import patch
 
 from django.core.management import CommandError, call_command
 from django.test import override_settings
+from django.utils import timezone
 
 from registry import broker_hosts
 from registry.models import Mesh, Owner, Source, TermsKind
@@ -265,6 +266,72 @@ class SourceFailurePolicyTests(RegistryTestCase):
 
         self.assertEqual(resp.status_code, 200)
         self.assertEqual(resp.json()["status"], "unknown")
+
+
+class SourceRestartTests(RegistryTestCase):
+    def setUp(self):
+        super().setUp()
+        self.operator = self.create_owner(name="Operator", email="src-restart-op@example.com")
+        self.promote_to_operator(self.operator)
+        self.source = self.create_source(self.operator)
+        self.fake_emqx.apply_source.reset_mock()
+
+    def _restart(self, owner):
+        return self.client.post(f"/sources/{self.source['id']}/restart", **self.auth_headers(owner))
+
+    def test_restarting_reapplies_the_bridge_then_resubscribes(self):
+        resp = self._restart(self.operator)
+
+        self.assertEqual(resp.status_code, 200, resp.content)
+        self.assertEqual(resp.json()["status"], "connected")
+        self.assertEqual(str(self.fake_emqx.apply_source.call_args.args[0].id), self.source["id"])
+        self.fake_emqx.restart_source.assert_called_once_with(self.source["id"])
+
+    def test_a_superuser_restarts_any_source(self):
+        admin = self.create_owner(name="Admin", email="src-restart-admin@example.com")
+        self.promote_to_superuser(admin)
+
+        self.assertEqual(self._restart(admin).status_code, 200)
+
+    def test_another_operator_or_a_member_cannot_restart_it(self):
+        other = self.create_owner(name="Second operator", email="src-restart-op2@example.com")
+        self.promote_to_operator(other)
+        member = self.create_owner(name="Member", email="src-restart-member@example.com")
+
+        self.assertEqual((self._restart(other).status_code, self._restart(member).status_code), (404, 403))
+        self.fake_emqx.restart_source.assert_not_called()
+
+    def test_a_paused_source_is_not_restarted(self):
+        Source.objects.filter(pk=self.source["id"]).update(paused_at=timezone.now())
+
+        self.assertEqual(self._restart(self.operator).status_code, 409)
+        self.fake_emqx.apply_source.assert_not_called()
+
+    def test_a_broker_error_answers_502(self):
+        self.fake_emqx.restart_source.side_effect = RuntimeError("emqx down")
+
+        self.assertEqual(self._restart(self.operator).status_code, 502)
+
+    def test_the_command_restarts_by_id_and_lists_without_one(self):
+        out = StringIO()
+        call_command("restart_source", self.source["id"], stdout=out)
+        self.fake_emqx.restart_source.assert_called_once_with(self.source["id"])
+
+        self.fake_emqx.source_message_count.return_value = 42
+        out = StringIO()
+        call_command("restart_source", stdout=out)
+        self.assertIn(f"{self.source['id']}  connected", out.getvalue())
+        self.assertIn("messages=42", out.getvalue())
+
+    def test_the_command_refuses_an_unknown_or_paused_source(self):
+        with self.assertRaises(CommandError):
+            call_command("restart_source", str(uuid.uuid4()))
+        with self.assertRaises(CommandError):
+            call_command("restart_source", "not-a-uuid")
+        Source.objects.filter(pk=self.source["id"]).update(paused_at=timezone.now())
+        with self.assertRaises(CommandError):
+            call_command("restart_source", self.source["id"])
+        self.fake_emqx.restart_source.assert_not_called()
 
 
 class MeshSourceTests(RegistryTestCase):

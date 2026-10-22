@@ -152,6 +152,16 @@ def resume_source(source: Source) -> None:
         )
 
 
+def restart_source(source: Source) -> None:
+    """Re-apply a source's bridge, re-creating anything missing, then make it subscribe again.
+
+    Raises if the broker refuses either step.
+    """
+    client = get_emqx_client()
+    client.apply_source(source)
+    client.restart_source(str(source.id))
+
+
 def resume_sink(sink: Sink) -> None:
     """Let a paused sink's consumer back in and start sending again.
 
