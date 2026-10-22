@@ -788,8 +788,9 @@ class OwnerMeView(APIView):
                 alarm, no summaries) up to 2592000 (30 days). Leave unset or
                 null to use the server default.
             status_alerts_enabled: Email me when a source I created stays
-                disconnected, or a sink I created with meshes or devices
-                attached has nobody connected. Defaults to false.
+                disconnected or stops receiving messages, or a sink I created
+                with meshes or devices attached has nobody connected. Defaults
+                to false. Superusers are always emailed about silent sources.
             source_rate_alerts_enabled: Email me when a source I created
                 averages more messages per second over an hour than this
                 instance allows. Defaults to false. Superusers are always

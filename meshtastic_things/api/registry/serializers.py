@@ -183,8 +183,9 @@ class OwnerUpdateSerializer(serializers.ModelSerializer):
             "name": {"required": False},
             "status_alerts_enabled": {
                 "help_text": (
-                    "Email me when a source I created stays disconnected, or a sink I created with "
-                    "meshes or devices attached has nobody connected. Off by default."
+                    "Email me when a source I created stays disconnected or stops receiving messages, "
+                    "or a sink I created with meshes or devices attached has nobody connected. Off by "
+                    "default. Superusers are always emailed about silent sources."
                 )
             },
             "source_rate_alerts_enabled": {

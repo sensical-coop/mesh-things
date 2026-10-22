@@ -1,5 +1,5 @@
 """Tell operators who opted in when a source stays disconnected or a sink has nobody connected,
-and superusers when a source is unusually busy.
+and superusers when a source is unusually busy or has gone silent.
 
 Each lifecycle pass reads EMQX's view and keeps, in the cache, when a problem was first
 seen. The operator is emailed once per outage, after it lasts the configured hours, and
@@ -15,7 +15,12 @@ from django.db.models import Exists, OuterRef
 
 from common.env import env_str
 
-from .emailing import send_sink_unused_email, send_source_busy_email, send_source_disconnected_email
+from .emailing import (
+    send_sink_unused_email,
+    send_source_busy_email,
+    send_source_disconnected_email,
+    send_source_silent_email,
+)
 from .emqx_client import get_emqx_client
 from .models import DeviceSink, MeshSink, Sink, Source
 
@@ -112,6 +117,51 @@ def check_source_rates(now: datetime) -> int:
             log.warning("source_busy", source_id=str(source.id), msgs_per_s=round(rate, 1))
         if _outage_due("source-rate", source.id, busy, now, 0) and _alerted(
             "source-rate", source.id, send_source_busy_email, source, rate
+        ):
+            sent += 1
+    return sent
+
+
+def _silent_since(source_id, count: int, now: datetime) -> datetime | None:
+    """The first pass that saw the current count, or None when it changed since the previous pass.
+
+    A changed count, including a lower one after EMQX restarted, starts the silence anew.
+    """
+    key = f"registry:source-last-message:{source_id}"
+    previous = cache.get(key)
+    if previous and previous["count"] == count:
+        cache.touch(key, timeout=STATE_SECONDS)
+        return datetime.fromisoformat(previous["at"])
+    cache.set(key, {"count": count, "at": now.isoformat()}, timeout=STATE_SECONDS)
+    return None
+
+
+def check_silent_sources(now: datetime) -> int:
+    """Email superusers, and the operator if opted in, once while a source handles no message for SOURCE_SILENT_ALERT_HOURS.
+
+    Catches a bridge that stays `connected` after its subscription stopped delivering,
+    which EMQX's status never shows.
+    """
+    hours = settings.SOURCE_SILENT_ALERT_HOURS
+    if not hours or not env_str("REGISTRY__EMQX_API_URL"):
+        return 0
+    client = get_emqx_client()
+    sent = 0
+    for source in Source.objects.filter(paused_at__isnull=True).select_related("created_by"):
+        try:
+            count = client.source_message_count(str(source.id))
+            status = client.source_status(str(source.id))
+        except Exception as e:
+            log.warning("source_silence_unavailable", source_id=str(source.id), error=str(e))
+            continue
+        if count is None:
+            continue
+        since = _silent_since(source.id, count, now)
+        silent = since is not None and now - since >= timedelta(hours=hours)
+        if silent:
+            log.warning("source_silent", source_id=str(source.id), status=status, since=since.isoformat())
+        if _outage_due("source-silent", source.id, silent, now, 0) and _alerted(
+            "source-silent", source.id, send_source_silent_email, source, status, since
         ):
             sent += 1
     return sent

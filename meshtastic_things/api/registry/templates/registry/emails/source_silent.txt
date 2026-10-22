@@ -1,0 +1,15 @@
+{% autoescape off %}Hi {{ name }},
+
+The source "{{ source }}" ({{ server }}, {{ topic }}) has not received a message since
+{{ since|date:"Y-m-d H:i" }} UTC (status: {{ status }}). Nothing from its meshes is
+reaching Mesh Things while it stays this way.
+
+A bridge can stay connected after the remote broker has stopped delivering to it.
+Restart the source from its page. If it stays silent, check that the remote broker
+still publishes on this topic and that the source's credentials can still read it.
+
+{{ source_link }}
+
+You will not be emailed again while it stays silent. If it receives messages again
+and goes silent later, you will be.
+{% endautoescape %}
