@@ -45,6 +45,16 @@ def session_expiry_seconds() -> int:
     return int(os.environ.get('MQTT_BRIDGE__SESSION_EXPIRY', 3600))
 
 
+def _connection_kwargs() -> dict:
+    """Broker port, credentials and TLS shared by every connection the bridge opens."""
+    return dict(
+        port=int(os.environ.get('MQTT_BRIDGE__PORT', 8883)),
+        username=os.environ['MQTT_BRIDGE__USER'],
+        password=os.environ['MQTT_BRIDGE__PASS'],
+        tls_params=aiomqtt.TLSParameters() if get_bool_env('MQTT_BRIDGE__SSL', default=True) else None,
+    )
+
+
 def _session_properties() -> Properties:
     properties = Properties(PacketTypes.CONNECT)
     properties.SessionExpiryInterval = session_expiry_seconds()
@@ -61,19 +71,15 @@ async def retire_session(broker: str, client_id: str) -> None:
 
     Use it when scaling the pool down, before the id stops being used.
     """
-    tls_params = aiomqtt.TLSParameters() if get_bool_env('MQTT_BRIDGE__SSL', default=True) else None
     properties = Properties(PacketTypes.CONNECT)
     properties.SessionExpiryInterval = 0
     async with aiomqtt.Client(
         broker,
-        port=int(os.environ.get('MQTT_BRIDGE__PORT', 8883)),
-        username=os.environ['MQTT_BRIDGE__USER'],
-        password=os.environ['MQTT_BRIDGE__PASS'],
         identifier=client_id,
         protocol=aiomqtt.ProtocolVersion.V5,
         clean_start=True,
         properties=properties,
-        tls_params=tls_params,
+        **_connection_kwargs(),
     ):
         log.info(f'Retired MQTT session for client_id={client_id}')
 
@@ -178,21 +184,14 @@ class MQTTHandler(object):
             topics = [f'$share/{shared_group()}/{topic}' for topic in topics]
 
         qos = int(os.environ.get('MQTT_BRIDGE__QOS', 1))
-        tls_params = None
-        if get_bool_env('MQTT_BRIDGE__SSL', default=True):
-            tls_params = aiomqtt.TLSParameters()
-
         client = aiomqtt.Client(
             self.mqtt_broker,
-            port=int(os.environ.get('MQTT_BRIDGE__PORT', 8883)),
-            username=os.environ['MQTT_BRIDGE__USER'],
-            password=os.environ['MQTT_BRIDGE__PASS'],
             identifier=self.client_id,
             protocol=aiomqtt.ProtocolVersion.V5,
             # Resume the session
             clean_start=False,
             properties=_session_properties(),
-            tls_params=tls_params,
+            **_connection_kwargs(),
         )
 
         while True:
@@ -226,12 +225,14 @@ class MQTTHandler(object):
             log.debug('MQTT monitor sending health ping')
             try:
                 await self.publish_to_mqtt("health/ping", "ok")
-            except aiomqtt.MqttError:
+            except aiomqtt.MqttError as e:
+                log.warning('MQTT health ping failed', error=str(e))
                 self.mqtt_health.mark_disconnected()
             await asyncio.sleep(10)
 
     async def publish_to_mqtt(self, topic, payload):
-        async with aiomqtt.Client(self.mqtt_broker) as client:
+        # A random client id, so the ping never takes over the bridge's session.
+        async with aiomqtt.Client(self.mqtt_broker, **_connection_kwargs()) as client:
             await client.publish(topic, payload=payload)
             self.mqtt_health.mark_connected()
 
