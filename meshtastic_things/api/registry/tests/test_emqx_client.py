@@ -88,6 +88,21 @@ class EmqxClientTests(SimpleTestCase):
             [("DELETE", f"/rules/{NAME}"), ("DELETE", f"/sources/mqtt:{NAME}"), ("DELETE", f"/connectors/mqtt:{NAME}")],
         )
 
+    def test_restart_disables_then_enables_the_source(self):
+        self.client.restart_source(str(SOURCE_ID))
+
+        self.assertEqual(
+            [(m, p) for m, p, _ in self.calls],
+            [("PUT", f"/sources/mqtt:{NAME}/enable/false"), ("PUT", f"/sources/mqtt:{NAME}/enable/true")],
+        )
+
+    def test_restart_stops_on_an_emqx_error(self):
+        self.responses[("PUT", f"/sources/mqtt:{NAME}/enable/false")] = _response(404)
+
+        with self.assertRaises(RuntimeError):
+            self.client.restart_source(str(SOURCE_ID))
+        self.assertEqual(len(self.calls), 1)
+
     def test_status_is_missing_when_emqx_has_no_source(self):
         self.responses[("GET", f"/sources/mqtt:{NAME}")] = _response(404)
 

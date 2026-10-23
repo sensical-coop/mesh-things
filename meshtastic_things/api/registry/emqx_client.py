@@ -94,6 +94,17 @@ class EmqxClient:
         self._delete(f"/connectors/mqtt:{name}")
         log.info("Deleted EMQX source", source_id=source_id)
 
+    def restart_source(self, source_id: str) -> None:
+        """Turn the source off and on, so it subscribes to the remote topic again.
+
+        A source can stay `connected` after its subscription has stopped delivering.
+        EMQX 5.8 has no restart operation for sources, only enable and disable.
+        """
+        path = f"/sources/mqtt:{sources.resource_name(source_id)}/enable"
+        for enable in ("false", "true"):
+            self._request("PUT", f"{path}/{enable}").raise_for_status()
+        log.info("Restarted EMQX source", source_id=source_id)
+
     def source_status(self, source_id: str) -> str:
         """EMQX's connection status for the source, such as `connected` or `disconnected`."""
         resp = self._request("GET", f"/sources/mqtt:{sources.resource_name(source_id)}")

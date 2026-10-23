@@ -230,6 +230,9 @@ SOURCE_ALERT_HOURS = env_int("REGISTRY__SOURCE_ALERT_HOURS", 2)
 # Superusers, and an operator who opted in, are emailed once when a source averages more
 # messages per second than this between two lifecycle passes. 0 turns it off.
 SOURCE_RATE_ALERT_MSGS_PER_S = env_int("REGISTRY__SOURCE_RATE_ALERT_MSGS_PER_S", 20)
+# Superusers, and an operator who opted in, are emailed once when a source has handled no
+# message for this many hours, even while its bridge reports `connected`. 0 turns it off.
+SOURCE_SILENT_ALERT_HOURS = env_int("REGISTRY__SOURCE_SILENT_ALERT_HOURS", 6)
 SINK_ALERT_HOURS = env_int("REGISTRY__SINK_ALERT_HOURS", 24)
 
 # Off for an instance run by its own mesh owner, where there is no second party to

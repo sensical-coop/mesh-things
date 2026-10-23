@@ -29,6 +29,7 @@ from .emailing import (
 from .data_lifecycle import (
     cancel_mesh_deletions,
     record_acceptance,
+    restart_source,
     resume_mesh,
     resume_sink,
     resume_source,
@@ -788,8 +789,9 @@ class OwnerMeView(APIView):
                 alarm, no summaries) up to 2592000 (30 days). Leave unset or
                 null to use the server default.
             status_alerts_enabled: Email me when a source I created stays
-                disconnected, or a sink I created with meshes or devices
-                attached has nobody connected. Defaults to false.
+                disconnected or stops receiving messages, or a sink I created
+                with meshes or devices attached has nobody connected. Defaults
+                to false. Superusers are always emailed about silent sources.
             source_rate_alerts_enabled: Email me when a source I created
                 averages more messages per second over an hour than this
                 instance allows. Defaults to false. Superusers are always
@@ -2745,6 +2747,29 @@ class SourceDetailView(APIView):
             raise BadGateway(f"Failed to remove the bridge, source NOT deleted: {e}")
         source.delete()
         return Response(status=status.HTTP_204_NO_CONTENT)
+
+
+class SourceRestartView(APIView):
+    permission_classes = [IsVerifiedOwner]
+
+    @extend_schema(request=None, responses=SourceReadSerializer)
+    def post(self, request, source_id):
+        """Restart a source's bridge and return the source with its new status. Operators only, on the sources they created.
+
+        Reapplies the source's settings on the broker and subscribes to the
+        remote topic again. Use it when a source shows `connected` but its
+        meshes have stopped receiving data. A paused source answers `409`, and
+        `502` means the broker could not restart it.
+        """
+        _require_operator(request)
+        source = _get_source_or_404(request, source_id)
+        if source.paused_at is not None:
+            raise Conflict("Source is paused; renew its terms to restart it")
+        try:
+            restart_source(source)
+        except Exception as e:
+            raise BadGateway(f"Failed to restart the bridge: {e}")
+        return Response(_source_read_data(source))
 
 
 class SourceTermsAcceptanceView(APIView):

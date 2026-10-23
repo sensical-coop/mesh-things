@@ -223,3 +223,75 @@ class SourceRateAlertTests(StatusAlertTestCase):
 
         self.assertEqual(self._pass(NOW + timedelta(hours=1), 3600 * 500), 0)
         self.fake_emqx.source_message_count.assert_not_called()
+
+
+@override_settings(SOURCE_SILENT_ALERT_HOURS=6)
+class SourceSilentAlertTests(StatusAlertTestCase):
+    def setUp(self):
+        super().setUp()
+        self.opt_in(False)
+        self.source = self.create_source(self.operator)
+        self.admin = self.create_owner(name="Admin", email="silent-admin@example.com")
+        self.promote_to_superuser(self.admin)
+        self.counts = {"value": 0}
+        self.fake_emqx.source_message_count.side_effect = lambda source_id: self.counts["value"]
+        mail.outbox.clear()
+
+    def _pass(self, hours, count):
+        self.counts["value"] = count
+        return status_alerts.check_silent_sources(NOW + timedelta(hours=hours))
+
+    def test_a_connected_source_that_stops_counting_emails_superusers_once(self):
+        self._pass(0, 100)
+        self._pass(1, 200)
+
+        self.assertEqual(self._pass(6, 200), 0)
+        self.assertEqual(self._pass(7, 200), 1)
+        self.assertEqual(self._pass(8, 200), 0)
+
+        self.assertEqual([m.to for m in mail.outbox], [["silent-admin@example.com"]])
+        self.assertIn("status: connected", mail.outbox[0].body)
+        self.assertIn("2026-10-01 13:00", mail.outbox[0].body)
+
+    def test_a_source_that_keeps_counting_sends_nothing(self):
+        for hour in range(12):
+            self._pass(hour, hour * 10)
+
+        self.assertEqual(mail.outbox, [])
+
+    def test_receiving_again_starts_a_new_episode(self):
+        self._pass(0, 100)
+        self._pass(7, 100)
+        self._pass(8, 150)
+
+        self.assertEqual(self._pass(14, 150), 1)
+        self.assertEqual(len(mail.outbox), 2)
+
+    def test_an_emqx_restart_counts_as_activity(self):
+        self._pass(0, 100)
+
+        self.assertEqual(self._pass(5, 3), 0)
+        self.assertEqual(self._pass(10, 3), 0)
+        self.assertEqual(self._pass(11, 3), 1)
+
+    def test_the_operator_is_emailed_when_opted_in(self):
+        self.opt_in(True)
+        self._pass(0, 100)
+
+        self._pass(6, 100)
+
+        self.assertCountEqual([m.to[0] for m in mail.outbox], ["silent-admin@example.com", "alerts-op@example.com"])
+
+    def test_a_paused_source_is_not_checked(self):
+        Source.objects.filter(pk=self.source["id"]).update(paused_at=timezone.now())
+        self._pass(0, 100)
+
+        self.assertEqual(self._pass(12, 100), 0)
+        self.fake_emqx.source_message_count.assert_not_called()
+
+    @override_settings(SOURCE_SILENT_ALERT_HOURS=0)
+    def test_zero_turns_it_off(self):
+        self._pass(0, 100)
+
+        self.assertEqual(self._pass(48, 100), 0)
+        self.fake_emqx.source_message_count.assert_not_called()
