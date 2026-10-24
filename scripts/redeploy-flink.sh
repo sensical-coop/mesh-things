@@ -8,7 +8,7 @@
 #   COMPOSE="docker compose -f docker-compose.yml -f docker-compose.dev.yml --profile full" \
 #       ./scripts/redeploy-flink.sh
 #
-# Redeploy everything when common/ changed: the jobs import it from the
+# Redeploy everything when common/ or mesh_things/ changed: the jobs import them from the
 # jobmanager and taskmanager images, not from the submitted file.
 #
 set -euo pipefail
