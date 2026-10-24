@@ -2,7 +2,7 @@
   "openapi": "3.0.3",
   "info": {
     "title": "Mesh Things API",
-    "version": "0.1.0"
+    "version": "0.1.1"
   },
   "paths": {
     "/algorithms": {
@@ -4002,7 +4002,7 @@
     "/readings/meshes/{mesh_id}/nodes/{node_id}": {
       "get": {
         "operationId": "readings_meshes_nodes_retrieve",
-        "description": "Return a device's readings for one measurement over a time range.\n\nDownsampling covers numeric fields only, so text fields such as\n`timestamp_quality` are left out whenever `window` is set.\n\nArgs:\n    payload_kind: Family to read, for example `telemetry:environment_metrics`.\n        Returns every channel in it. Required unless `channel` is given.\n    channel: A single channel, for example `environment_metrics.temperature`.\n        Takes precedence over `payload_kind`.\n    start: Start of the range, as a relative duration such as `-24h`, a date\n        such as `2026-09-01`, or a timestamp such as `2026-09-01T13:45:00Z`.\n        Defaults to `-1h`.\n    stop: End of the range, in the same forms as `start`, or `now()`.\n        Defaults to `now()`.\n    window: Bucket size to downsample into, for example `6h`. Off by default.\n    agg: Aggregate applied to each bucket, one of `mean`, `max`, `min`,\n        `last`, `first`, `sum` or `count`. Defaults to `mean` and applies\n        only when `window` is set.",
+        "description": "Return a device's readings for one measurement over a time range.\n\nEach point's bookkeeping fields, `packet_id` and `timestamp_quality`, are not\nreadings and are left out unless one is asked for with `channel`.\nDownsampling covers numeric fields only, so text fields are also left out\nwhenever `window` is set.\n\nArgs:\n    payload_kind: Family to read, for example `telemetry:environment_metrics`.\n        Returns every channel in it. Required unless `channel` is given.\n    channel: A single channel, for example `environment_metrics.temperature`.\n        Takes precedence over `payload_kind`.\n    start: Start of the range, as a relative duration such as `-24h`, a date\n        such as `2026-09-01`, or a timestamp such as `2026-09-01T13:45:00Z`.\n        Defaults to `-1h`.\n    stop: End of the range, in the same forms as `start`, or `now()`.\n        Defaults to `now()`.\n    window: Bucket size to downsample into, for example `6h`. Off by default.\n    agg: Aggregate applied to each bucket, one of `mean`, `max`, `min`,\n        `last`, `first`, `sum` or `count`. Defaults to `mean` and applies\n        only when `window` is set.",
         "parameters": [
           {
             "in": "query",
