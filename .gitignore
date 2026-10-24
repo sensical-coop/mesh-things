@@ -235,3 +235,7 @@ pending*
 
 # Server monitor settings (see monitor.env.example)
 monitor.env
+
+# Local request collections and key files with real credentials
+server/examples/api-authenticated*.http
+server/examples/*.key
