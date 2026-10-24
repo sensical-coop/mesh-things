@@ -753,7 +753,9 @@ without a schema change. Also deferred: a Postgres-side "latest value" cache -
   `completeness_ratio` next to `temperature` by accident. The per-point
   bookkeeping fields (`influx_client.METADATA_FIELDS`: `packet_id`,
   `timestamp_quality`) are excluded from this query - they are writer
-  provenance, not readings, and have no catalog row to decorate them with.
+  provenance, not readings, and have no catalog row to decorate them with. The
+  per-family `latest` and timeseries reads leave them out too; a timeseries read
+  that names one of them as its `channel` still returns it.
 
 This still lives in readings, not registry - registry deliberately has zero InfluxDB
 access (see [roles](#roles-registry-and-readings) below for why the

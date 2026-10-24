@@ -799,8 +799,10 @@ class Readings:
     def meshes_nodes_get(self, mesh_id: str, node_id: int | str, *, agg: Literal['count', 'first', 'last', 'max', 'mean', 'min', 'sum'] | None = None, channel: str | None = None, payload_kind: str | None = None, start: str | datetime | date | None = None, stop: str | datetime | date | None = None, window: str | None = None) -> Any:
         """Return a device's readings for one measurement over a time range.
 
-        Downsampling covers numeric fields only, so text fields such as
-        `timestamp_quality` are left out whenever `window` is set.
+        Each point's bookkeeping fields, `packet_id` and `timestamp_quality`, are not
+        readings and are left out unless one is asked for with `channel`.
+        Downsampling covers numeric fields only, so text fields are also left out
+        whenever `window` is set.
 
         Args:
             payload_kind: Family to read, for example `telemetry:environment_metrics`.
@@ -1930,8 +1932,10 @@ class AsyncReadings:
     async def meshes_nodes_get(self, mesh_id: str, node_id: int | str, *, agg: Literal['count', 'first', 'last', 'max', 'mean', 'min', 'sum'] | None = None, channel: str | None = None, payload_kind: str | None = None, start: str | datetime | date | None = None, stop: str | datetime | date | None = None, window: str | None = None) -> Any:
         """Return a device's readings for one measurement over a time range.
 
-        Downsampling covers numeric fields only, so text fields such as
-        `timestamp_quality` are left out whenever `window` is set.
+        Each point's bookkeeping fields, `packet_id` and `timestamp_quality`, are not
+        readings and are left out unless one is asked for with `channel`.
+        Downsampling covers numeric fields only, so text fields are also left out
+        whenever `window` is set.
 
         Args:
             payload_kind: Family to read, for example `telemetry:environment_metrics`.
