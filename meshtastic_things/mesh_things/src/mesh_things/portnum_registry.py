@@ -1,3 +1,4 @@
+from meshtastic import protocols
 from meshtastic.protobuf import portnums_pb2
 
 from mesh_things.channels import (
@@ -6,6 +7,7 @@ from mesh_things.channels import (
     PORTNUM_PREFIX,
     POSITION_KIND,
     TELEMETRY,
+    namespace_of,
 )
 
 _NAMED_PORTNUMS = {
@@ -34,3 +36,14 @@ def classify(portnum: int, pb) -> str:
         # measurement and nothing downstream will store it.
         return f"{TELEMETRY}:{variant}" if variant else TELEMETRY
     return base
+
+
+def message_type(payload_kind: str):
+    """The protobuf message a payload_kind's payload decodes to, or None for one with no message."""
+    base = TELEMETRY if namespace_of(payload_kind) == TELEMETRY else payload_kind
+    portnum = next((num for num, kind in _NAMED_PORTNUMS.items() if kind == base), None)
+    prefix = f"{DEVICE}:{PORTNUM_PREFIX}"
+    if portnum is None and payload_kind.startswith(prefix) and payload_kind[len(prefix):].isdigit():
+        portnum = int(payload_kind[len(prefix):])
+    handler = protocols.get(portnum)
+    return handler.protobufFactory if handler else None

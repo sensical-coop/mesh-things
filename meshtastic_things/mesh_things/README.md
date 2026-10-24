@@ -7,6 +7,8 @@ helpers the API itself is built on.
 pip install mesh-things              # the API client and the vocabulary
 pip install mesh-things[protobuf]    # telemetry catalog and portnum names, from the Meshtastic protobufs
 pip install mesh-things[codec]       # MQTT envelope parsing and channel decryption
+pip install mesh-things[pandas]      # readings and exports as DataFrames
+pip install mesh-things[archive]     # the Parquet archive, read straight from S3 (adds pyarrow)
 ```
 
 ## The client
@@ -59,6 +61,44 @@ for traceroute in api.traceroutes(mesh["id"], node_id="!19ba4462"):  # pages thr
 ```
 
 Presigned links are fetched without your API key.
+
+### DataFrames (`[pandas]`)
+
+```python
+from mesh_things.pandas import channel_units, read_export, to_dataframe
+
+readings = api.readings.devices_get(device_uuid, payload_kind="telemetry:environment_metrics", start="-1d")
+df = to_dataframe(readings, units=channel_units(api.measurements.list()))  # one column per channel
+df = to_dataframe(readings, long=True)  # one row per reading: time, channel, value
+frames = read_export(api.download(export["url"]))  # one frame per measurement
+```
+
+- **Wide by default.** Timeseries are indexed by time in UTC, with one column per channel
+  (`environment_metrics.temperature`, ...).
+- **Metadata.** `df.attrs` carries `mesh_id`, `node_id`, `payload_kind`, `origin` and,
+  when given, `units`.
+- **Other shapes.** Latest readings and quality become one row per channel, and any list
+  becomes one row per element.
+
+### The archive (`[archive]`)
+
+```python
+from mesh_things import archive
+from mesh_things.pandas import archive_frame
+
+rows = archive.open_dataset(api, mesh_id).to_table().to_pandas()  # operators only
+df = archive_frame(rows)  # payload_json spread into channel columns, indexed by node_id and time
+```
+
+### Protobuf messages (`[protobuf]`)
+
+`mesh_things.protobuf` turns readings back into Meshtastic messages:
+- `latest_messages()` gives one `Telemetry` per variant from a device's latest readings.
+- `series_messages()` gives one message per time from raw, unwindowed readings.
+- `payload_message()` converts an archived payload of any kind.
+
+Readings other than telemetry are stored in a form of the API's own, so they stay as
+dicts.
 
 ### Errors
 

@@ -13,11 +13,12 @@ TERMS = {
 }
 EXPORT_GET = "readings_meshes_exports_retrieve"
 PARTITION = "readings_archive_meshes_partitions_retrieve"
+ARCHIVE_CREDENTIALS = "readings_archive_meshes_credentials_create"
 TRACEROUTES = "meshes_traceroutes_list"
 TRACEROUTES_MAX_PAGE = 500
 
 # Every operationId named in hand-written code, checked against the snapshot by the tests.
-REFERENCED = frozenset({EXPORT_CREATE, EXPORT_GET, PARTITION, TRACEROUTES, *TERMS.values()})
+REFERENCED = frozenset({EXPORT_CREATE, EXPORT_GET, PARTITION, ARCHIVE_CREDENTIALS, TRACEROUTES, *TERMS.values()})
 
 
 def terms_fields(terms: dict | None) -> dict:
