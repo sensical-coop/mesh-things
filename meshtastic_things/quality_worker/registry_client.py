@@ -1,72 +1,52 @@
-"""Read client for registry's REST API.
-"""
+"""The registry calls the quality worker makes, through the mesh-things client."""
 import os
 
-import requests
-import structlog
-
-log = structlog.get_logger()
+from mesh_things.client import Conflict, MeshThings, NotFound
 
 
 class RegistryClient:
     def __init__(self, base_url: str, api_key: str, timeout: float = 10.0):
-        self.base_url = base_url.rstrip("/")
-        self._session = requests.Session()
-        self._session.headers["Authorization"] = f"Bearer {api_key}"
-        self._timeout = timeout
-
-    def _get(self, path: str, **params):
-        resp = self._session.get(f"{self.base_url}{path}", params=params or None, timeout=self._timeout)
-        resp.raise_for_status()
-        return resp.json()
-
-    def _send(self, method: str, path: str, body: dict | None = None) -> requests.Response:
-        return self._session.request(method, f"{self.base_url}{path}", json=body, timeout=self._timeout)
+        self._api = MeshThings(base_url, api_key, timeout=timeout)
 
     def devices(self, **filters) -> list[dict]:
         """Superuser key -> every owner's devices"""
-        return self._get("/devices", **filters)
+        return self._api.devices.list(**filters)
 
     def device(self, device_uuid: str) -> dict | None:
         """One device, or None once it has been deleted."""
-        resp = self._session.get(f"{self.base_url}/devices/{device_uuid}", timeout=self._timeout)
-        if resp.status_code == 404:
+        try:
+            return self._api.devices.get(device_uuid)
+        except NotFound:
             return None
-        resp.raise_for_status()
-        return resp.json()
 
     def pending_backfills(self) -> list[dict]:
-        return self._get("/postprocessing-backfills", status="pending")
+        return self._api.postprocessing_backfills.list(status="pending")
 
     def claim_backfill(self, backfill_id: str) -> dict | None:
         """The backfill with its plans, or None when another worker holds it."""
-        resp = self._send("POST", f"/postprocessing-backfills/{backfill_id}/claim")
-        if resp.status_code == 409:
+        try:
+            return self._api.postprocessing_backfills.claim_create(backfill_id)
+        except Conflict:
             return None
-        resp.raise_for_status()
-        return resp.json()
 
     def finish_backfill(self, backfill_id: str, status: str, points_published: int, error: str | None = None) -> None:
-        resp = self._send(
-            "PUT",
-            f"/postprocessing-backfills/{backfill_id}",
-            {"status": status, "points_published": points_published, "error": error},
+        self._api.postprocessing_backfills.update(
+            backfill_id, body={"status": status, "points_published": points_published, "error": error},
         )
-        resp.raise_for_status()
 
     def telemetry_variants(self) -> list[dict]:
         """Used for the default_reading_interval_seconds fallback when a device has
         no interval"""
-        return self._get("/telemetry-variants")
+        return self._api.telemetry_variants.list()
 
     def device_measurements(self, device_uuid: str) -> list[dict]:
-        return self._get(f"/devices/{device_uuid}/measurements")
+        return self._api.devices.measurements_list(device_uuid)
 
     def device_postprocessings(self, device_uuid: str) -> list[dict]:
-        return self._get(f"/devices/{device_uuid}/postprocessings")
+        return self._api.devices.postprocessings_list(device_uuid)
 
     def measurement_types(self) -> list[dict]:
-        return self._get("/measurements")
+        return self._api.measurements.list()
 
 
 _client: RegistryClient | None = None

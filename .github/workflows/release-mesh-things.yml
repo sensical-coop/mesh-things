@@ -1,0 +1,57 @@
+name: Release mesh-things
+
+# Publishes the mesh-things package when a tag such as `mesh-things-v0.2.0` is pushed.
+# PyPI trusts this workflow through Trusted Publishing, so no token is stored here.
+
+on:
+  push:
+    tags: ["mesh-things-v*"]
+
+jobs:
+  checks:
+    uses: ./.github/workflows/pr-checks.yml
+
+  build:
+    needs: checks
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: meshtastic_things/mesh_things
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+      - name: The tag names the package version
+        run: |
+          version=$(sed -n 's/^__version__ = "\(.*\)"$/\1/p' src/mesh_things/__init__.py)
+          if [ "mesh-things-v$version" != "$GITHUB_REF_NAME" ]; then
+            echo "::error::Tag $GITHUB_REF_NAME does not match __version__ $version"
+            exit 1
+          fi
+      - run: pip install build
+      - run: python -m build
+      - name: The wheel works on its own
+        run: |
+          python -m venv /tmp/wheel
+          /tmp/wheel/bin/pip install "$(ls dist/*.whl)[codec,pandas,archive]" pytest
+          # Outside the checkout, so neither pytest.ini nor the source tree is picked up.
+          cp -r tests /tmp/wheel-tests
+          cd /tmp/wheel-tests && /tmp/wheel/bin/python -m pytest -q -p no:cacheprovider
+      - uses: actions/upload-artifact@v4
+        with:
+          name: dist
+          path: meshtastic_things/mesh_things/dist/
+
+  publish:
+    needs: build
+    runs-on: ubuntu-latest
+    environment: pypi
+    permissions:
+      id-token: write
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          name: dist
+          path: dist/
+      - uses: pypa/gh-action-pypi-publish@release/v1

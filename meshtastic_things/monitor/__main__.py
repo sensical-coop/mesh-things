@@ -6,12 +6,13 @@ import sys
 
 import structlog
 from aiohttp import web
+from mesh_things.client import ApiError
 
 from monitor.checks import Checker
 from monitor.config import Config, ConfigError
 from monitor.server import build_app
 from monitor.service import Monitor
-from monitor.setup import ApiError, setup
+from monitor.setup import setup
 
 log = structlog.get_logger()
 

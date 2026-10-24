@@ -397,3 +397,36 @@ def test_the_email_check_can_be_switched_off():
 
     assert "email" in check_names(_config())
     assert "email" not in check_names(_config(email_check=False))
+
+
+# --- Setup ---
+
+def test_setup_creates_the_mesh_and_retries_a_taken_gateway_number(monkeypatch, capsys):
+    import httpx
+
+    from mesh_things.client import MeshThings
+    from monitor import setup as monitor_setup
+
+    attempts = []
+
+    def handler(request):
+        path = request.url.path
+        if path == "/meshes/terms":
+            return httpx.Response(404, json={"detail": "Not found."})
+        if path == "/meshes":
+            return httpx.Response(201, json={"id": "mesh-1"})
+        attempts.append(request)
+        if len(attempts) == 1:
+            return httpx.Response(409, json={"detail": "Node number taken."})
+        return httpx.Response(201, json={"node_id": 0x10000001, "uuid": "gw-1"})
+
+    transport = httpx.MockTransport(handler)
+    monkeypatch.setattr(
+        monitor_setup, "MeshThings",
+        lambda url, key: MeshThings(url, key, http=httpx.Client(transport=transport)),
+    )
+    monitor_setup.setup("http://api.test", "k", "LongFast", accept_terms=False, with_sink=False)
+
+    out = capsys.readouterr().out
+    assert len(attempts) == 2
+    assert "MONITOR__MESH_ID=mesh-1" in out and "MONITOR__GATEWAY_UUID=gw-1" in out

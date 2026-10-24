@@ -89,7 +89,7 @@ def _reading_interval_for(device: dict, payload_kind: str | None, variant_interv
 @shared_task(name="quality_worker.tasks.scan_devices")
 def scan_devices() -> dict:
     """Enqueues per-device work"""
-    devices = get_registry_client().devices(is_allowed="true")
+    devices = get_registry_client().devices(is_allowed=True)
     for device in devices:
         check_completeness.delay(device["uuid"])
     log.info("scan_complete", devices=len(devices))

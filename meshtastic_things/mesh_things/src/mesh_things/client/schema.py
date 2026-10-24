@@ -39,7 +39,7 @@ class Operation:
 
 def accepts_datetime(param: Parameter) -> bool:
     """Whether a parameter is a date or a time, so a `date` or `datetime` may be passed."""
-    return param.format in ("date", "date-time") or param.name in ("start", "stop", "before")
+    return param.format in ("date", "date-time") or param.name in ("start", "stop", "lookback", "before")
 
 
 def method_name(operation_id: str, namespace: str) -> str:

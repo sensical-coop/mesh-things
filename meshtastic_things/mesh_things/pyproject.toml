@@ -5,9 +5,10 @@ build-backend = "hatchling.build"
 [project]
 name = "mesh-things"
 dynamic = ["version"]
-description = "Shared vocabulary and Meshtastic protocol helpers for the meshtastic-things API"
+description = "Python client for the meshtastic-things API, with the vocabulary and Meshtastic protocol helpers it is built on"
 readme = "README.md"
 license = "GPL-3.0-only"
+license-files = ["LICENSE"]
 authors = [{ name = "oscgonfer" }]
 requires-python = ">=3.10"
 keywords = ["meshtastic", "mesh", "telemetry", "lora"]

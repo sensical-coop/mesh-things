@@ -25,6 +25,7 @@ _PYTHON_TYPES = {"string": str, "integer": int, "number": float, "boolean": bool
 _FREE_TEXT_CHECKS = {
     "start": lambda value: validate_range_bound(value, "start"),
     "stop": lambda value: validate_range_bound(value, "stop"),
+    "lookback": lambda value: validate_range_bound(value, "lookback"),
     "window": lambda value: validate_duration(value, "window"),
     "channel": split_channel,
 }
@@ -50,7 +51,10 @@ def resolve_base_url(base_url: str | None) -> str:
 
 
 def resolve_api_key(api_key: str | None) -> str | None:
-    return api_key or os.environ.get(API_KEY_ENV, "").strip() or None
+    """The key to send: the one given, none for an empty string, else the environment's."""
+    if api_key is not None:
+        return api_key or None
+    return os.environ.get(API_KEY_ENV, "").strip() or None
 
 
 def signature(op: Operation) -> inspect.Signature:

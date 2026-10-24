@@ -730,7 +730,7 @@ class Readings:
     def devices_get(self, device_uuid: str, *, agg: Literal['count', 'first', 'last', 'max', 'mean', 'min', 'sum'] | None = None, channel: str | None = None, payload_kind: str | None = None, start: str | datetime | date | None = None, stop: str | datetime | date | None = None, window: str | None = None) -> Any:
         """Readings over a time range, addressed by the device's registration ID."""
 
-    def devices_latest_get(self, device_uuid: str, *, lookback: str | None = None, payload_kind: str | None = None) -> Any:
+    def devices_latest_get(self, device_uuid: str, *, lookback: str | datetime | date | None = None, payload_kind: str | None = None) -> Any:
         """Most recent readings, addressed by the device's registration ID.
 
         A device on a public mesh is readable without credentials. Rejected
@@ -806,7 +806,7 @@ class Readings:
                 only when `window` is set.
         """
 
-    def meshes_nodes_latest_get(self, mesh_id: str, node_id: int | str, *, lookback: str | None = None, payload_kind: str | None = None) -> Any:
+    def meshes_nodes_latest_get(self, mesh_id: str, node_id: int | str, *, lookback: str | datetime | date | None = None, payload_kind: str | None = None) -> Any:
         """Return a device's most recent readings.
 
         Without `payload_kind`, every channel the device has reported comes back in
@@ -1840,7 +1840,7 @@ class AsyncReadings:
     async def devices_get(self, device_uuid: str, *, agg: Literal['count', 'first', 'last', 'max', 'mean', 'min', 'sum'] | None = None, channel: str | None = None, payload_kind: str | None = None, start: str | datetime | date | None = None, stop: str | datetime | date | None = None, window: str | None = None) -> Any:
         """Readings over a time range, addressed by the device's registration ID."""
 
-    async def devices_latest_get(self, device_uuid: str, *, lookback: str | None = None, payload_kind: str | None = None) -> Any:
+    async def devices_latest_get(self, device_uuid: str, *, lookback: str | datetime | date | None = None, payload_kind: str | None = None) -> Any:
         """Most recent readings, addressed by the device's registration ID.
 
         A device on a public mesh is readable without credentials. Rejected
@@ -1916,7 +1916,7 @@ class AsyncReadings:
                 only when `window` is set.
         """
 
-    async def meshes_nodes_latest_get(self, mesh_id: str, node_id: int | str, *, lookback: str | None = None, payload_kind: str | None = None) -> Any:
+    async def meshes_nodes_latest_get(self, mesh_id: str, node_id: int | str, *, lookback: str | datetime | date | None = None, payload_kind: str | None = None) -> Any:
         """Return a device's most recent readings.
 
         Without `payload_kind`, every channel the device has reported comes back in

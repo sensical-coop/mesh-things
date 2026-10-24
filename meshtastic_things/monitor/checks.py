@@ -5,9 +5,10 @@ import time
 from dataclasses import dataclass
 from datetime import datetime, timezone
 
-import aiohttp
 import aiomqtt
+import httpx
 import structlog
+from mesh_things.client import ApiError, AsyncMeshThings, Forbidden
 
 from monitor import packets
 from monitor.config import Config
@@ -82,44 +83,46 @@ class Checker:
     def __init__(self, config: Config):
         self.config = config
 
-    def _session(self) -> aiohttp.ClientSession:
-        return aiohttp.ClientSession(timeout=aiohttp.ClientTimeout(total=self.config.http_timeout_s))
+    def _http(self) -> httpx.AsyncClient:
+        return httpx.AsyncClient(timeout=self.config.http_timeout_s)
 
-    @property
-    def _auth(self) -> dict:
-        return {"Authorization": f"Bearer {self.config.api_key}"}
+    def _api(self, http: httpx.AsyncClient, authenticated: bool = True) -> AsyncMeshThings:
+        return AsyncMeshThings(self.config.api_url, self.config.api_key if authenticated else None, http=http)
 
-    def _url(self, path: str) -> str:
-        return f"{self.config.api_url}/{path}"
+    def _path(self, name: str) -> str:
+        if name == "readings_api":
+            return f"readings/devices/{self.config.gateway_uuid}/latest"
+        return {"api_root": "", "api_health": "health", "api_schema": "schema"}[name]
 
-    def _http_path(self, name: str) -> tuple[str, dict]:
-        if name == "api_root":
-            return "", {}
+    async def _get(self, name: str, http: httpx.AsyncClient):
+        """One HTTP check's request. Public routes are called without credentials, as any visitor would."""
         if name == "api_health":
-            return "health", {}
-        if name == "api_schema":
-            return "schema", {}
-        return f"readings/devices/{self.config.gateway_uuid}/latest", {"payload_kind": LATEST_KIND, "lookback": "-1d"}
+            return await self._api(http, authenticated=False).health.get()
+        if name == "readings_api":
+            return await self._latest(self._api(http))
+        # The root and the schema are not API operations, so they are plain GETs.
+        resp = await http.get(f"{self.config.api_url}/{self._path(name)}")
+        if resp.status_code != 200:
+            raise ApiError(resp.status_code, f"HTTP {resp.status_code}")
+        return None
+
+    async def _latest(self, api: AsyncMeshThings) -> dict:
+        return await api.readings.devices_latest_get(self.config.gateway_uuid, payload_kind=LATEST_KIND, lookback="-1d")
 
     async def http_check(self, name: str) -> CheckResult:
-        """One HTTP route answers 200 within the timeout.
-
-        Public routes are called without credentials, as any visitor would.
-        """
+        """One HTTP route answers 200 within the timeout."""
         if name == EMAIL:
             return await self.email_check()
-        path, params = self._http_path(name)
-        headers = self._auth if name == "readings_api" else {}
+        path = self._path(name)
         started = time.monotonic()
         try:
-            async with self._session() as session:
-                async with session.get(self._url(path), params=params, headers=headers) as resp:
-                    await resp.read()
-                    if resp.status != 200:
-                        return _result(name, False, f"HTTP {resp.status} from /{path}", started)
-        except asyncio.TimeoutError:
+            async with self._http() as http:
+                await self._get(name, http)
+        except ApiError as e:
+            return _result(name, False, f"HTTP {e.status} from /{path}", started)
+        except httpx.TimeoutException:
             return _result(name, False, f"/{path} timed out after {self.config.http_timeout_s}s", started)
-        except aiohttp.ClientError as e:
+        except httpx.HTTPError as e:
             return _result(name, False, f"/{path} unreachable: {type(e).__name__}", started)
         return _result(name, True, "ok", started)
 
@@ -130,16 +133,15 @@ class Checker:
         """
         started = time.monotonic()
         try:
-            async with self._session() as session:
-                async with session.get(self._url("status/email"), headers=self._auth) as resp:
-                    if resp.status == 403:
-                        return _result(EMAIL, False, "the monitor's API key is not a superuser's, so /status/email is refused", started)
-                    if resp.status != 200:
-                        return _result(EMAIL, False, f"HTTP {resp.status} from /status/email", started)
-                    body = await resp.json()
-        except asyncio.TimeoutError:
+            async with self._http() as http:
+                body = await self._api(http).status.email_get()
+        except Forbidden:
+            return _result(EMAIL, False, "the monitor's API key is not a superuser's, so /status/email is refused", started)
+        except ApiError as e:
+            return _result(EMAIL, False, f"HTTP {e.status} from /status/email", started)
+        except httpx.TimeoutException:
             return _result(EMAIL, False, f"/status/email timed out after {self.config.http_timeout_s}s", started)
-        except aiohttp.ClientError as e:
+        except httpx.HTTPError as e:
             return _result(EMAIL, False, f"/status/email unreachable: {type(e).__name__}", started)
         if not body.get("ok"):
             return _result(
@@ -151,14 +153,8 @@ class Checker:
             )
         return _result(EMAIL, True, f"{body.get('sent_24h')} sent in 24h, none failing", started)
 
-    async def _get_json(self, session: aiohttp.ClientSession, path: str, params: dict | None = None) -> dict:
-        async with session.get(self._url(path), params=params or {}, headers=self._auth) as resp:
-            if resp.status != 200:
-                raise RuntimeError(f"HTTP {resp.status} from /{path}")
-            return await resp.json()
-
-    async def _last_seen(self, session: aiohttp.ClientSession) -> str | None:
-        device = await self._get_json(session, f"devices/{self.config.gateway_uuid}")
+    async def _last_seen(self, api: AsyncMeshThings) -> str | None:
+        device = await api.devices.get(self.config.gateway_uuid)
         return device.get("last_seen")
 
     async def _publish(self, topic: str, payload: bytes) -> None:
@@ -173,29 +169,29 @@ class Checker:
         ) as client:
             await client.publish(topic, payload=payload, qos=1)
 
-    async def _await_reading(self, session, marker: int, started: float, deadline: float) -> CheckResult:
-        path, params = self._http_path("readings_api")
+    async def _await_reading(self, api: AsyncMeshThings, marker: int, started: float, deadline: float) -> CheckResult:
         last = "no reading yet"
         while True:
             try:
-                value = marker_in_latest(await self._get_json(session, path, params))
+                value = marker_in_latest(await self._latest(api))
                 if value == marker:
                     return _result(INGESTION, True, "probe reached the readings API", started)
                 last = f"latest {MARKER_CHANNEL} is {value}"
-            except (aiohttp.ClientError, asyncio.TimeoutError, RuntimeError) as e:
+            except (httpx.HTTPError, ApiError) as e:
                 last = str(e) or type(e).__name__
             if time.monotonic() >= deadline:
                 return _result(INGESTION, False, f"probe {marker} not in the readings API in time ({last})", started)
             await asyncio.sleep(self.config.poll_s)
 
-    async def _await_sighting(self, session, baseline: str | None, started: float, deadline: float) -> CheckResult:
+    async def _await_sighting(self, api: AsyncMeshThings, baseline: str | None, started: float,
+                              deadline: float) -> CheckResult:
         last = "last_seen unchanged"
         while True:
             try:
-                seen = await self._last_seen(session)
+                seen = await self._last_seen(api)
                 if seen and seen != baseline:
                     return _result(REGISTRY_SIGHTING, True, "gateway last_seen advanced", started)
-            except (aiohttp.ClientError, asyncio.TimeoutError, RuntimeError) as e:
+            except (httpx.HTTPError, ApiError) as e:
                 last = str(e) or type(e).__name__
             if time.monotonic() >= deadline:
                 return _result(REGISTRY_SIGHTING, False, f"gateway not sighted by the registry in time ({last})", started)
@@ -233,10 +229,11 @@ class Checker:
         marker = int(time.time())
         topic, payload = packets.build_probe(c.gateway_node_id, c.channel_id, c.psk_b64, c.mqtt_topic_prefix, marker)
 
-        async with self._session() as session:
+        async with self._http() as http:
+            api = self._api(http)
             try:
-                baseline = await self._last_seen(session)
-            except (aiohttp.ClientError, asyncio.TimeoutError, RuntimeError):
+                baseline = await self._last_seen(api)
+            except (httpx.HTTPError, ApiError):
                 baseline = None
 
             sink_task = None
@@ -260,8 +257,8 @@ class Checker:
 
             deadline = started + timeout_s
             waits = [
-                self._await_reading(session, marker, started, deadline),
-                self._await_sighting(session, baseline, started, deadline),
+                self._await_reading(api, marker, started, deadline),
+                self._await_sighting(api, baseline, started, deadline),
             ]
             if sink_task:
                 waits.append(sink_task)

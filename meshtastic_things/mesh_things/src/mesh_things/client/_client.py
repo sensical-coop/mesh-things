@@ -82,8 +82,8 @@ class MeshThings(_Client, SyncNamespaces):
     Args:
         base_url: The API's root, for example `https://api.example.org`. Defaults to
             `MESH_THINGS_URL`.
-        api_key: An owner's API key. Defaults to `MESH_THINGS_API_KEY`; without one only
-            public data can be read.
+        api_key: An owner's API key. Defaults to `MESH_THINGS_API_KEY`; pass `""` to send
+            none even when that is set. Without a key only public data can be read.
         readings_url: A separate root for `/readings` paths, for a local stack that serves
             them on their own port.
         timeout: Seconds before a request is abandoned.

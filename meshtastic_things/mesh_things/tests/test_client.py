@@ -132,6 +132,7 @@ def test_the_url_comes_from_the_environment(monkeypatch):
     api = MeshThings()
     assert api.base_url == "http://env.test"
     assert api._headers == {"Authorization": "Bearer from-env"}
+    assert MeshThings(api_key="")._headers == {}
 
 
 def test_methods_carry_the_operation_docs():
