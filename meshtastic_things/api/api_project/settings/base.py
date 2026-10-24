@@ -5,7 +5,8 @@ from pathlib import Path
 import dj_database_url
 from django.core.exceptions import ImproperlyConfigured
 
-from common.env import env_bool, env_int, env_list, env_str
+from mesh_things.env import env_bool, env_int, env_list, env_str
+
 from common.gateway import public_base_url
 
 BASE_DIR = Path(__file__).resolve().parent.parent.parent
@@ -174,7 +175,7 @@ SPECTACULAR_SETTINGS = {
     # The catalog default and the per-device override share one choice set, so
     # they share one enum component rather than generating a near-duplicate each.
     "ENUM_NAME_OVERRIDES": {
-        "DetectorEnum": "common.detectors.DETECTOR_CHOICES",
+        "DetectorEnum": "mesh_things.detectors.DETECTOR_CHOICES",
         "OperatorRequestStatusEnum": "registry.models.OperatorRequestStatus",
         "DataDeletionStatusEnum": "registry.models.DataDeletionStatus",
         "BackfillStatusEnum": "registry.models.BackfillStatus",

@@ -1,6 +1,6 @@
 """Local development settings.
 """
-from common.env import env_bool, env_int, env_list, env_str
+from mesh_things.env import env_bool, env_int, env_list, env_str
 
 from .base import *  # noqa: F401,F403
 from .base import ENV_PREFIX, IS_READINGS, SENDS_EMAIL

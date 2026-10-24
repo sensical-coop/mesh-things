@@ -1,6 +1,6 @@
 from meshtastic.protobuf import portnums_pb2
 
-from common.channels import (
+from mesh_things.channels import (
     DEVICE,
     NODEINFO_KIND,
     PORTNUM_PREFIX,

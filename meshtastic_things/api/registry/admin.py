@@ -1,7 +1,7 @@
 from django.contrib import admin
 from django.contrib.auth.admin import UserAdmin
 
-from common import node_ids
+from mesh_things import node_ids
 
 from .models import (
     BlueprintVersion,

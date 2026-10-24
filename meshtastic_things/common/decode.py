@@ -1,7 +1,7 @@
 from meshtastic.protobuf import portnums_pb2
 
-from common import codec, node_ids
-from common.channels import NODEINFO_KIND, POSITION_KIND, TELEMETRY
+from mesh_things import codec, node_ids
+from mesh_things.channels import NODEINFO_KIND, POSITION_KIND, TELEMETRY
 
 
 def _discovered_fields(payload_kind: str, payload: dict) -> list[str]:

@@ -1,8 +1,8 @@
-"""common/env.py tests.
+"""mesh_things.env tests.
 """
 import pytest
 
-from common.env import env_bool, env_int, env_list, env_str
+from mesh_things.env import env_bool, env_int, env_list, env_str
 
 
 @pytest.mark.parametrize("raw", ["1", "true", "TRUE", "True", "yes", "on"])

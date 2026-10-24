@@ -13,7 +13,7 @@ from django.conf import settings
 from django.core.cache import cache
 from django.db.models import Exists, OuterRef
 
-from common.env import env_str
+from mesh_things.env import env_str
 
 from .emailing import (
     send_sink_unused_email,

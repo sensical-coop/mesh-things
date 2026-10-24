@@ -24,6 +24,8 @@ COPY flink/requirements-flink.txt flink/
 RUN pip install --no-cache-dir -r flink/requirements-flink.txt
 COPY requirements.txt .
 RUN pip install --no-cache-dir -r requirements.txt
+COPY mesh_things/ mesh_things/
+RUN pip install --no-cache-dir "./mesh_things[codec]"
 COPY . .
 RUN pip install --no-cache-dir --no-deps .
 

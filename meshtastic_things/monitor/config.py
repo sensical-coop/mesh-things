@@ -1,7 +1,7 @@
 """Monitor settings, read from MONITOR__* environment variables."""
 from dataclasses import dataclass, field
 
-from common.env import env_bool, env_int, env_list, env_str
+from mesh_things.env import env_bool, env_int, env_list, env_str
 
 
 class ConfigError(ValueError):

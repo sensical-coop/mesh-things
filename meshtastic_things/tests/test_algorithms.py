@@ -285,7 +285,7 @@ def test_inheriting_from_something_that_isnt_an_input_is_rejected():
 def test_unclassifiable_unit_is_rejected_at_import_time():
     """Caught here rather than silently writing a unit the catalog can't classify into a
     quantity_kind months later."""
-    with pytest.raises(ValueError, match="common.units"):
+    with pytest.raises(ValueError, match="mesh_things.units"):
 
         @algorithms.algorithm(
             name="_bad_unit", inputs=("a",), outputs=("b",), output_units={"b": "furlongs/fortnight"}

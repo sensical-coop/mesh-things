@@ -7,6 +7,8 @@ import pytest
 from kafka import TopicPartition
 from paho.mqtt.client import topic_matches_sub
 
+from mesh_things import streams as stream_names
+
 from bridge.mqtt_handler import subscription_filters
 from common import sinks
 from pipeline.sink_dispatcher import SinkRouting, dispatch_batch
@@ -15,7 +17,7 @@ MESH = "11111111-2222-3333-4444-555555555555"
 SINK_A = "aaaaaaaa-0000-0000-0000-000000000000"
 SINK_B = "bbbbbbbb-0000-0000-0000-000000000000"
 DECODED_TOPIC = "mesh.telemetry.decoded.v1"
-STREAM_OF = {DECODED_TOPIC: sinks.DECODED, "mesh.telemetry.derived.v1": sinks.DERIVED, "mesh.telemetry.alarms.v1": sinks.ALARMS}
+STREAM_OF = {DECODED_TOPIC: stream_names.DECODED, "mesh.telemetry.derived.v1": stream_names.DERIVED, "mesh.telemetry.alarms.v1": stream_names.ALARMS}
 
 
 @pytest.fixture(autouse=True)

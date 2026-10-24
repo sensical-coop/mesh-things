@@ -2,7 +2,7 @@
 
 For now, manually generated...
 """
-from common.units import OTHER, PHYSICAL_PROPERTY, RATIO, quantity_kind_for
+from mesh_things.units import OTHER, PHYSICAL_PROPERTY, RATIO, quantity_kind_for
 
 # (payload_kind, field_name) -> (native_unit, description)
 MEASUREMENT_TYPE_SEED: dict[tuple[str, str], tuple[str | None, str]] = {

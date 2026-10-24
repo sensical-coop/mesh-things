@@ -11,7 +11,7 @@ import os
 from collections import defaultdict
 from datetime import datetime, timedelta
 
-from common.detectors import ABSENCE, FLAT_VALUE, RANGE
+from mesh_things.detectors import ABSENCE, FLAT_VALUE, RANGE
 
 ALARMS_BUCKET = os.environ.get("INFLUX__ALARMS_BUCKET") or "alarms"
 ALARM_COUNTS_BUCKET = os.environ.get("INFLUX__ALARM_COUNTS_BUCKET") or "alarm_counts"

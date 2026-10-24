@@ -4,6 +4,6 @@ WORKDIR /app
 
 RUN apt-get update && apt-get install -y curl
 COPY . .
-RUN pip install .
+RUN pip install "./mesh_things[codec]" .
 
 ENV PYTHONUNBUFFERED=1

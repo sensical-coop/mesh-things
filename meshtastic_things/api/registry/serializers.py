@@ -11,13 +11,15 @@ from drf_spectacular.utils import extend_schema_field
 from rest_framework import serializers
 from rest_framework.exceptions import PermissionDenied
 
+from mesh_things import streams as sink_streams
+from mesh_things.channels import channel_name, origin_of
+from mesh_things.codec import is_well_known_psk
+from mesh_things.detectors import DETECTOR_CHOICES, MEASUREMENT_DETECTORS, enabled_detectors_for
+from mesh_things.env import env_str
+
 from common import sinks as sink_names
-from common.codec import is_well_known_psk
 from common import sources as source_names
 from common.algorithms import validate_calibration, validate_step
-from common.channels import channel_name, origin_of
-from common.detectors import DETECTOR_CHOICES, MEASUREMENT_DETECTORS, enabled_detectors_for
-from common.env import env_str
 
 from .broker_hosts import is_own_broker
 from .broker_hosts import refusal as broker_refusal
@@ -683,7 +685,7 @@ class SinkWriteSerializer(serializers.Serializer):
 
     label = serializers.CharField(max_length=255, required=False, allow_null=True, allow_blank=True)
     streams = serializers.ListField(
-        child=serializers.ChoiceField(choices=sink_names.STREAMS),
+        child=serializers.ChoiceField(choices=sink_streams.STREAMS),
         allow_empty=False,
         required=False,
         help_text="Which readings are sent: `decoded`, `derived`, `alarms`. Defaults to `decoded`.",
@@ -700,7 +702,7 @@ class SinkWriteSerializer(serializers.Serializer):
     )
 
     def validate_streams(self, value):
-        return [stream for stream in sink_names.STREAMS if stream in value]
+        return [stream for stream in sink_streams.STREAMS if stream in value]
 
     def _editable(self, obj, mesh: Mesh) -> None:
         owner = self.context["owner"]
@@ -737,7 +739,7 @@ class SinkTermsAcceptanceSerializer(_TermsAcceptanceInputMixin):
 class SinkReadSerializer(serializers.ModelSerializer):
     # Declared because the model's JSONField would reach the schema untyped.
     streams = serializers.ListField(
-        child=serializers.ChoiceField(choices=sink_names.STREAMS),
+        child=serializers.ChoiceField(choices=sink_streams.STREAMS),
         read_only=True,
         help_text="Which readings are sent: `decoded`, `derived`, `alarms`.",
     )

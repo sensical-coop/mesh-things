@@ -5,7 +5,7 @@ import structlog
 from django.db import transaction
 from django.utils import timezone
 
-from common import codec, node_ids
+from mesh_things import codec, node_ids
 
 from .exceptions import BadGateway
 from .kafka_publisher import get_publisher, publish_gateway_state

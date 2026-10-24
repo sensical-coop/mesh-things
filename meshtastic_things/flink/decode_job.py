@@ -77,7 +77,7 @@ class PacketKeySelector(KeySelector):
     broadcast config stream"""
 
     def open(self, runtime_context):
-        from common import codec
+        from mesh_things import codec
 
         self._codec = codec
 

@@ -77,7 +77,7 @@ class SensorDiscoveryConsumerTests(SeededCatalogTestCase):
         measurement_type = MeasurementType.objects.get(payload_kind="derived", field_name="dew_point")
         self.assertEqual(measurement_type.native_unit, "degC")
         # Derived from the unit rather than sent separately - the two aren't
-        # independent facts. See common/units.py.
+        # independent facts. See mesh_things.units.
         self.assertEqual(measurement_type.quantity_kind, "physical_property")
 
     def test_units_backfill_a_row_discovered_before_units_were_published(self):

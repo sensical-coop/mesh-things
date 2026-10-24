@@ -68,7 +68,7 @@ class DetectAbsence(KeyedBroadcastProcessFunction):
     """
 
     def open(self, runtime_context):
-        from common import detectors
+        from mesh_things import detectors
 
         self._detectors = detectors
         self._started_ms = int(time.time() * 1000)

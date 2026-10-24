@@ -1,5 +1,5 @@
 """Channel naming - the shared logic behind the stream tier."""
-from common.channels import (
+from mesh_things.channels import (
     DERIVED_KIND,
     NODEINFO_KIND,
     ORIGIN_COMPUTED,

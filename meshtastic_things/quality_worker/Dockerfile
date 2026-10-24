@@ -7,6 +7,10 @@ RUN apt-get update && apt-get install -y curl && rm -rf /var/lib/apt/lists/*
 COPY quality_worker/requirements.txt .
 RUN pip install --no-cache-dir -r requirements.txt
 
+# The shared package, installed before the code so it is cached apart.
+COPY mesh_things/ /tmp/mesh_things/
+RUN pip install --no-cache-dir "/tmp/mesh_things" && rm -rf /tmp/mesh_things
+
 COPY quality_worker/ ./quality_worker/
 COPY common/ ./common/
 

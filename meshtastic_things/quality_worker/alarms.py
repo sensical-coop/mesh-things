@@ -7,7 +7,7 @@ from datetime import datetime, timezone
 import structlog
 from kafka import KafkaProducer
 
-from common.channels import ALARMS_KIND
+from mesh_things.channels import ALARMS_KIND
 
 log = structlog.get_logger()
 

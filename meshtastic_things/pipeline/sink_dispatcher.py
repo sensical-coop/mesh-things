@@ -15,6 +15,8 @@ import structlog
 from aiohttp import web
 from kafka import KafkaConsumer
 
+from mesh_things import streams as stream_names
+
 from common import sinks
 from pipeline.config_state import replay_consumer, replay_to_end
 from tools.env import get_bool_env
@@ -108,9 +110,9 @@ class SinkDispatcher:
         self.kafka_bootstrap_server = kafka_bootstrap_server
         self.sink_config_topic = os.environ.get('REGISTRY__SINK_CONFIG_KAFKA_TOPIC', 'mesh.sink_config.v1')
         self.stream_of = {
-            os.environ['PROTO_DECODE__KAFKA_TOPIC']: sinks.DECODED,
-            os.environ.get('POSTPROCESSING__DERIVED_KAFKA_TOPIC', 'mesh.telemetry.derived.v1'): sinks.DERIVED,
-            os.environ.get('PATTERN_DETECTION__ALARMS_TOPIC', 'mesh.telemetry.alarms.v1'): sinks.ALARMS,
+            os.environ['PROTO_DECODE__KAFKA_TOPIC']: stream_names.DECODED,
+            os.environ.get('POSTPROCESSING__DERIVED_KAFKA_TOPIC', 'mesh.telemetry.derived.v1'): stream_names.DERIVED,
+            os.environ.get('PATTERN_DETECTION__ALARMS_TOPIC', 'mesh.telemetry.alarms.v1'): stream_names.ALARMS,
         }
         # Starts at the newest reading: a new dispatcher does not replay history to consumers.
         self.consumer = KafkaConsumer(

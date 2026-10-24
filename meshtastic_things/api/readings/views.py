@@ -2,21 +2,21 @@ from datetime import datetime, timedelta, timezone
 
 from django.core.cache import cache
 from drf_spectacular.utils import OpenApiParameter, OpenApiResponse, OpenApiTypes, extend_schema
-from meshtastic.protobuf import portnums_pb2
 from rest_framework import status
 from rest_framework.exceptions import NotFound, ValidationError
 from rest_framework.permissions import AllowAny, IsAuthenticated
 from rest_framework.response import Response
 from rest_framework.views import APIView
 
-from common.channels import (
+from mesh_things.channels import (
     channel_name,
     measurement_of,
     origin_of_measurement,
     payload_kind_of_measurement,
     split_channel,
 )
-from common.influx_query import duration_seconds
+from mesh_things.influx_query import duration_seconds
+from mesh_things.portnums import portnum_name
 from common.mesh_stats import UNKNOWN
 from registry.models import Device, visible_meshes_for
 from .influx_client import get_client
@@ -319,15 +319,6 @@ def _hourly_start(range_: str, now: datetime) -> datetime:
     return since.replace(minute=0, second=0, microsecond=0)
 
 
-def _portnum_name(portnum: int | None) -> str:
-    if portnum is None:
-        return "ENCRYPTED"
-    try:
-        return portnums_pb2.PortNum.Name(portnum)
-    except ValueError:
-        return f"PORTNUM_{portnum}"
-
-
 def _int_or_none(value: str) -> int | None:
     return None if value == UNKNOWN else int(value)
 
@@ -343,7 +334,7 @@ def _mesh_stats(mesh_id, range_, now: datetime) -> dict:
         (
             {
                 "portnum": _int_or_none(portnum),
-                "name": _portnum_name(_int_or_none(portnum)),
+                "name": portnum_name(_int_or_none(portnum)),
                 "packets": int(row.get("packets", 0)),
                 "receptions": int(row.get("receptions", 0)),
                 "points": row["points"],
@@ -515,7 +506,7 @@ def _node_traffic(mesh_id: str, node_id: int, range_: str, now: datetime) -> dic
     raw = get_client().node_traffic(mesh_id, node_id, hourly_start.strftime("%Y-%m-%dT%H:%M:%SZ"), window)
     ports = sorted(
         (
-            {"portnum": _int_or_none(portnum), "name": _portnum_name(_int_or_none(portnum)), "packets": packets}
+            {"portnum": _int_or_none(portnum), "name": portnum_name(_int_or_none(portnum)), "packets": packets}
             for portnum, packets in raw["ports"].items()
         ),
         key=lambda p: -p["packets"],

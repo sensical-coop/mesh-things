@@ -21,7 +21,7 @@ from django.conf import settings
 from django.db import transaction
 from django.utils import timezone
 
-from common.env import env_str
+from mesh_things.env import env_str
 
 from .data_store import get_data_store
 from .disk_alert import check_disk

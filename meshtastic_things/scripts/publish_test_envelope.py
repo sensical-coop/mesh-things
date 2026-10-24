@@ -7,7 +7,7 @@ import os
 from kafka import KafkaProducer
 from meshtastic.protobuf import mesh_pb2, mqtt_pb2, telemetry_pb2
 
-from common.codec import encrypt_packet
+from mesh_things.codec import encrypt_packet
 
 
 def build_telemetry_data(battery_level=None, voltage=None, temperature=None) -> bytes:

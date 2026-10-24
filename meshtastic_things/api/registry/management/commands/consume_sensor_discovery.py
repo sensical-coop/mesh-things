@@ -11,7 +11,7 @@ from django.core.management.base import BaseCommand
 from django.utils import timezone
 from kafka import KafkaConsumer
 
-from common.units import quantity_kind_for
+from mesh_things.units import quantity_kind_for
 
 from registry.consumer_loop import consume_forever
 from registry.models import Device, DeviceTelemetryVariant, Measurement, MeasurementType, TelemetryVariant

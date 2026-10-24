@@ -5,7 +5,7 @@ from cryptography.hazmat.backends import default_backend
 from cryptography.hazmat.primitives.ciphers import Cipher, algorithms, modes
 from meshtastic.protobuf import mesh_pb2, mqtt_pb2, telemetry_pb2
 
-from common import codec
+from mesh_things import codec
 
 def _build_envelope(mp: mesh_pb2.MeshPacket, channel_id: str = "LongFast", gateway_id: str = "!aabbccdd") -> bytes:
     se = mqtt_pb2.ServiceEnvelope()

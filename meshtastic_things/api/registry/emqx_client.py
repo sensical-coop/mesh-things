@@ -13,8 +13,9 @@ from urllib.parse import quote
 import requests
 import structlog
 
+from mesh_things.env import env_str
+
 from common import sinks, sources
-from common.env import env_str
 
 log = structlog.get_logger()
 

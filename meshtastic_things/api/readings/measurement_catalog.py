@@ -1,5 +1,5 @@
 """Units and vocabulary for the channels a reading belongs to."""
-from common.channels import channel_name
+from mesh_things.channels import channel_name
 from registry.models import MeasurementType
 
 

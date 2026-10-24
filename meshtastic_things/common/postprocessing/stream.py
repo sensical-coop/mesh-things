@@ -5,8 +5,8 @@ Derived events are shaped like decoded ones (`payload_kind` "computed:derived",
 payload {"derived": {field: value}}), so every consumer of decoded telemetry
 reads them without special cases.
 """
-from common.channels import DERIVED, DERIVED_KIND, channels_in, split_channel
-from common.timestamps import resolve_timestamp
+from mesh_things.channels import DERIVED, DERIVED_KIND, channels_in, split_channel
+from mesh_things.timestamps import resolve_timestamp
 
 from .plan import ResolvedPlan
 from .run import Observation

@@ -2,7 +2,7 @@
 serving requests with an unsafe one."""
 from django.core.exceptions import ImproperlyConfigured
 
-from common.env import env_bool, env_int, env_list, env_str
+from mesh_things.env import env_bool, env_int, env_list, env_str
 
 from .base import *  # noqa: F401,F403
 from .base import ENV_PREFIX, INTERNAL_HOST, IS_READINGS, REST_FRAMEWORK, SENDS_EMAIL

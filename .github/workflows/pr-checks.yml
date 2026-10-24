@@ -68,6 +68,8 @@ jobs:
       - uses: actions/setup-python@v5
         with:
           python-version: "3.11"
-      - run: pip install -r meshtastic_things/requirements.txt -r meshtastic_things/requirements-test.txt
+      - run: >
+          pip install "./meshtastic_things/mesh_things[codec]"
+          -r meshtastic_things/requirements.txt -r meshtastic_things/requirements-test.txt
       - run: pytest -q --ignore=api
         working-directory: meshtastic_things

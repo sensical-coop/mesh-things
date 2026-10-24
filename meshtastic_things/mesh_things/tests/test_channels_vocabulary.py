@@ -1,7 +1,7 @@
 """payload_kind <-> measurement must round-trip for every family the writer emits."""
 import pytest
 
-from common.channels import (
+from mesh_things.channels import (
     ORIGIN_COMPUTED,
     ORIGIN_DEVICE,
     ORIGIN_MEASURED,

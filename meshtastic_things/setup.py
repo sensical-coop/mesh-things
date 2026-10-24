@@ -13,12 +13,12 @@ if sys.version_info < (3,9):
 REQUIREMENTS = [i.strip() for i in open("requirements.txt").readlines()]
 
 setup(
-    name='meshtastic-things',
+    name='meshtastic-things-server',
     version='0.1.0',
     description='Ingest meshtastic data into kafka queues and influxDB',
     author='oscgonfer',
     license='GNU-GPL3.0',
-    packages=find_packages(),
+    packages=find_packages(exclude=['mesh_things*']),
     keywords=['meshtastic', 'kafka', 'influxdb', 'flink'],
     # project_urls=PROJECT_URLS,
     # long_description = open('README.md').read(),

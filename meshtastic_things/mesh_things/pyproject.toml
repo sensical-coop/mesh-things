@@ -1,0 +1,25 @@
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[project]
+name = "mesh-things"
+dynamic = ["version"]
+description = "Shared vocabulary and Meshtastic protocol helpers for the meshtastic-things API"
+readme = "README.md"
+license = "GPL-3.0-only"
+authors = [{ name = "oscgonfer" }]
+requires-python = ">=3.10"
+keywords = ["meshtastic", "mesh", "telemetry", "lora"]
+dependencies = []
+
+[project.optional-dependencies]
+# 2.8.0 rescales voltage and PM; plans #10b and #32 cover moving past 2.7.
+protobuf = ["meshtastic==2.7.11", "protobuf>=4.21.12"]
+codec = ["mesh-things[protobuf]", "cryptography"]
+
+[tool.hatch.version]
+path = "src/mesh_things/__init__.py"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/mesh_things"]

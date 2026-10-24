@@ -5,13 +5,8 @@ A sink's messages are published under `{namespace}-sinks/{sink_id}/{stream}/{mes
 The prefix sits outside `{namespace}/#`, which the bridge subscribes to for sources,
 so sinked JSON is never read back in as raw packets.
 """
-from common.env import env_str
+from mesh_things.env import env_str
 from common.sources import namespace
-
-DECODED = "decoded"
-DERIVED = "derived"
-ALARMS = "alarms"
-STREAMS = (DECODED, DERIVED, ALARMS)
 
 SCHEMA_VERSION = 1
 

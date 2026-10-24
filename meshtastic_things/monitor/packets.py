@@ -3,8 +3,8 @@ import secrets
 
 from meshtastic.protobuf import mesh_pb2, mqtt_pb2, portnums_pb2, telemetry_pb2
 
-from common import node_ids
-from common.codec import decode_psk, encrypt_packet
+from mesh_things import node_ids
+from mesh_things.codec import decode_psk, encrypt_packet
 
 
 def build_probe(gateway_node_id: int, channel_id: str, psk_b64: str, topic_prefix: str, marker: int) -> tuple[str, bytes]:

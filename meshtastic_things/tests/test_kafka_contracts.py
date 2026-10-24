@@ -3,8 +3,10 @@ import json
 
 import pytest
 
-from common import decode, node_ids
-from common.channels import channel_name
+from mesh_things import node_ids
+from mesh_things.channels import channel_name
+
+from common import decode
 from quality_worker.alarms import build_alarm
 
 MESH_ID = "5703a8ba-10ee-4a0b-81ea-f7ae04d04d2a"

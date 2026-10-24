@@ -3,10 +3,11 @@ import json
 
 import pytest
 
-from common.channels import DERIVED_KIND, channels_in
+from mesh_things.channels import DERIVED_KIND, channels_in
+from mesh_things.timestamps import MIN_FEASIBLE_TIME
+
 from common.postprocessing import Calibration, Observation, ResolvedPlan, ResolvedStep, apply
 from common.postprocessing.stream import derived_events, device_key, observations_from_event, plans_from_config
-from common.timestamps import MIN_FEASIBLE_TIME
 from writer.point_builders import get_points
 
 MESH_ID = "11111111-2222-3333-4444-555555555555"

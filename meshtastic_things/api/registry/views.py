@@ -40,10 +40,11 @@ from .emqx_client import get_emqx_client
 from .exceptions import BadGateway, Conflict
 from .gateways import save_gateway
 from .kafka_publisher import get_publisher, publish_gateway_state
-from common import node_ids
+from mesh_things import node_ids
+from mesh_things.detectors import DETECTOR_SPECS
+from mesh_things.env import env_str
+
 from common.algorithms import REGISTRY, discover
-from common.env import env_str
-from common.detectors import DETECTOR_SPECS
 from common.topology import distance_km, traceroute_paths
 
 from .models import (

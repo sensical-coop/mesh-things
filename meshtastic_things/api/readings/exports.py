@@ -18,7 +18,7 @@ import redis
 import structlog
 from django.conf import settings
 
-from common.channels import DERIVED_KIND, TELEMETRY, channel_name, namespace_of, payload_kind_of_measurement
+from mesh_things.channels import DERIVED_KIND, TELEMETRY, channel_name, namespace_of, payload_kind_of_measurement
 
 from . import archive
 

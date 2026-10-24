@@ -3,8 +3,8 @@ from io import StringIO
 from django.core.management import call_command
 from django.test import SimpleTestCase, TestCase
 
-from common.units import quantity_kind_for
-from registry.management.commands.seed_measurement_catalog import _is_catalogued
+from mesh_things.catalog import telemetry_variants
+from mesh_things.units import quantity_kind_for
 from registry.measurement_catalog_seed import MEASUREMENT_TYPE_SEED
 from registry.models import MeasurementType, TelemetryVariant, TelemetryVariantMeasurement
 
@@ -164,13 +164,10 @@ class CuratedSeedTableTests(SimpleTestCase):
 
     @staticmethod
     def _catalogued_protobuf_fields() -> set[tuple[str, str]]:
-        from meshtastic.protobuf import telemetry_pb2
-
         return {
-            (f"telemetry:{variant_field.name}", field.name)
-            for variant_field in telemetry_pb2.Telemetry.DESCRIPTOR.oneofs_by_name["variant"].fields
-            for field in variant_field.message_type.fields
-            if _is_catalogued(field)
+            (variant.payload_kind, field_name)
+            for variant in telemetry_variants()
+            for field_name in variant.field_names
         }
 
     def test_covers_exactly_the_catalogued_protobuf_fields(self):

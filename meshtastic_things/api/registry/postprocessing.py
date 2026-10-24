@@ -12,10 +12,11 @@ from datetime import timedelta
 import structlog
 from django.db.models import Prefetch, RestrictedError
 
+from mesh_things.channels import DERIVED_KIND, channel_name
+from mesh_things.units import quantity_kind_for
+
 from common.algorithms import POINTWISE, get as get_algorithm
-from common.channels import DERIVED_KIND, channel_name
 from common.postprocessing import Calibration, ResolvedPlan, ResolvedStep
-from common.units import quantity_kind_for
 
 from .kafka_publisher import get_publisher
 from .models import (

@@ -5,7 +5,7 @@ A source's traffic is republished locally under `{namespace}/{source_id}/{remote
 so the last segment is still the gateway id the Kafka key is taken from. Sinks share the
 namespace (common/sinks.py).
 """
-from common.env import env_str
+from mesh_things.env import env_str
 
 DEFAULT_NAMESPACE = "mt-sources"
 

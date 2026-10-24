@@ -29,7 +29,7 @@ from typing import Any, Callable
 
 import structlog
 
-from common.units import quantity_kind_for
+from mesh_things.units import quantity_kind_for
 
 log = structlog.get_logger()
 
@@ -53,7 +53,7 @@ class Param:
     name: str
     calibration: bool = False
     # Free text for documentation, e.g. "mV/ppb". Calibration units are rarely
-    # catalog units, so they are not checked against common.units.
+    # catalog units, so they are not checked against mesh_things.units.
     unit: str | None = None
     doc: str = ""
     default: Any = _NO_DEFAULT
@@ -217,7 +217,7 @@ def algorithm(
             # unclassifiable unit into the catalog months later.
             raise ValueError(
                 f"Algorithm {name!r}: output {output_name!r} declares unit {unit!r}, which isn't in "
-                f"common.units.QUANTITY_KIND_BY_UNIT - add it there first"
+                f"mesh_things.units.QUANTITY_KIND_BY_UNIT - add it there first"
             )
 
     def decorator(func: Callable) -> Callable:

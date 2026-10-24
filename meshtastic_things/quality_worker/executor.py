@@ -5,7 +5,7 @@ is the shell around it.
 """
 from datetime import datetime
 
-from common.channels import DERIVED_KIND, ORIGIN_MEASURED
+from mesh_things.channels import DERIVED_KIND, ORIGIN_MEASURED
 from common.postprocessing import Observation, ResolvedPlan, apply
 from common.postprocessing.stream import derived_events
 

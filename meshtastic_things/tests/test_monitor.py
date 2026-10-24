@@ -7,7 +7,7 @@ import pytest
 from aiohttp.test_utils import TestClient, TestServer
 from paho.mqtt.client import topic_matches_sub
 
-from common import codec
+from mesh_things import codec
 from monitor import alerts
 from monitor.alerts import ALERT, RECOVERED, REMINDER, AlertState
 from monitor.checks import CheckResult, marker_in_latest, marker_in_sink_message

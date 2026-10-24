@@ -6,7 +6,7 @@ from google.protobuf.json_format import MessageToDict
 from meshtastic import protocols
 from meshtastic.protobuf import mesh_pb2, mqtt_pb2
 
-from common import node_ids, portnum_registry
+from mesh_things import node_ids, portnum_registry
 
 # Channel.psk default AQ==
 _DEFAULT_CHANNEL_KEY = bytes(

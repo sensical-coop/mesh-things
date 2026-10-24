@@ -3,7 +3,7 @@ from datetime import datetime, timezone
 import structlog
 from influxdb_client import Point
 
-from common.channels import (
+from mesh_things.channels import (
     ALARMS,
     DERIVED,
     DERIVED_KIND,
@@ -15,7 +15,7 @@ from common.channels import (
     TELEMETRY,
     measurement_of,
 )
-from common.timestamps import resolve_timestamp
+from mesh_things.timestamps import resolve_timestamp
 
 log = structlog.get_logger()
 

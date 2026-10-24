@@ -8,8 +8,8 @@ from django.dispatch import receiver
 from django.utils import timezone
 from django.utils.functional import cached_property
 
-from common import node_ids
-from common.channels import DERIVED_KIND, channel_name
+from mesh_things import node_ids
+from mesh_things.channels import DERIVED_KIND, channel_name
 
 
 class OwnerManager(BaseUserManager):
@@ -573,7 +573,7 @@ class Sink(models.Model):
 
     id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
     label = models.CharField(max_length=255, null=True, blank=True)
-    # A non-empty subset of common.sinks.STREAMS.
+    # A non-empty subset of mesh_things.streams.STREAMS.
     streams = models.JSONField(default=_default_streams)
     created_by = models.ForeignKey(
         Owner, on_delete=models.SET_NULL, null=True, blank=True, related_name="created_sinks"

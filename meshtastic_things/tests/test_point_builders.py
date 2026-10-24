@@ -1,7 +1,7 @@
 from writer.point_builders import get_points
 
 
-from common.portnum_registry import classify
+from mesh_things.portnum_registry import classify
 
 def _event(payload_kind: str, payload: dict, **overrides) -> dict:
     event = {
@@ -95,7 +95,7 @@ def test_unknown_portnum_falls_back_to_generic_builder():
     assert "some_text" not in line  # non-numeric fields aren't persisted by the fallback
 
 def test_an_unknown_portnum_is_stored_under_a_portnum_prefixed_measurement():
-    from common.channels import channels_in
+    from mesh_things.channels import channels_in
 
     payload_kind = classify(99, None)
     payload = {"some_metric": 42}

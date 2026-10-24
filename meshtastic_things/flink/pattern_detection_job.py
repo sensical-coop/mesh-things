@@ -78,7 +78,7 @@ class ExplodeFields(FlatMapFunction):
         # Imported here, not at module level - the established convention for
         # every UDF in this codebase, since `common` resolves on the
         # taskmanager rather than the submitting client.
-        from common import channels, timestamps
+        from mesh_things import channels, timestamps
 
         self._channels = channels
         self._timestamps = timestamps
@@ -127,7 +127,7 @@ class DetectPatterns(KeyedBroadcastProcessFunction):
     by the device's own Measurement override."""
 
     def open(self, runtime_context):
-        from common import detectors
+        from mesh_things import detectors
 
         self._detectors = detectors
         self._flat = runtime_context.get_state(ValueStateDescriptor("flat-stretch", Types.STRING()))

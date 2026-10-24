@@ -5,7 +5,7 @@ InfluxDB series moves and the quality-config keys, being channels, stay put.
 """
 from django.db import migrations
 
-from common.channels import COMPUTED, DEVICE
+from mesh_things.channels import COMPUTED, DEVICE
 
 # Flat spelling -> namespaced spelling. Telemetry rows are already correct.
 RENAMES = {

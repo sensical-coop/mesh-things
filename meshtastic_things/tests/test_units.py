@@ -1,8 +1,8 @@
-"""common/units.py - the unit -> quantity_kind rule, and the one definition of
+"""mesh_things.units - the unit -> quantity_kind rule, and the one definition of
 the quality channels that registry and quality_worker both read."""
 import pytest
 
-from common.units import (
+from mesh_things.units import (
     CONCENTRATION,
     COUNT,
     PHYSICAL_PROPERTY,

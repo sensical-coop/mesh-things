@@ -157,7 +157,7 @@ class QualityWorkerFieldContractTests(SeededCatalogTestCase):
 class QualityChannelCatalogTests(RegistryTestCase):
     def test_the_worker_writes_quality_under_the_namespaced_kind(self):
         """Disagreement here catalogues the channels under a kind nothing queries."""
-        from common.channels import QUALITY_KIND
+        from mesh_things.channels import QUALITY_KIND
 
         owner = self.create_owner()
         mesh = self.create_mesh(owner)

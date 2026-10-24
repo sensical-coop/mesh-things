@@ -10,6 +10,8 @@ from django.test import SimpleTestCase, override_settings
 from django.utils import timezone
 from drf_spectacular.generators import SchemaGenerator
 
+from mesh_things import streams as sink_streams
+
 from common import sinks as sink_names
 from registry import data_lifecycle, sinks
 from registry.models import Device, DeviceSink, Mesh, MeshSink, Owner, Sink, SinkInstruction, TermsAcceptance, TermsKind
@@ -485,4 +487,4 @@ class SchemaTests(SimpleTestCase):
             streams = schemas[name]["properties"]["streams"]
             self.assertEqual(streams["type"], "array", name)
             self.assertEqual(streams["items"], {"$ref": "#/components/schemas/StreamsEnum"}, name)
-        self.assertEqual(schemas["StreamsEnum"]["enum"], list(sink_names.STREAMS))
+        self.assertEqual(schemas["StreamsEnum"]["enum"], list(sink_streams.STREAMS))

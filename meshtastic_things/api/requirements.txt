@@ -9,8 +9,7 @@ structlog==24.4.0
 whitenoise==6.8.2
 gunicorn==23.0.0
 redis==5.2.1
-# Protobuf schema and channel decryption, to prove a discovered gateway
-meshtastic==2.7.11
+# Channel decryption, to prove a discovered gateway; meshtastic comes with mesh-things[codec]
 cryptography==50.0.2
 influxdb-client==1.50.0
 # Deletes archived readings when a mesh ends its service

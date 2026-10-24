@@ -1,7 +1,7 @@
-"""Validation of anything interpolated into a Flux query - common/influx_query.py."""
+"""Validation of anything interpolated into a Flux query - mesh_things.influx_query."""
 import pytest
 
-from common.influx_query import validate_range_bound
+from mesh_things.influx_query import validate_range_bound
 
 
 @pytest.mark.parametrize("value", ["-1h", "-30d", "-500ms", "now()"])

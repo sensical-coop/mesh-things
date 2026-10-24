@@ -1,8 +1,8 @@
 """Alarms tests"""
 import pytest
 
-from common import detectors
-from common.detectors import (
+from mesh_things import detectors
+from mesh_things.detectors import (
     COMPLETENESS,
     FLAT_VALUE,
     MEASUREMENT_DETECTORS,

@@ -37,7 +37,7 @@ from django.core.management.base import BaseCommand
 
 from kafka import KafkaConsumer
 
-from common.detectors import ABSENCE
+from mesh_things.detectors import ABSENCE
 from registry.consumer_loop import consume_forever
 from registry.emailing import console_url, default_alarm_email_cooldown_seconds, send_templated_email
 from registry.models import Device

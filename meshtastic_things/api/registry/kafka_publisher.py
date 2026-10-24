@@ -5,10 +5,10 @@ from datetime import datetime, timezone
 import structlog
 from kafka import KafkaProducer
 
-from common import node_ids
+from mesh_things import node_ids
 
 # Definition of the "<measurement>.<field>"
-from common.channels import channel_name
+from mesh_things.channels import channel_name
 
 from .models import Device, Mesh
 

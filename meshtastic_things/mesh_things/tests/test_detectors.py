@@ -1,4 +1,4 @@
-from common.detectors import (
+from mesh_things.detectors import (
     REPLAY_BURST_READINGS,
     REPLAY_BURST_SECONDS,
     absence_on_timer,
