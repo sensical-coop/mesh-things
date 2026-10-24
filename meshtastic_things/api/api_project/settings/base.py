@@ -209,6 +209,8 @@ if COOKIE_DOMAIN:
 
 # Prefix under PUBLIC_FRONTEND_URL of the frontend's authenticated pages (meshes, devices, ...).
 FRONTEND_CONSOLE_PATH = env_str("REGISTRY__FRONTEND_CONSOLE_PATH", "/console")
+# Frontend paths a verification link may send the owner back to, such as the onboarding flow.
+FRONTEND_RETURN_PATHS = env_list("REGISTRY__FRONTEND_RETURN_PATHS", ["/start"])
 
 # Remote brokers and topic filters a source may not use. Brokers are host or host:port
 # patterns (`*` wildcards); topics must match exactly. An empty topic list still blocks `#`.

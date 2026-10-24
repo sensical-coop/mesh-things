@@ -115,6 +115,7 @@ from .serializers import (
     PostprocessingBlueprintCreateSerializer,
     PostprocessingBlueprintSerializer,
     PostprocessingBlueprintUpdateSerializer,
+    ResendVerificationSerializer,
     StepCalibrationSerializer,
     DataDeletionSerializer,
     RfLinkSerializer,
@@ -304,6 +305,9 @@ class OwnerListCreateView(APIView):
                 terms have changed, unless the instance does not enforce terms.
             terms_locale: Locale the terms were shown in, `en` or `es`. Defaults
                 to `en`.
+            next: Frontend page the verification link leads to once the email is
+                verified. Optional, and limited to the pages the instance allows,
+                such as `/start`.
         """
         serializer = OwnerCreateSerializer(data=request.data)
         serializer.is_valid(raise_exception=True)
@@ -327,7 +331,7 @@ class OwnerListCreateView(APIView):
         # api_key is never persisted or retrievable again
         owner.api_key = api_key
         try:
-            send_verification_email(owner, verification_token)
+            send_verification_email(owner, verification_token, serializer.validated_data.get("next"))
         except Exception as e:
             # Signup already succeeded, resend-verification can recover.
             log.warning("verification_email_send_failed", owner_id=str(owner.id), error=str(e))
@@ -369,13 +373,20 @@ class OwnerVerifyEmailView(APIView):
 
 
 class OwnerResendVerificationView(APIView):
-    """Send a fresh verification email to the authenticated owner."""
-
     permission_classes = [IsAuthenticated]
     throttle_classes = [ResendVerificationThrottle]
 
-    @extend_schema(request=None, responses=DetailSerializer)
+    @extend_schema(request=ResendVerificationSerializer, responses=DetailSerializer)
     def post(self, request):
+        """Send a fresh verification email to the authenticated owner.
+
+        Args:
+            next: Frontend page the new link leads to once the email is verified.
+                Optional, and limited to the pages the instance allows, such as
+                `/start`.
+        """
+        serializer = ResendVerificationSerializer(data=request.data)
+        serializer.is_valid(raise_exception=True)
         owner = request.user
         if owner.is_active:
             return Response({"detail": "Email already verified"})
@@ -384,7 +395,7 @@ class OwnerResendVerificationView(APIView):
         owner.email_verification_sent_at = timezone.now()
         owner.save(update_fields=["email_verification_token_hash", "email_verification_sent_at"])
         try:
-            send_verification_email(owner, verification_token)
+            send_verification_email(owner, verification_token, serializer.validated_data.get("next"))
         except Exception as e:
             log.warning("verification_email_send_failed", owner_id=str(owner.id), error=str(e))
             raise BadGateway("Failed to send verification email, try again shortly")
