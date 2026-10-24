@@ -457,6 +457,9 @@ class Owners:
                 terms have changed, unless the instance does not enforce terms.
             terms_locale: Locale the terms were shown in, `en` or `es`. Defaults
                 to `en`.
+            next: Frontend page the verification link leads to once the email is
+                verified. Optional, and limited to the pages the instance allows,
+                such as `/start`.
         """
 
     def csrf_cookie_get(self) -> Any:
@@ -531,8 +534,14 @@ class Owners:
     def me_operator_request_get(self) -> Any:
         """Return the caller's most recent operator request and its status."""
 
-    def me_resend_verification_create(self) -> Any:
-        """Send a fresh verification email to the authenticated owner."""
+    def me_resend_verification_create(self, *, body: dict[str, Any] | None = None) -> Any:
+        """Send a fresh verification email to the authenticated owner.
+
+        Args:
+            next: Frontend page the new link leads to once the email is verified.
+                Optional, and limited to the pages the instance allows, such as
+                `/start`.
+        """
 
     def me_rotate_key_create(self) -> Any:
         """Issue a new API key and revoke the previous one immediately.
@@ -1577,6 +1586,9 @@ class AsyncOwners:
                 terms have changed, unless the instance does not enforce terms.
             terms_locale: Locale the terms were shown in, `en` or `es`. Defaults
                 to `en`.
+            next: Frontend page the verification link leads to once the email is
+                verified. Optional, and limited to the pages the instance allows,
+                such as `/start`.
         """
 
     async def csrf_cookie_get(self) -> Any:
@@ -1651,8 +1663,14 @@ class AsyncOwners:
     async def me_operator_request_get(self) -> Any:
         """Return the caller's most recent operator request and its status."""
 
-    async def me_resend_verification_create(self) -> Any:
-        """Send a fresh verification email to the authenticated owner."""
+    async def me_resend_verification_create(self, *, body: dict[str, Any] | None = None) -> Any:
+        """Send a fresh verification email to the authenticated owner.
+
+        Args:
+            next: Frontend page the new link leads to once the email is verified.
+                Optional, and limited to the pages the instance allows, such as
+                `/start`.
+        """
 
     async def me_rotate_key_create(self) -> Any:
         """Issue a new API key and revoke the previous one immediately.

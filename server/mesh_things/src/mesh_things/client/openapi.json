@@ -2088,7 +2088,7 @@
       },
       "post": {
         "operationId": "owners_create",
-        "description": "Register an owner, sign it in and return its API key.\n\nSigning up accepts the current account terms, which are recorded. The\nkey is for scripts and is shown in this response only; it cannot be\nretrieved again afterwards. A browser uses the session cookie set by\nthis response instead. A new owner stays inactive until its email\naddress is verified, and until then can only reach its own account.\n\nArgs:\n    terms_version: The `version` of the account terms accepted, as\n        served by the terms endpoint. Required, and refused once the\n        terms have changed, unless the instance does not enforce terms.\n    terms_locale: Locale the terms were shown in, `en` or `es`. Defaults\n        to `en`.",
+        "description": "Register an owner, sign it in and return its API key.\n\nSigning up accepts the current account terms, which are recorded. The\nkey is for scripts and is shown in this response only; it cannot be\nretrieved again afterwards. A browser uses the session cookie set by\nthis response instead. A new owner stays inactive until its email\naddress is verified, and until then can only reach its own account.\n\nArgs:\n    terms_version: The `version` of the account terms accepted, as\n        served by the terms endpoint. Required, and refused once the\n        terms have changed, unless the instance does not enforce terms.\n    terms_locale: Locale the terms were shown in, `en` or `es`. Defaults\n        to `en`.\n    next: Frontend page the verification link leads to once the email is\n        verified. Optional, and limited to the pages the instance allows,\n        such as `/start`.",
         "tags": [
           "owners"
         ],
@@ -2617,10 +2617,29 @@
     "/owners/me/resend-verification": {
       "post": {
         "operationId": "owners_me_resend_verification_create",
-        "description": "Send a fresh verification email to the authenticated owner.",
+        "description": "Send a fresh verification email to the authenticated owner.\n\nArgs:\n    next: Frontend page the new link leads to once the email is verified.\n        Optional, and limited to the pages the instance allows, such as\n        `/start`.",
         "tags": [
           "owners"
         ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ResendVerification"
+              }
+            },
+            "application/x-www-form-urlencoded": {
+              "schema": {
+                "$ref": "#/components/schemas/ResendVerification"
+              }
+            },
+            "multipart/form-data": {
+              "schema": {
+                "$ref": "#/components/schemas/ResendVerification"
+              }
+            }
+          }
+        },
         "security": [
           {
             "bearerAuth": []
@@ -8011,6 +8030,11 @@
             "writeOnly": true,
             "default": "en",
             "description": "Locale the terms were shown in.\n\n* `en` - en\n* `es` - es"
+          },
+          "next": {
+            "type": "string",
+            "writeOnly": true,
+            "description": "Frontend page the verification link sends the owner to once verified, for example `/start` to resume the onboarding. Only the paths this instance allows are accepted."
           }
         },
         "required": [
@@ -8744,6 +8768,16 @@
         ],
         "type": "string",
         "description": "* `mesh_deleted` - Mesh deleted\n* `source_detached` - Mesh moved off its source\n* `terms_lapsed` - Source terms lapsed"
+      },
+      "ResendVerification": {
+        "type": "object",
+        "properties": {
+          "next": {
+            "type": "string",
+            "writeOnly": true,
+            "description": "Frontend page the verification link sends the owner to once verified, for example `/start` to resume the onboarding. Only the paths this instance allows are accepted."
+          }
+        }
       },
       "RfLink": {
         "type": "object",
