@@ -2051,9 +2051,12 @@ curl -s -H "Authorization: Bearer $OWNER_API_KEY" \
 - `field` is optional — omit it to get every field of the measurement.
 - `agg` must be one of `mean`, `max`, `min`, `last`, `first`, `sum`, `count` (only
   applied when `window` is also set).
-- Setting `window` restricts the response to **numeric** fields — string fields like
-  `timestamp_quality` have no meaningful average, and including them would fail the
-  whole Flux query. Omit `window` to get them back.
+- `packet_id` and `timestamp_quality`, the writer's bookkeeping on every point, are not
+  readings and are left out of a whole-family read. Ask for one by name to see it, e.g.
+  `channel=device_metrics.packet_id`.
+- Setting `window` restricts the response to **numeric** fields — string fields have no
+  meaningful average, and including them would fail the whole Flux query. Omit
+  `window` to get them back.
 - `start`/`stop` each accept a relative duration (`-24h`), `now()`, a date
   (`2026-09-01`) or a timestamp (`2026-09-01T13:45:00Z`), and the two forms mix
   freely. A date is taken as midnight and a timestamp without an offset is read
