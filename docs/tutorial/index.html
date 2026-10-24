@@ -1,0 +1,640 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>Meshtastic → Kafka: A Field Guide</title>
+<style>
+  /* ---------- tokens ---------- */
+  :root {
+    --paper: #EEF1F1;
+    --paper-raised: #FFFFFF;
+    --ink: #161B1E;
+    --ink-soft: #4B565C;
+    --line: #D3D8D7;
+    --accent: #A6661F;
+    --accent-ink: #7A4E14;
+    --accent-wash: #E9DAC2;
+    --trace: #2E8E85;
+    --trace-wash: #D6E9E7;
+    --warn: #A23E2E;
+    --warn-wash: #F1DAD3;
+    --screen-bg: #12181B;
+    --screen-ink: #E7D9B4;
+    --screen-ink-soft: #9FB0AC;
+    --screen-trace: #7FCFC4;
+    --screen-warn: #E39383;
+    --shadow: 0 1px 2px rgba(22, 27, 30, 0.06), 0 8px 24px -12px rgba(22, 27, 30, 0.18);
+    --radius: 5px;
+  }
+
+  @media (prefers-color-scheme: dark) {
+    :root {
+      --paper: #12171A;
+      --paper-raised: #1A2226;
+      --ink: #E7EAE9;
+      --ink-soft: #9AA6AB;
+      --line: #2B3438;
+      --accent: #D89A4F;
+      --accent-ink: #F0C989;
+      --accent-wash: #3A2E1B;
+      --trace: #6FC1B7;
+      --trace-wash: #1C302E;
+      --warn: #E08876;
+      --warn-wash: #3A2420;
+      --screen-bg: #0B0F11;
+      --screen-ink: #E7D9B4;
+      --screen-ink-soft: #8B9B97;
+      --screen-trace: #7FCFC4;
+      --screen-warn: #E39383;
+      --shadow: 0 1px 2px rgba(0, 0, 0, 0.4), 0 8px 24px -12px rgba(0, 0, 0, 0.6);
+    }
+  }
+
+  :root[data-theme="dark"] {
+    --paper: #12171A; --paper-raised: #1A2226; --ink: #E7EAE9; --ink-soft: #9AA6AB;
+    --line: #2B3438; --accent: #D89A4F; --accent-ink: #F0C989; --accent-wash: #3A2E1B;
+    --trace: #6FC1B7; --trace-wash: #1C302E; --warn: #E08876; --warn-wash: #3A2420;
+    --screen-bg: #0B0F11; --screen-ink: #E7D9B4; --screen-ink-soft: #8B9B97;
+    --shadow: 0 1px 2px rgba(0, 0, 0, 0.4), 0 8px 24px -12px rgba(0, 0, 0, 0.6);
+  }
+  :root[data-theme="light"] {
+    --paper: #EEF1F1; --paper-raised: #FFFFFF; --ink: #161B1E; --ink-soft: #4B565C;
+    --line: #D3D8D7; --accent: #A6661F; --accent-ink: #7A4E14; --accent-wash: #E9DAC2;
+    --trace: #2E8E85; --trace-wash: #D6E9E7; --warn: #A23E2E; --warn-wash: #F1DAD3;
+    --screen-bg: #12181B; --screen-ink: #E7D9B4; --screen-ink-soft: #9FB0AC;
+    --shadow: 0 1px 2px rgba(22, 27, 30, 0.06), 0 8px 24px -12px rgba(22, 27, 30, 0.18);
+  }
+
+  /* ---------- reset & base ---------- */
+  * { box-sizing: border-box; }
+  html { color-scheme: light dark; }
+  body {
+    margin: 0;
+    background: var(--paper);
+    color: var(--ink);
+    font-family: "Avenir Next", "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
+    font-size: 17px;
+    line-height: 1.65;
+    -webkit-font-smoothing: antialiased;
+    text-rendering: optimizeLegibility;
+  }
+  @media (prefers-reduced-motion: reduce) {
+    * { transition: none !important; scroll-behavior: auto !important; }
+  }
+  html { scroll-behavior: smooth; }
+
+  h1, h2, h3 {
+    font-family: "Iowan Old Style", "Palatino Linotype", Palatino, "Book Antiqua", Georgia, serif;
+    font-weight: 600;
+    color: var(--ink);
+    text-wrap: balance;
+    line-height: 1.15;
+  }
+  a { color: var(--accent-ink); text-decoration-color: color-mix(in srgb, var(--accent) 55%, transparent); text-underline-offset: 3px; }
+  a:hover { text-decoration-thickness: 2px; }
+  a:focus-visible, button:focus-visible, summary:focus-visible {
+    outline: 2px solid var(--trace);
+    outline-offset: 3px;
+    border-radius: 2px;
+  }
+
+  main :is(p, ul, ol, dl) { max-width: 68ch; }
+  main :is(h2, h3) { max-width: 42ch; }
+  p { margin: 0 0 1.05em; }
+  ul, ol { padding-left: 1.3em; margin: 0 0 1.1em; }
+  li { margin-bottom: 0.42em; }
+  li::marker { color: var(--accent); }
+
+  code, kbd { font-family: "IBM Plex Mono", ui-monospace, "Cascadia Code", "SF Mono", Menlo, Consolas, monospace; }
+  :not(pre) > code {
+    background: var(--accent-wash);
+    color: var(--accent-ink);
+    padding: 0.12em 0.4em;
+    border-radius: 3px;
+    font-size: 0.88em;
+  }
+
+  /* ---------- layout ---------- */
+  .page {
+    display: grid;
+    grid-template-columns: 232px minmax(0, 1fr);
+    gap: 3.2rem;
+    max-width: 1180px;
+    margin: 0 auto;
+    padding: 2.6rem 1.5rem 5rem;
+  }
+
+  nav.index {
+    position: sticky;
+    top: 1.8rem;
+    align-self: start;
+    font-size: 0.86rem;
+  }
+  nav.index .idx-kicker {
+    display: block;
+    font-size: 0.7rem;
+    letter-spacing: 0.09em;
+    text-transform: uppercase;
+    color: var(--ink-soft);
+    margin-bottom: 0.9rem;
+  }
+  nav.index ol {
+    list-style: none;
+    margin: 0;
+    padding: 0;
+    display: flex;
+    flex-direction: column;
+    gap: 0.05rem;
+    border-left: 1px solid var(--line);
+  }
+  nav.index a {
+    display: block;
+    padding: 0.36rem 0 0.36rem 0.85rem;
+    margin-left: -1px;
+    border-left: 2px solid transparent;
+    color: var(--ink-soft);
+    text-decoration: none;
+  }
+  nav.index a:hover { color: var(--ink); border-left-color: var(--line); }
+  nav.index .idx-num { font-variant-numeric: tabular-nums; color: var(--accent); margin-right: 0.5em; font-size: 0.82em; }
+  nav.index .idx-sep { height: 0.7rem; }
+
+  @media (max-width: 980px) {
+    .page { grid-template-columns: 1fr; gap: 1.6rem; padding-top: 1.2rem; }
+    nav.index {
+      position: sticky; top: 0; z-index: 20;
+      background: var(--paper);
+      margin: 0 -1.5rem; padding: 0.7rem 1.5rem;
+      border-bottom: 1px solid var(--line);
+    }
+    nav.index .idx-kicker { display: none; }
+    nav.index ol {
+      flex-direction: row; overflow-x: auto; border-left: none; gap: 0.3rem;
+      -ms-overflow-style: none; scrollbar-width: thin;
+    }
+    nav.index li { flex: none; }
+    nav.index a {
+      white-space: nowrap; border: 1px solid var(--line); border-radius: 999px;
+      padding: 0.3rem 0.75rem; margin-left: 0;
+    }
+    nav.index .idx-sep { display: none; }
+  }
+
+  /* ---------- masthead ---------- */
+  .masthead { margin-bottom: 3.4rem; max-width: 60ch; }
+  .kicker {
+    display: block; font-size: 0.76rem; letter-spacing: 0.1em; text-transform: uppercase;
+    color: var(--trace); font-weight: 600; margin-bottom: 0.9rem;
+  }
+  .masthead h1 { font-size: 2.55rem; margin: 0 0 0.6rem; }
+  .dek { font-size: 1.18rem; color: var(--ink-soft); margin-bottom: 1.1rem; max-width: 54ch; }
+  .meta-line { font-size: 0.82rem; color: var(--ink-soft); border-top: 1px solid var(--line); padding-top: 0.9rem; }
+  .meta-line code { font-size: 0.92em; }
+
+  /* ---------- sections ---------- */
+  section { margin-bottom: 4.2rem; scroll-margin-top: 4.5rem; }
+  section > .sec-head { display: flex; align-items: baseline; gap: 0.7rem; margin-bottom: 1.3rem; }
+  section > .sec-head .sec-num {
+    font-family: "IBM Plex Mono", ui-monospace, monospace;
+    color: var(--accent); font-size: 1rem; font-weight: 600;
+  }
+  section h2 { font-size: 1.85rem; margin: 0; }
+  section h3 { font-size: 1.28rem; margin: 1.8rem 0 0.7rem; }
+  .lead { font-size: 1.1rem; color: var(--ink-soft); }
+
+  /* ---------- callouts ---------- */
+  .callout {
+    border-left: 3px solid var(--line);
+    background: var(--paper-raised);
+    border-radius: 0 var(--radius) var(--radius) 0;
+    padding: 0.95rem 1.15rem;
+    margin: 1.3rem 0 1.5rem;
+    max-width: 68ch;
+    box-shadow: var(--shadow);
+  }
+  .callout .callout-label {
+    display: block; font-size: 0.72rem; letter-spacing: 0.08em; text-transform: uppercase;
+    font-weight: 700; margin-bottom: 0.35rem;
+  }
+  .callout p:last-child { margin-bottom: 0; }
+  .callout.gate { border-left-color: var(--accent); }
+  .callout.gate .callout-label { color: var(--accent-ink); }
+  .callout.bug { border-left-color: var(--warn); background: var(--warn-wash); }
+  .callout.bug .callout-label { color: var(--warn); }
+  .callout.fix { border-left-color: var(--trace); background: var(--trace-wash); }
+  .callout.fix .callout-label { color: var(--trace); }
+
+  /* ---------- code / screens ---------- */
+  pre {
+    background: var(--screen-bg);
+    color: var(--screen-ink);
+    border-radius: var(--radius);
+    padding: 1rem 1.15rem;
+    overflow-x: auto;
+    font-size: 0.86rem;
+    line-height: 1.55;
+    box-shadow: var(--shadow);
+    margin: 0.9rem 0 1.5rem;
+  }
+  pre code { background: none; color: inherit; padding: 0; font-size: 1em; }
+  pre .c-mute { color: var(--screen-ink-soft); }
+  pre .c-trace { color: var(--screen-trace); }
+  pre .c-warn { color: var(--screen-warn); font-weight: 600; }
+  .pre-caption {
+    font-size: 0.78rem; color: var(--ink-soft); margin: -0.9rem 0 1.5rem; font-style: italic;
+  }
+
+  /* ---------- tables ---------- */
+  .table-wrap { overflow-x: auto; margin: 1rem 0 1.7rem; box-shadow: var(--shadow); border-radius: var(--radius); }
+  table { border-collapse: collapse; width: 100%; min-width: 640px; background: var(--paper-raised); font-size: 0.88rem; }
+  th, td { text-align: left; padding: 0.62rem 0.9rem; border-bottom: 1px solid var(--line); vertical-align: top; }
+  thead th {
+    font-size: 0.72rem; letter-spacing: 0.06em; text-transform: uppercase; color: var(--ink-soft);
+    border-bottom: 1px solid var(--line); white-space: nowrap;
+  }
+  tbody tr:last-child td { border-bottom: none; }
+  td code, th code { white-space: nowrap; }
+
+  /* ---------- diagrams ---------- */
+  .diagram { overflow-x: auto; background: var(--paper-raised); border-radius: var(--radius); box-shadow: var(--shadow); padding: 1.1rem; margin: 1rem 0 1.7rem; }
+  .diagram pre.mermaid { background: none; box-shadow: none; padding: 0; margin: 0; }
+
+  /* ---------- glossary ---------- */
+  dl.glossary { max-width: 68ch; }
+  dl.glossary dt { font-family: "IBM Plex Mono", ui-monospace, monospace; color: var(--accent-ink); font-weight: 600; margin-top: 1.05em; }
+  dl.glossary dd { margin: 0.2em 0 0; color: var(--ink-soft); }
+
+  /* ---------- concept dl (section 2) ---------- */
+  dl.concepts dt {
+    font-family: "Iowan Old Style", "Palatino Linotype", Georgia, serif;
+    font-size: 1.12rem; font-weight: 600; margin-top: 1.5em; color: var(--ink);
+  }
+  dl.concepts dd { margin: 0.35em 0 0; }
+
+  footer {
+    max-width: 68ch; padding-top: 2rem; margin-top: 2rem; border-top: 1px solid var(--line);
+    font-size: 0.84rem; color: var(--ink-soft);
+  }
+
+  .flow-note { font-size: 0.9rem; color: var(--ink-soft); max-width: 60ch; }
+  hr.rule { border: none; border-top: 1px solid var(--line); margin: 2.2rem 0; max-width: 68ch; }
+</style>
+</head>
+<body>
+<div class="page">
+  <nav class="index" aria-label="Contents">
+    <span class="idx-kicker">Contents</span>
+    <ol>
+      <li><a href="#big-picture"><span class="idx-num">1</span>The big picture</a></li>
+      <li><a href="#mesh-concepts"><span class="idx-num">2</span>Meshtastic in five terms</a></li>
+      <li><a href="#raw-ingestion"><span class="idx-num">3</span>Antenna to Kafka</a></li>
+      <li><a href="#decode-job"><span class="idx-num">4</span>Two gates, three outputs</a></li>
+      <li><a href="#registration"><span class="idx-num">5</span>Sightings become a catalog</a></li>
+      <li><a href="#topics-contract"><span class="idx-num">6</span>Topics are the real API</a></li>
+      <li><a href="#case-study"><span class="idx-num">7</span>Case study: three stacked bugs</a></li>
+      <li><a href="#field-guide"><span class="idx-num">8</span>Field guide</a></li>
+      <li class="idx-sep" aria-hidden="true"></li>
+      <li><a href="#glossary">Glossary</a></li>
+    </ol>
+  </nav>
+
+  <main>
+    <header class="masthead">
+      <span class="kicker">System tutorial · mesh cbaea59b-81e1</span>
+      <h1>How the Meshtastic → Kafka pipeline actually works</h1>
+      <p class="dek">A guided tour of every hop a sensor reading takes — from a radio packet in the field to a row in Postgres — told through the concepts that make it work and a real bug hunt that exercised nearly all of them.</p>
+      <p class="meta-line">8 sections, one glossary, one live incident. Grounded in <code>docker-compose.yml</code>, <code>flink/decode_job.py</code>, and <code>registry/registry/</code>.</p>
+    </header>
+
+    <!-- 1 -->
+    <section id="big-picture">
+      <div class="sec-head"><span class="sec-num">1</span><h2>The big picture</h2></div>
+      <p class="lead">Strip away the services and this system does three things: get bytes off a radio network and onto Kafka, decrypt and classify each packet, and turn "this device exists and said X" into rows you can query.</p>
+      <p>Everything else — Django apps, Flink jobs, InfluxDB, S3 — exists to serve one of those three jobs. The trick to understanding the codebase quickly is to stop thinking about it as a list of services and start thinking about it as a pipe with three sections, joined by Kafka topics:</p>
+
+      <div class="diagram">
+        <pre class="mermaid">
+%%{init: {'theme':'neutral'}}%%
+flowchart LR
+  RADIO["LoRa mesh<br/>nodes + gateway"] -->|MQTT| BRIDGE["mqtt_kafka_bridge"]
+  BRIDGE --> RAW[("raw.v1")]
+  RAW --> DECODE["Flink job<br/>mesh-decode-decrypt"]
+  KEYS[("keys.v1")] -.broadcast.-> DECODE
+  REJ[("node_rejections.v1")] -.broadcast.-> DECODE
+  DECODE --> DECODED[("decoded.v1")]
+  DECODE --> SIGHT[("devices.v1")]
+  DECODE --> DISC[("sensor_discovery.v1")]
+  SIGHT --> REGISTRY["registry registry<br/>(Postgres)"]
+  DISC --> REGISTRY
+  DECODED --> CALIB["calibration + quality jobs"]
+  DECODED --> WRITE["InfluxDB / S3 writers"]
+  CALIB --> ALARMS[("alarms.v1")]
+  QCFG[("quality_config.v1")] -.broadcast.-> CALIB
+  REGISTRY --> QCFG
+  ALARMS --> REGISTRY
+  WRITE --> INFLUX[("InfluxDB")]
+  INFLUX --> WORKER["quality_worker<br/>(blueprints, completeness)"]
+  WORKER --> ALARMS
+  REGISTRY --> QAPI["readings-api"]
+  INFLUX --> QAPI
+        </pre>
+      </div>
+
+      <p>Note the two loops back into registry. It isn't only a registry that feeds the pipeline — it also receives from it: sightings and discovery events flow in to build the device/sensor catalog, and alarms flow in so they can be turned into an email to the right owner. And the config it publishes (<code>quality_config.v1</code>) is just the curated catalog, pushed back out to the jobs that need it.</p>
+
+      <p>The middle column — the Flink decode job — is the one piece that touches the actual radio protocol: encryption, packet framing, portnum classification. Everything to its right only ever reads and writes JSON on Kafka topics. That single fact is why <a href="#topics-contract">section&nbsp;6</a> treats the topic list as the system's real API surface, and why the incident in <a href="#case-study">section&nbsp;7</a> could take the whole pipeline down without a single service crashing.</p>
+    </section>
+
+    <!-- 2 -->
+    <section id="mesh-concepts">
+      <div class="sec-head"><span class="sec-num">2</span><h2>Meshtastic in five terms</h2></div>
+      <p>Before any of the pipeline makes sense, five Meshtastic concepts need to be solid. Everything downstream is just plumbing around these.</p>
+
+      <dl class="concepts">
+        <dt>Mesh</dt>
+        <dd>A LoRa channel: a <code>channel_id</code> (its human name, e.g. <code>SensorHub</code>) plus a <code>psk_b64</code> — the pre-shared key every device on that channel encrypts with. In this system a <code>Mesh</code> row is the unit an owner registers and pays attention to; it has exactly one owner and any number of devices.</dd>
+
+        <dt>Node vs. gateway</dt>
+        <dd>Both are physical Meshtastic devices, identified by a 32-bit <code>device_id</code> (shown in hex as <code>!202d12ed</code>, which is decimal <code>539824877</code>). A <em>node</em> just talks on the mesh. A <em>gateway</em> also bridges the mesh to MQTT, so its traffic is what reaches this pipeline at all. In the registry, a <code>Device</code> row is always exactly one or the other — <code>is_gateway</code> xor <code>is_node</code> — never both, enforced by a database constraint.</dd>
+
+        <dt>ServiceEnvelope</dt>
+        <dd>The protobuf a gateway actually publishes to MQTT: a <code>MeshPacket</code> wrapped with <code>channel_id</code> and <code>gateway_id</code>. The MQTT topic itself encodes the same information, e.g. <code>test/sensorhub/2/e/SensorHub/!19ba4462</code> — region / firmware / channel / <code>gateway_id</code>.</dd>
+
+        <dt>MeshPacket → Data → portnum</dt>
+        <dd>A <code>MeshPacket</code> carries either a plaintext <code>decoded</code> payload or an <code>encrypted</code> byte blob that unpacks into a <code>Data</code> message once decrypted. <code>Data.portnum</code> says what's inside — <code>67</code> is telemetry, <code>3</code> is position, and so on — and that number is how the decode job picks which protobuf schema to parse the payload with.</dd>
+
+        <dt>PSK and the "AQ==" shorthand</dt>
+        <dd>A real key is 16 or 32 raw bytes, base64-encoded. But Meshtastic also defines a 1-byte shorthand: <code>0</code> means no encryption, <code>1</code> (base64 <code>AQ==</code>) means "the well-known default channel key," and <code>2</code>–<code>10</code> mean that same default key with <code>1</code>–<code>9</code> added to its last byte. It looks like a secret; it isn't — it's a convenience for people who haven't set up a real channel key yet. Section&nbsp;7 covers a bug caused by this shorthand not being implemented at all.</dd>
+      </dl>
+
+      <h3>The encryption, concretely</h3>
+      <p>Every encrypted payload uses AES in CTR mode. The interesting part is the nonce — the 16 bytes that make the same key produce different ciphertext for different packets. Meshtastic doesn't transmit a random nonce; it derives one from fields already on the packet:</p>
+      <pre><code>nonce = packet.id.to_bytes(8, "little") + packet.from.to_bytes(8, "little")
+cipher = AES(key_bytes) in CTR mode with that nonce
+plaintext = decrypt(packet.encrypted)</code></pre>
+      <p class="pre-caption">mesh_things/codec.py — decrypt_packet()</p>
+      <p>This is safe precisely <em>because</em> the PSK is secret and the nonce doesn't need to be: CTR mode only breaks down if the same (key, nonce) pair is ever reused, and packet id + sender is unique enough in practice. It also means decryption is stateless and cheap — no per-device counter to track, which matters a lot once you see how many packets flow through the next section.</p>
+    </section>
+
+    <!-- 3 -->
+    <section id="raw-ingestion">
+      <div class="sec-head"><span class="sec-num">3</span><h2>Antenna to Kafka</h2></div>
+      <p><code>mqtt_kafka_bridge</code> is deliberately dumb: it subscribes to the gateways' MQTT topics and republishes every <code>ServiceEnvelope</code>, byte-for-byte, onto <code>mesh.telemetry.raw.v1</code>. No parsing, no decryption — that's the next stage's job. The one subtlety worth knowing about is how those bytes travel through Flink's Kafka connector as a <em>string</em>:</p>
+
+      <pre><code class="c-mute"># SimpleStringSchema decodes raw bytes through a Charset - UTF-8 would corrupt
+# these protobuf packets, so ISO-8859-1 (byte-transparent) is used instead.</code>
+<code>RAW_BYTES_CHARSET = "ISO-8859-1"</code></pre>
+      <p class="pre-caption">flink/decode_job.py</p>
+
+      <p>Protobuf bytes are arbitrary binary, not valid UTF-8. Decode them as UTF-8 and some byte sequences get silently mangled on the round trip. ISO-8859-1 maps every byte 0–255 to a distinct character one-to-one, so a string built from it and re-encoded back to bytes is guaranteed identical to the original — it's being used as a transport trick, not because anyone cares about Western European text encoding.</p>
+    </section>
+
+    <!-- 4 -->
+    <section id="decode-job">
+      <div class="sec-head"><span class="sec-num">4</span><h2>Two gates, three outputs</h2></div>
+      <p>The decode job — Flink job name <code>mesh-decode-decrypt</code> — is where the interesting decisions happen. It's keyed by <code>gateway_id</code>, and connected to a <em>broadcast stream</em> built from two small, slow-changing Kafka topics: <code>mesh.keys.v1</code> (which gateways are registered, and their mesh's PSK) and <code>mesh.node_rejections.v1</code> (which specific nodes have been blocked).</p>
+
+      <p>"Broadcast state" is Flink's answer to a simple problem: the hot path — decoding a packet — can't afford a database lookup per packet, but it does need current config. So instead, every parallel task keeps a full, live-updated copy of these two tiny topics in memory. A packet's gateway either is or isn't in that in-memory map; no round trip required.</p>
+
+      <div class="diagram">
+        <pre class="mermaid">
+%%{init: {'theme':'neutral'}}%%
+flowchart TD
+  P["Raw packet arrives<br/>keyed by gateway_id"] --> G{"Gateway registered?"}
+  G -- no --> D1["Drop —<br/>unregistered gateway"]
+  G -- yes --> R{"Sender rejected<br/>on this mesh?"}
+  R -- yes --> D2["Drop —<br/>rejected node"]
+  R -- no --> DEC["Decrypt with the<br/>mesh's PSK (AES-CTR)"]
+  DEC -- fails to parse --> D3["Drop —<br/>bad key or corrupt packet"]
+  DEC -- succeeds --> OUT["Emit three events"]
+  OUT --> O1["decoded telemetry"]
+  OUT --> O2["device sighting<br/>(allowed by default)"]
+  OUT --> O3["sensor discovery<br/>(telemetry payloads only)"]
+        </pre>
+      </div>
+
+      <div class="callout gate">
+        <span class="callout-label">Gate 1 — registered gateways only</span>
+        <p>If a packet's <code>gateway_id</code> isn't in the broadcast state, it's dropped before decryption is even attempted. Registering a <code>Device</code> as a gateway through the registry is what publishes that gateway's entry to <code>mesh.keys.v1</code> in the first place — which means <em>nothing</em> decrypts for a mesh until an owner has explicitly stood up a gateway for it.</p>
+      </div>
+
+      <div class="callout gate">
+        <span class="callout-label">Gate 2 — node rejection</span>
+        <p>Possession of the mesh's PSK is the entire authentication model here: any device that can successfully decrypt a packet is presumed to be a legitimate member of the mesh. There's no allow-list to populate up front. The rejection gate is the escape hatch for the obvious problem with that — an owner can block one misbehaving or compromised <code>mesh_id:device_id</code> pair without touching anyone else's key.</p>
+      </div>
+
+      <p>If a packet clears both gates, <code>decrypt_packet</code> tries AES-CTR decryption and a protobuf parse. Either can fail — wrong key, corrupt bytes, an unrecognized <code>portnum</code> — and the function returns <code>None</code> rather than raising. One bad packet should never take the stream down, so failure here is a value, not an exception.</p>
+
+      <h3>One decrypt, three events</h3>
+      <p>The part that's easy to miss on a first read: a single successful decode fans out into <em>three</em> separate Kafka writes, and none of them require a separate registration step:</p>
+      <pre><code class="c-mute"># Unconditional: a successful decrypt proves mesh membership and
+# creates the node as allowed-by-default on first sighting.</code></pre>
+      <p class="pre-caption">flink/decode_job.py — the comment above the sighting event</p>
+      <ul>
+        <li><strong>Decoded telemetry</strong> → <code>mesh.telemetry.decoded.v1</code> — the actual payload, for postprocessing, alarms, and storage.</li>
+        <li><strong>Device sighting</strong> → <code>mesh.devices.v1</code> — "this device exists," opportunistically enriched with location (from a Position payload) or name/hardware (from a NodeInfo payload).</li>
+        <li><strong>Sensor discovery</strong> → <code>mesh.sensor_discovery.v1</code> — <em>only</em> for telemetry payloads, and only field <em>names</em>, never values. Discovery answers "what does this sensor measure," not "what did it measure just now" — a deliberate privacy boundary, not an oversight.</li>
+      </ul>
+    </section>
+
+    <!-- 5 -->
+    <section id="registration">
+      <div class="sec-head"><span class="sec-num">5</span><h2>Sightings become a catalog</h2></div>
+      <p>The decode job never touches Postgres. It just writes events. Two small registry consumers do the actual registration:</p>
+
+      <h3>consume_device_sightings</h3>
+      <p>Reads <code>mesh.devices.v1</code> and upserts a <code>Device</code> row — <code>is_gateway=False</code> (a node), <code>is_allowed=True</code> by default — bumping <code>last_seen</code> on every sighting. Location and name/hardware fields get filled in opportunistically from the same event, but only if an owner hasn't already hand-edited them:</p>
+      <div class="table-wrap">
+        <table>
+          <thead><tr><th>Field</th><th>Auto-filled from</th><th>Sticky override flag</th></tr></thead>
+          <tbody>
+            <tr><td><code>latitude</code>, <code>longitude</code></td><td>Position payload</td><td><code>location_overridden</code></td></tr>
+            <tr><td><code>name</code>, <code>short_name</code>, <code>hardware_type</code>, <code>role</code></td><td>NodeInfo payload</td><td><code>nodeinfo_overridden</code></td></tr>
+          </tbody>
+        </table>
+      </div>
+      <p>The pattern is simple: automation fills in whatever an owner hasn't set, and the moment an owner sets it by hand, automation stops touching it. It's worth noticing this consumer only ever creates <em>nodes</em>. Gateways are never created this way — an owner registers a gateway explicitly through the API, and that registration is the same act that populates <code>mesh.keys.v1</code> and turns Gate&nbsp;1 open for that mesh. Cause and effect run in a specific order: register a gateway first, or nothing downstream ever fires.</p>
+
+      <h3>consume_sensor_discovery</h3>
+      <p>Reads <code>mesh.sensor_discovery.v1</code> and upserts <code>DeviceTelemetryVariant</code> and <code>Measurement</code> rows against two global catalogs (<code>TelemetryVariant</code>, <code>MeasurementType</code>) shared across every mesh. This is how the system learns "device X reports <code>environment_metrics</code> with temperature and humidity fields" without anyone configuring it by hand — <code>TelemetryVariant</code> is keyed by wire-format message type, not verified physical hardware, since protobuf alone can't tell you whether that reading came from a BME280 or a BMP180.</p>
+    </section>
+
+    <!-- 6 -->
+    <section id="topics-contract">
+      <div class="sec-head"><span class="sec-num">6</span><h2>Topics are the real API</h2></div>
+      <p>Past the decode job, almost nothing in this system calls anything else directly. A Flink job reads a topic and writes a topic; a Django management command reads a topic and writes Postgres. That makes the topic list the actual interface contract — more so than any HTTP endpoint — which is exactly why a topic silently not existing (section&nbsp;7) was able to take the whole pipeline down without a single stack trace pointing at the real cause for over an hour.</p>
+
+      <div class="table-wrap">
+        <table>
+          <thead><tr><th>Topic</th><th>Written by</th><th>Read by</th><th>Carries</th></tr></thead>
+          <tbody>
+            <tr><td><code>mesh.telemetry.raw.v1</code></td><td>mqtt_kafka_bridge</td><td>decode job</td><td>Raw <code>ServiceEnvelope</code> bytes</td></tr>
+            <tr><td><code>mesh.telemetry.rawhealth.v1</code></td><td>mqtt_kafka_bridge</td><td>—</td><td>Bridge health heartbeat</td></tr>
+            <tr><td><code>mesh.keys.v1</code></td><td>registry (gateway registration)</td><td>decode job (broadcast)</td><td>Gateway → {psk_b64, mesh_id} upserts</td></tr>
+            <tr><td><code>mesh.node_rejections.v1</code></td><td>registry (reject/unreject)</td><td>decode job (broadcast)</td><td><code>mesh_id:device_id</code> block-list</td></tr>
+            <tr><td><code>mesh.telemetry.decoded.v1</code></td><td>decode job</td><td>postprocessing job, pattern-detection job, writers</td><td>Decrypted, classified telemetry</td></tr>
+            <tr><td><code>mesh.devices.v1</code></td><td>decode job</td><td>registry device consumer</td><td>Device sightings</td></tr>
+            <tr><td><code>mesh.sensor_discovery.v1</code></td><td>decode job</td><td>registry discovery consumer</td><td>Telemetry-variant field-name discovery</td></tr>
+            <tr><td><code>mesh.postprocessing_config.v1</code></td><td>registry</td><td>postprocessing job (broadcast)</td><td>Every enabled postprocessing plan of a device, with its calibration</td></tr>
+            <tr><td><code>mesh.telemetry.derived.v1</code></td><td>postprocessing job, quality worker (backfills)</td><td>pattern-detection job, writers</td><td>Derived channels, in the decoded shape</td></tr>
+            <tr><td><code>mesh.rules.v1</code></td><td>config</td><td>— <em>(superseded)</em></td><td>Alarm detector rules, replaced by <code>quality_config.v1</code></td></tr>
+            <tr><td><code>mesh.quality_config.v1</code></td><td>registry (catalog + device edits)</td><td>pattern-detection &amp; absence-detection jobs (broadcast)</td><td>Catalog detector defaults per channel, a device's own range bounds, reading/publish intervals per device</td></tr>
+            <tr><td><code>mesh.telemetry.alarms.v1</code></td><td>pattern-detection job, absence-detection job, quality worker</td><td>influxdb_writer, registry alarm consumer</td><td>Fired alarms → InfluxDB and owner emails</td></tr>
+          </tbody>
+        </table>
+      </div>
+      <p class="flow-note">Two columns are worth a second look: everything a Flink job <em>subscribes to as broadcast state</em> — <code>keys.v1</code>, <code>node_rejections.v1</code>, <code>quality_config.v1</code>, <code>postprocessing_config.v1</code> — is written by something other than a Flink job. If that something never writes to a brand-new topic, the topic never exists, and a Flink consumer can't create it either. That's the whole shape of section&nbsp;7's first bug.</p>
+      <p class="flow-note"><code>mesh.quality_config.v1</code> shows the pattern at its cleanest: there is no separate "rules" resource to manage. You edit the sensor catalog or a device through the normal REST API, registry publishes the change, and the Flink jobs pick it up as broadcast state. The catalog <em>is</em> the config — which is why <code>mesh.rules.v1</code>, a hand-published parallel source of the same thresholds, was retired rather than kept in sync.</p>
+    </section>
+
+    <!-- 7 -->
+    <section id="case-study">
+      <div class="sec-head"><span class="sec-num">7</span><h2>Case study: three stacked bugs</h2></div>
+      <p class="lead">The report was simple: a mesh should show a gateway and one other device, and the other device wasn't there. It took three separate, unrelated bugs — each hiding behind the last — to actually explain that.</p>
+
+      <h3>Bug 1 — a topic that never existed</h3>
+      <p>The decode job's <code>jobmanager</code> log showed the same cycle every 60 seconds: <code>RUNNING → RESTARTING → RUNNING</code>, forever.</p>
+      <pre><code class="c-warn">Failed to list subscribed topic partitions due to
+Caused by: java.lang.RuntimeException: Failed to get metadata for topics [mesh.node_rejections.v1].</code></pre>
+      <div class="callout bug">
+        <span class="callout-label">Root cause</span>
+        <p><code>mesh.node_rejections.v1</code> only gets written to when an owner rejects a device — and nobody ever had. No producer had ever touched it, so it simply didn't exist. Kafka brokers can auto-create a topic on demand (<code>auto.create.topics.enable=true</code> here, confirmed), but that only applies to <em>producers</em>. Since Kafka 2.3 (KIP-361), a consumer subscribing to an explicit topic list does <em>not</em> trigger auto-creation — a deliberate guard against typos silently spawning junk topics. A pure-consumer topic that nobody has produced to yet is invisible to the one thing trying to read it.</p>
+      </div>
+      <p>Because Flink restarts a job's <em>entire</em> execution graph on any source failure, this took down <code>raw-mesh-packets</code>, <code>gateway-key-config</code>, and the whole decode-and-emit pipeline with it — every 60 seconds, for every mesh, not just this one.</p>
+      <div class="callout fix">
+        <span class="callout-label">Fix</span>
+        <p>Create the topic, and stop relying on "some producer will eventually write to it first": add a <code>kafka-topics-init</code> service to <code>docker-compose.yml</code> that pre-creates every topic the pipeline needs (idempotently), wired as a <code>service_completed_successfully</code> dependency ahead of every Kafka-touching service.</p>
+      </div>
+
+      <h3>Bug 2 — a fix that looked like it worked</h3>
+      <p>Once the job stabilized, the mesh in question suddenly had <em>two</em> node devices instead of one. That looked like success. It wasn't the right two.</p>
+      <p>The decode job's raw-packet source replays from <code>earliest</code> on every restart. The physical gateway involved had been reused across three different test meshes over the preceding days, and — because someone kept copy-pasting the same test PSK — <em>all three</em> registrations shared one literal key:</p>
+      <pre><code>{"channel_id": "FAB26",     "mesh_id": "b096e8be-...", <span class="c-mute">"psk_b64": "OEu8wB3A...MsaE="</span>}
+{"channel_id": "FAB26",     "mesh_id": "859fc619-...", <span class="c-mute">"psk_b64": "OEu8wB3A...MsaE="</span>}
+{"channel_id": "SensorHub", "mesh_id": "cbaea59b-...", <span class="c-mute">"psk_b64": "OEu8wB3A...MsaE="</span>}</code></pre>
+      <p class="pre-caption">mesh.keys.v1 — three registrations of gateway !19ba4462, one reused key</p>
+      <div class="callout bug">
+        <span class="callout-label">What actually happened</span>
+        <p>Old packets from the <em>earlier, unrelated</em> test meshes decrypted successfully — with the same key — and got attributed to whichever mesh currently owned that gateway ID at replay time. The count went from one device to two, which read as progress. Neither new device was the one from the original report.</p>
+      </div>
+      <p>The lesson generalizes past this codebase: when a fix changes the numbers, check that it changed the <em>specific</em> thing you expected, not just that the state moved. "More devices showed up" and "the right device showed up" are different claims.</p>
+
+      <h3>Bug 3 — the real device, and a bug hiding a bug</h3>
+      <p>The actual device (<code>!202d12ed</code>, decimal <code>539824877</code>) was live and reachable — its uplinks showed up in a decrypted MQTT tap every minute — but it never appeared in Postgres. The taskmanager logs explained why, once you got past the first exception:</p>
+      <pre><code>Traceback (most recent call last):
+  File "mesh_things/codec.py", line 33, in decrypt_packet
+    data.ParseFromString(decrypted_bytes)
+<span class="c-warn">google.protobuf.message.DecodeError: Error parsing message</span>
+
+During handling of the above exception, another exception occurred:
+
+Traceback (most recent call last):
+  File "mesh_things/codec.py", line 36, in decrypt_packet
+    log.warning("Decryption failed", error=str(e))
+  ...
+<span class="c-warn">TypeError: CustomPrint.print() got an unexpected keyword argument 'flush'</span></code></pre>
+      <div class="callout bug">
+        <span class="callout-label">Two bugs, stacked</span>
+        <p><strong>The real one:</strong> the mesh's registered PSK was that same stale, reused test key — not the device's actual channel key, which was <code>AQ==</code>, Meshtastic's "use the default channel key" shorthand. Decryption with the wrong key produces garbage bytes, and <code>ParseFromString</code> correctly rejects them.</p>
+        <p><strong>The one that hid it:</strong> <code>codec.py</code>'s own error handler called <code>structlog</code>'s <code>log.warning(...)</code> — which crashes inside PyFlink's UDF runtime. <code>decode_job.py</code> already had a documented workaround for this exact incompatibility (<code>_udf_log</code>, using plain <code>print()</code>); <code>codec.py</code> had just never been updated to match. Every real decode failure was arriving as a confusing second-order <code>TypeError</code> instead of the actual <code>DecodeError</code>.</p>
+      </div>
+      <p>And underneath both: <code>decode_psk("AQ==")</code> had never actually implemented the shorthand. The code's own comment said so — <em>"we don't expand the real default PSK yet"</em> — so even the correct key would not have worked without a code change.</p>
+      <div class="callout fix">
+        <span class="callout-label">Fix</span>
+        <p>Implemented the real shorthand (index 1 = the literal default key from Meshtastic's own <code>channel_pb2.pyi</code>; 2–10 = that key with <code>n-1</code> added to its last byte), removed the two <code>structlog</code> calls from the UDF's hot path, rotated the mesh's PSK to <code>AQ==</code> through the actual Django/Kafka-publisher code path, and rebuilt the Flink image. Verified by watching <code>last_seen</code> advance across two separate live uplink cycles — not just checking that a row existed once.</p>
+      </div>
+
+      <h3>What this teaches</h3>
+      <ul>
+        <li><strong>Read the actual error, not the symptom.</strong> "Devices aren't registering" was three unrelated root causes wearing one symptom.</li>
+        <li><strong>A crash can hide a more useful error underneath it.</strong> The <code>TypeError</code> from the logging call was itself a real bug — but chasing it first would have missed the <code>DecodeError</code> it was masking.</li>
+        <li><strong>Verify the specific claim, not the general shape.</strong> "A device appeared" is not the same claim as "the reported device appeared."</li>
+      </ul>
+    </section>
+
+    <!-- 8 -->
+    <section id="field-guide">
+      <div class="sec-head"><span class="sec-num">8</span><h2>Field guide</h2></div>
+      <p>The commands that actually did the diagnosis above, kept here for next time.</p>
+
+      <h3>Inspect Kafka</h3>
+      <pre><code><span class="c-mute"># list every topic</span>
+docker compose exec kafka /opt/kafka/bin/kafka-topics.sh \
+  --bootstrap-server kafka:29092 --list
+
+<span class="c-mute"># dump a topic from the start (Ctrl-C or --timeout-ms to stop)</span>
+docker compose exec kafka /opt/kafka/bin/kafka-console-consumer.sh \
+  --bootstrap-server kafka:29092 --topic mesh.devices.v1 \
+  --from-beginning --timeout-ms 10000
+
+<span class="c-mute"># message count without dumping the payloads</span>
+docker compose exec kafka /opt/kafka/bin/kafka-get-offsets.sh \
+  --bootstrap-server kafka:29092 --topic mesh.devices.v1 --time -1</code></pre>
+
+      <h3>Inspect the Flink job</h3>
+      <pre><code><span class="c-mute"># job lifecycle: RUNNING / RESTARTING / the exception that caused it</span>
+docker compose logs jobmanager --since 30m | grep -iE "RUNNING|RESTARTING|Caused by"
+
+<span class="c-mute"># per-packet errors happen on the taskmanager, not the jobmanager</span>
+docker compose logs taskmanager --since 10m | grep -iE "Failed to decode|Traceback"</code></pre>
+
+      <h3>Inspect the registry</h3>
+      <pre><code>docker compose exec postgres psql -U meshtastic -d meshtastic_keys -c \
+  "SELECT device_id, is_gateway, is_node, is_allowed, last_seen
+     FROM devices WHERE mesh_id = '&lt;mesh-uuid&gt;';"</code></pre>
+
+      <h3>Node ID math</h3>
+      <p>Meshtastic shows node IDs as hex (<code>!202d12ed</code>); the registry stores them as decimal <code>device_id</code>. Converting by hand beats guessing:</p>
+      <pre><code>python3 -c "print(int('202d12ed', 16))"
+<span class="c-trace">539824877</span></code></pre>
+
+      <h3>Inspect the data-quality checks</h3>
+      <pre><code><span class="c-mute"># what config the Flink jobs currently hold (compacted = live state)</span>
+docker compose exec kafka /opt/kafka/bin/kafka-console-consumer.sh \
+  --bootstrap-server kafka:29092 --topic mesh.quality_config.v1 \
+  --from-beginning --property print.key=true --timeout-ms 10000
+
+<span class="c-mute"># alarms as they fire, from either tier</span>
+docker compose exec kafka /opt/kafka/bin/kafka-console-consumer.sh \
+  --bootstrap-server kafka:29092 --topic mesh.telemetry.alarms.v1 --timeout-ms 30000
+
+<span class="c-mute"># run a batch check on demand instead of waiting for the scheduler</span>
+docker compose exec quality_worker python -c "
+from quality_worker import celery_app
+from quality_worker.tasks import check_completeness
+print(check_completeness.apply(args=['&lt;device-uuid&gt;']).get())"</code></pre>
+      <p>No alarms at all usually means nothing is configured yet: with no <code>valid_min</code>/<code>valid_max</code> set on the device's own measurement there's no range check, and with no configured interval there's no absence timer — deliberately, since a guessed interval produces meaningless alarms. See <a href="../data-quality.md">data-quality.md</a>.</p>
+    </section>
+
+    <hr class="rule" />
+
+    <!-- glossary -->
+    <section id="glossary">
+      <div class="sec-head"><h2>Glossary</h2></div>
+      <dl class="glossary">
+        <dt>blueprint</dt><dd>A reusable, versioned recipe for derived channels: input slots and ordered steps, each running an algorithm, so one algorithm can span several sensors and a step's outputs feed later steps. Attaching it to a device binds the slots to that device's channels and gives it the device's own calibration.</dd>
+        <dt>broadcast state</dt><dd>Flink's mechanism for giving every parallel task a full, live-updated copy of a small config stream, so the hot path never needs a lookup per record.</dd>
+        <dt>channel <span class="c-mute">(data-quality sense)</span></dt><dd>One addressable timeseries, written <code>"&lt;measurement&gt;.&lt;field&gt;"</code> — e.g. <code>environment_metrics.temperature</code>. Not to be confused with a Meshtastic radio channel.</dd>
+        <dt>default-open</dt><dd>The security model where any device that can decrypt with the mesh's PSK is presumed legitimate; blocking is opt-out (rejection), not opt-in (allow-listing).</dd>
+        <dt>gateway</dt><dd>A Meshtastic device that bridges its mesh to MQTT. Its registration is what lets the decode job decrypt anything for that mesh at all.</dd>
+        <dt>KIP-361</dt><dd>The Kafka change (2.3+) that stopped consumers from auto-creating topics on subscribe — only producers can still do that.</dd>
+        <dt>PSK</dt><dd>Pre-shared key for a mesh's AES encryption. Either 16/32 real bytes, or a 1-byte shorthand (<code>0</code>–<code>10</code>) for "no encryption" or a well-known default key.</dd>
+        <dt>publish vs reading interval</dt><dd>How often a device <em>transmits</em> vs how often it <em>samples</em>. They diverge once telemetry is batched, which is why "stopped publishing" and "stopped reading" are two separate fault checks rather than one.</dd>
+        <dt>sighting</dt><dd>The event emitted on every successful decrypt, proving mesh membership and upserting a <code>Device</code> row as allowed-by-default.</dd>
+      </dl>
+    </section>
+
+    <footer>
+      Written from a live debugging session against this repository's running <code>docker-compose</code> stack — every log line, query, and topic dump above is real, not illustrative. Part of <a href="../README.md">docs/</a>.
+    </footer>
+  </main>
+</div>
+<script src="https://cdn.jsdelivr.net/npm/mermaid@10/dist/mermaid.min.js"></script>
+<script>
+  if (window.mermaid) {
+    mermaid.initialize({ startOnLoad: true, theme: "neutral", securityLevel: "loose" });
+  }
+</script>
+</body>
+</html>

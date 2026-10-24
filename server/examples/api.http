@@ -1,0 +1,720 @@
+### Meshtastic Kafka - REST Client scratch file (VS Code humao.rest-client)
+# Signup starts unverified - run "Create owner", then "Verify email" with the
+# token from mailhog/docker logs. See docs/architecture.md#registry-email-verification.
+
+@registryUrl = http://localhost:8090
+@readingsUrl = http://localhost:8091
+
+@ownerName = Oscar
+@ownerEmail = oscar@example.com
+@apiKey = paste-api-key-or-docker-logs-here
+@superuserApiKey = paste-superuser-api-key-here
+@verificationToken = paste-token-from-mailhog-or-docker-logs-here
+@resetToken = paste-password-reset-token-from-mailhog-here
+
+@meshChannelId = TestChan
+@meshPsk = AAAA
+@nodeId = 111222333
+@environmentVariantId = paste-telemetry-variant-id-here
+@airQualityVariantId = paste-telemetry-variant-id-here
+
+
+### ================= Health =================
+
+### registry health
+GET {{registryUrl}}/health
+
+### readings health
+GET {{readingsUrl}}/health
+
+
+### ================= Owners =================
+
+### Account terms - signing up accepts them, so read them first (no auth)
+# @name accountTerms
+GET {{registryUrl}}/terms?locale=en
+
+### Create owner (signup) - starts unverified, api_key returned exactly once
+# @name signup
+POST {{registryUrl}}/owners
+Content-Type: application/json
+
+{
+  "name": "{{ownerName}}",
+  "email": "{{ownerEmail}}",
+  "password": "Correct-Horse-Battery-42",
+  "terms_version": "{{accountTerms.response.body.$.version}}",
+  "terms_locale": "en"
+}
+
+### Accept changed account terms - they never lapse, so this pauses or resumes nothing
+POST {{registryUrl}}/owners/me/terms-acceptance
+Content-Type: application/json
+Authorization: Bearer {{signup.response.body.$.api_key}}
+
+{
+  "terms_version": "{{accountTerms.response.body.$.version}}"
+}
+
+### Resend verification email (3/hour per owner) - useful if the first one didn't arrive
+POST {{registryUrl}}/owners/me/resend-verification
+Authorization: Bearer {{signup.response.body.$.api_key}}
+
+### Verify email - paste the token from the email into @verificationToken above first
+GET {{registryUrl}}/owners/verify-email?token={{verificationToken}}
+
+### Log in with a password - sets a session cookie, also for an unverified owner
+### (is_active false). 10 attempts a minute per email and source IP, then 429.
+POST {{registryUrl}}/owners/login
+Content-Type: application/json
+
+{
+  "email": "{{ownerEmail}}",
+  "password": "Correct-Horse-Battery-42"
+}
+
+### Request a password reset link (always 200)
+POST {{registryUrl}}/owners/request-password-reset
+Content-Type: application/json
+
+{
+  "email": "{{ownerEmail}}"
+}
+
+### Reset the password - paste the token from the email into @resetToken above first
+POST {{registryUrl}}/owners/reset-password
+Content-Type: application/json
+
+{
+  "token": "{{resetToken}}",
+  "new_password": "Correct-Horse-Battery-42"
+}
+
+### List owners (public directory, no auth, no email)
+GET {{registryUrl}}/owners
+
+### Get one owner by id (public, no email)
+GET {{registryUrl}}/owners/{{signup.response.body.$.id}}
+
+### My own record on the public detail route - full, because it is me
+### email, is_staff, is_active, email_verified_at, email_verification_sent_at, last_login
+GET {{registryUrl}}/owners/{{signup.response.body.$.id}}
+Authorization: Bearer {{signup.response.body.$.api_key}}
+
+### List owners as a superuser - the full record for every owner
+### A plain owner key still gets the public shape here, on purpose, so that every
+### row in the array has the same shape. Use the detail route above for your own.
+GET {{registryUrl}}/owners
+Authorization: Bearer {{signup.response.body.$.api_key}}
+
+### Get my own profile - the same full record, plus the devices I may access
+GET {{registryUrl}}/owners/me
+Authorization: Bearer {{signup.response.body.$.api_key}}
+
+### Update my profile - changing email resets verification and sends a new link
+PUT {{registryUrl}}/owners/me
+Content-Type: application/json
+Authorization: Bearer {{signup.response.body.$.api_key}}
+
+{
+  "name": "Test Owner Renamed"
+}
+
+### Opt in to emails about my sources and sinks (both off by default; superusers always get busy-source emails)
+PUT {{registryUrl}}/owners/me
+Content-Type: application/json
+Authorization: Bearer {{signup.response.body.$.api_key}}
+
+{
+  "status_alerts_enabled": true,
+  "source_rate_alerts_enabled": true
+}
+
+### Rotate my API key - invalidates the old one immediately
+POST {{registryUrl}}/owners/me/rotate-key
+Authorization: Bearer {{signup.response.body.$.api_key}}
+
+### Device IDs I can see (used by readings to scope telemetry access)
+GET {{registryUrl}}/owners/me/devices
+Authorization: Bearer {{signup.response.body.$.api_key}}
+
+### Delete my own account (cascades to meshes/devices) - careful, destructive
+# DELETE {{registryUrl}}/owners/me
+# Authorization: Bearer {{signup.response.body.$.api_key}}
+
+
+### ================= Meshes =================
+# Requires a verified owner - run "Verify email" above first.
+
+### Mesh terms - a mesh on the default broker needs them accepted
+# @name meshTerms
+GET {{registryUrl}}/meshes/terms?locale=en
+Authorization: Bearer {{signup.response.body.$.api_key}}
+
+### Create a mesh
+# @name createMesh
+POST {{registryUrl}}/meshes
+Content-Type: application/json
+Authorization: Bearer {{signup.response.body.$.api_key}}
+
+{
+  "channel_id": "{{meshChannelId}}",
+  "psk_b64": "{{meshPsk}}",
+  "label": "Test mesh",
+  "terms_version": "{{meshTerms.response.body.$.version}}",
+  "terms_locale": "en"
+}
+
+### Renew the mesh terms - resumes a paused mesh and cancels its deletion
+POST {{registryUrl}}/meshes/{{createMesh.response.body.$.id}}/terms-acceptance
+Content-Type: application/json
+Authorization: Bearer {{signup.response.body.$.api_key}}
+
+{
+  "terms_version": "{{meshTerms.response.body.$.version}}"
+}
+
+### List my meshes
+GET {{registryUrl}}/meshes
+Authorization: Bearer {{signup.response.body.$.api_key}}
+
+### Get one mesh
+GET {{registryUrl}}/meshes/{{createMesh.response.body.$.id}}
+Authorization: Bearer {{signup.response.body.$.api_key}}
+
+### Rotate the mesh's PSK - republishes every registered gateway on it
+PUT {{registryUrl}}/meshes/{{createMesh.response.body.$.id}}
+Content-Type: application/json
+Authorization: Bearer {{signup.response.body.$.api_key}}
+
+{
+  "psk_b64": "BBBB"
+}
+
+### List devices registered or sighted on this mesh (including its gateway(s))
+GET {{registryUrl}}/meshes/{{createMesh.response.body.$.id}}/devices
+Authorization: Bearer {{signup.response.body.$.api_key}}
+
+### Make the mesh public - readable by anyone, writes stay with the owner
+PUT {{registryUrl}}/meshes/{{createMesh.response.body.$.id}}
+Content-Type: application/json
+Authorization: Bearer {{signup.response.body.$.api_key}}
+
+{
+  "is_public": true
+}
+
+### Public meshes, no credentials - public fields only (no psk_b64, source_id or terms)
+GET {{registryUrl}}/meshes
+
+### One public mesh and its allowed devices, no credentials
+GET {{registryUrl}}/meshes/{{createMesh.response.body.$.id}}/devices
+
+### Delete the mesh (cascades to every device on it) - careful, destructive
+# DELETE {{registryUrl}}/meshes/{{createMesh.response.body.$.id}}
+# Authorization: Bearer {{signup.response.body.$.api_key}}
+
+
+### ================= Sources (remote MQTT brokers) =================
+# Every source route needs an operator key, and an operator only sees the sources
+# they created. A superuser grants the role with "Make an owner an operator" below.
+# Topics blocked by REGISTRY__SOURCES_BLOCKED_TOPICS (# by default) answer 400.
+
+### Ask to become an operator - every superuser is emailed
+# @name operatorRequest
+POST {{registryUrl}}/owners/me/operator-request
+Content-Type: application/json
+Authorization: Bearer {{signup.response.body.$.api_key}}
+
+{
+  "reason": "I run the regional broker for our community"
+}
+
+### My latest operator request
+GET {{registryUrl}}/owners/me/operator-request
+Authorization: Bearer {{signup.response.body.$.api_key}}
+
+### Pending operator requests (superuser key)
+GET {{registryUrl}}/operator-requests
+Authorization: Bearer {{superuserApiKey}}
+
+### Approve the request (superuser key) - or "reject"
+PUT {{registryUrl}}/operator-requests/{{operatorRequest.response.body.$.id}}
+Content-Type: application/json
+Authorization: Bearer {{superuserApiKey}}
+
+{
+  "decision": "approve",
+  "note": "Welcome aboard"
+}
+
+### Or make an owner an operator directly (superuser key)
+PUT {{registryUrl}}/owners/{{signup.response.body.$.id}}
+Content-Type: application/json
+Authorization: Bearer {{superuserApiKey}}
+
+{
+  "role": "operator"
+}
+
+### The source terms - every statement must be accepted before creating a source
+# @name sourceTerms
+GET {{registryUrl}}/sources/terms?locale=en
+Authorization: Bearer {{signup.response.body.$.api_key}}
+
+### Create a source - bridges the remote topic into this instance
+# @name createSource
+POST {{registryUrl}}/sources
+Content-Type: application/json
+Authorization: Bearer {{signup.response.body.$.api_key}}
+
+{
+  "label": "public meshtastic, EU",
+  "server": "mqtt.meshtastic.org:1883",
+  "ssl": false,
+  "username": "meshdev",
+  "password": "large4cats",
+  "topic": "msh/EU_868/2/e/{{meshChannelId}}/#",
+  "terms_version": "{{sourceTerms.response.body.$.version}}",
+  "terms_locale": "en"
+}
+
+### Renew the terms - restarts a paused source and cancels its meshes' deletion
+POST {{registryUrl}}/sources/{{createSource.response.body.$.id}}/terms-acceptance
+Content-Type: application/json
+Authorization: Bearer {{signup.response.body.$.api_key}}
+
+{
+  "terms_version": "{{sourceTerms.response.body.$.version}}"
+}
+
+### Scheduled deletions of stored readings (superuser key)
+GET {{registryUrl}}/data-deletions?status=all
+Authorization: Bearer {{superuserApiKey}}
+
+### List sources
+GET {{registryUrl}}/sources
+Authorization: Bearer {{signup.response.body.$.api_key}}
+
+### Get one source, with the live status of its bridge
+GET {{registryUrl}}/sources/{{createSource.response.body.$.id}}
+Authorization: Bearer {{signup.response.body.$.api_key}}
+
+### Restart a source that reads connected but has stopped receiving - re-applies and resubscribes; 409 if paused
+POST {{registryUrl}}/sources/{{createSource.response.body.$.id}}/restart
+Authorization: Bearer {{signup.response.body.$.api_key}}
+
+### Attach the mesh to the source - its gateways are then only accepted through it
+PUT {{registryUrl}}/meshes/{{createMesh.response.body.$.id}}
+Content-Type: application/json
+Authorization: Bearer {{signup.response.body.$.api_key}}
+
+{
+  "source_id": "{{createSource.response.body.$.id}}"
+}
+
+### Meshes on the source
+GET {{registryUrl}}/meshes?source_id={{createSource.response.body.$.id}}
+Authorization: Bearer {{signup.response.body.$.api_key}}
+
+### Detach the mesh again, back to this instance's own topic
+PUT {{registryUrl}}/meshes/{{createMesh.response.body.$.id}}
+Content-Type: application/json
+Authorization: Bearer {{signup.response.body.$.api_key}}
+
+{
+  "source_id": null
+}
+
+### Delete the source - 409 while meshes are attached
+# DELETE {{registryUrl}}/sources/{{createSource.response.body.$.id}}
+# Authorization: Bearer {{signup.response.body.$.api_key}}
+
+
+### ================= Devices: gateways =================
+# device_id is unique only while ALLOWED - see the takeover section below. Only the
+# mesh owner can register a gateway.
+
+### Register a gateway on the mesh above - this is what actually starts decoding
+# @name createGateway
+POST {{registryUrl}}/devices
+Content-Type: application/json
+Authorization: Bearer {{signup.response.body.$.api_key}}
+
+{
+  "node_id": {{nodeId}},
+  "mesh_id": "{{createMesh.response.body.$.id}}",
+  "is_gateway": true,
+  "label": "office gateway"
+}
+
+### List my gateway devices (both allowed and rejected)
+GET {{registryUrl}}/devices?is_gateway=true
+Authorization: Bearer {{signup.response.body.$.api_key}}
+
+### List gateway devices filtered by mesh and/or allow status
+GET {{registryUrl}}/devices?mesh_id={{createMesh.response.body.$.id}}&is_gateway=true&is_allowed=true
+Authorization: Bearer {{signup.response.body.$.api_key}}
+
+### List devices by the telemetry variants they reported (ids from GET /telemetry-variants)
+### Operators: has_any_of, has_all_of, has_none_of; bare ids mean has_any_of.
+### Each device record also carries telemetry_variant_ids for client-side filtering.
+GET {{registryUrl}}/devices?telemetry_variant=has_all_of:{{environmentVariantId}}|{{airQualityVariantId}}
+Authorization: Bearer {{signup.response.body.$.api_key}}
+
+### Same filter on one mesh's devices
+GET {{registryUrl}}/meshes/{{createMesh.response.body.$.id}}/devices?telemetry_variant=has_none_of:{{environmentVariantId}}
+Authorization: Bearer {{signup.response.body.$.api_key}}
+
+### Get one device
+GET {{registryUrl}}/devices/{{createGateway.response.body.$.uuid}}
+Authorization: Bearer {{signup.response.body.$.api_key}}
+
+### Rename a gateway's label (device_id/mesh/role are fixed at creation)
+PUT {{registryUrl}}/devices/{{createGateway.response.body.$.uuid}}
+Content-Type: application/json
+Authorization: Bearer {{signup.response.body.$.api_key}}
+
+{
+  "label": "renamed gateway"
+}
+
+### --- Takeover flow: move a gateway to a different mesh without losing history ---
+
+### Step 1: reject the gateway - stops decoding, keeps the row
+PUT {{registryUrl}}/devices/{{createGateway.response.body.$.uuid}}
+Content-Type: application/json
+Authorization: Bearer {{signup.response.body.$.api_key}}
+
+{
+  "is_allowed": false
+}
+
+### Step 2: create a second mesh to take the device over to
+# @name createMeshB
+POST {{registryUrl}}/meshes
+Content-Type: application/json
+Authorization: Bearer {{signup.response.body.$.api_key}}
+
+{
+  "channel_id": "TakeoverChan",
+  "psk_b64": "CCCC",
+  "terms_version": "{{meshTerms.response.body.$.version}}"
+}
+
+### Step 3: register the same device_id on the new mesh - now succeeds (409 while allowed)
+POST {{registryUrl}}/devices
+Content-Type: application/json
+Authorization: Bearer {{signup.response.body.$.api_key}}
+
+{
+  "node_id": {{nodeId}},
+  "mesh_id": "{{createMeshB.response.body.$.id}}",
+  "is_gateway": true,
+  "label": "moved gateway"
+}
+
+### Delete a gateway - careful, destructive
+# DELETE {{registryUrl}}/devices/{{createGateway.response.body.$.uuid}}
+# Authorization: Bearer {{signup.response.body.$.api_key}}
+
+
+### ================= Devices: nodes (admin keys) =================
+# Normally auto-discovered on first decode - see
+# docs/architecture.md#device-registration-and-the-is-allowed-gate.
+
+### Pre-register a node's admin keys on the mesh above
+# @name createNode
+POST {{registryUrl}}/devices
+Content-Type: application/json
+Authorization: Bearer {{signup.response.body.$.api_key}}
+
+{
+  "node_id": {{nodeId}},
+  "mesh_id": "{{createMesh.response.body.$.id}}",
+  "is_gateway": false,
+  "admin_keys_b64": ["AAAA"],
+  "label": "test node"
+}
+
+### List my node devices
+GET {{registryUrl}}/devices?is_gateway=false
+Authorization: Bearer {{signup.response.body.$.api_key}}
+
+### Get one node device
+GET {{registryUrl}}/devices/{{createNode.response.body.$.uuid}}
+Authorization: Bearer {{signup.response.body.$.api_key}}
+
+### Update a node's admin keys (replaces the whole list) or label
+PUT {{registryUrl}}/devices/{{createNode.response.body.$.uuid}}
+Content-Type: application/json
+Authorization: Bearer {{signup.response.body.$.api_key}}
+
+{
+  "label": "renamed node"
+}
+
+### Reject a node - mesh owner's lever to stop its data being stored; decode_job.py
+### stops even attempting to decrypt its future packets
+PUT {{registryUrl}}/devices/{{createNode.response.body.$.uuid}}
+Content-Type: application/json
+Authorization: Bearer {{signup.response.body.$.api_key}}
+
+{
+  "is_allowed": false
+}
+
+### Delete a node - careful, destructive
+# DELETE {{registryUrl}}/devices/{{createNode.response.body.$.uuid}}
+# Authorization: Bearer {{signup.response.body.$.api_key}}
+
+
+### ================= Measurement type / telemetry variant catalog (read-only) =================
+# GET is open to any verified owner; POST/PUT/DELETE need a superuser key - see
+# api-authenticated.http for the write examples. Rows are pre-seeded from the
+# protobuf schema when the registry_api container starts, not created via this
+# API. TelemetryVariant is keyed by wire-format message type (e.g.
+# "telemetry:environment_metrics"), NOT verified hardware - see
+# docs/architecture.md#sensor--measurement-catalog.
+
+### List measurement types (unit/quantity_kind/vocabulary_uri per field)
+GET {{registryUrl}}/measurements
+Authorization: Bearer {{signup.response.body.$.api_key}}
+
+### Filter: ?kind= (namespace before the colon), ?payload_kind= (exact), ?field_name=
+GET {{registryUrl}}/measurements?kind=computed
+Authorization: Bearer {{signup.response.body.$.api_key}}
+
+###
+GET {{registryUrl}}/measurements?payload_kind=telemetry:environment_metrics
+Authorization: Bearer {{signup.response.body.$.api_key}}
+
+### Which telemetry types a device reports, and which channels it produces.
+### Two endpoints, not one - the old /devices/{id}/sensors nested the second
+### inside the first. See docs/architecture.md#sensor--measurement-catalog.
+GET {{registryUrl}}/devices/{{createNode.response.body.$.uuid}}/telemetry-variants
+Authorization: Bearer {{signup.response.body.$.api_key}}
+
+###
+GET {{registryUrl}}/devices/{{createNode.response.body.$.uuid}}/measurements
+Authorization: Bearer {{signup.response.body.$.api_key}}
+
+### List telemetry variants (default_reading_interval_seconds + optional curated hardware hint)
+# @name listTelemetryVariants
+GET {{registryUrl}}/telemetry-variants
+Authorization: Bearer {{signup.response.body.$.api_key}}
+
+### List the fields a telemetry variant carries, and their detector defaults
+GET {{registryUrl}}/telemetry-variants/{{listTelemetryVariants.response.body.$[?(@.payload_kind=='telemetry:environment_metrics')].id}}/measurements
+Authorization: Bearer {{signup.response.body.$.api_key}}
+
+
+### ================= Postprocessing =================
+# A blueprint is a reusable recipe: input slots, and ordered steps each running
+# an algorithm. Attaching it to a device binds the slots to that device's
+# channels and gives it the device's own calibration. See
+# docs/architecture.md#postprocessing and docs/data-quality.md#postprocessing.
+
+### What algorithms are available, and which params are per-device calibration
+GET {{registryUrl}}/algorithms
+Authorization: Bearer {{signup.response.body.$.api_key}}
+
+### Create a blueprint - step "corrected" reads step "dew"'s output
+# @name createBlueprint
+POST {{registryUrl}}/postprocessing-blueprints
+Content-Type: application/json
+Authorization: Bearer {{signup.response.body.$.api_key}}
+
+{
+  "name": "weather-derived",
+  "description": "dew point, then temperature-corrected",
+  "inputs": [
+    {"slot": "temperature", "default_channel": "environment_metrics.temperature"},
+    {"slot": "humidity", "default_channel": "environment_metrics.relative_humidity"}
+  ],
+  "steps": [
+    {
+      "key": "dew",
+      "order": 0,
+      "function_name": "dew_point",
+      "inputs": {"temperature": "slot:temperature", "relative_humidity": "slot:humidity"},
+      "outputs": {"dew_point": "dew_point"}
+    },
+    {
+      "key": "corrected",
+      "order": 1,
+      "function_name": "linear_temperature_correction",
+      "inputs": {"value": "step:dew.dew_point", "temperature": "slot:temperature"},
+      "params": {"reference_temperature": 20.0},
+      "outputs": {"corrected": "dew_point_corrected"}
+    }
+  ]
+}
+
+### List my blueprints and public ones
+GET {{registryUrl}}/postprocessing-blueprints
+Authorization: Bearer {{signup.response.body.$.api_key}}
+
+### Steps are validated when written -> 400 (calibration belongs to the device)
+POST {{registryUrl}}/postprocessing-blueprints
+Content-Type: application/json
+Authorization: Bearer {{signup.response.body.$.api_key}}
+
+{
+  "name": "broken",
+  "inputs": [{"slot": "value"}],
+  "steps": [
+    {"key": "cal", "order": 0, "function_name": "offset_scale",
+     "inputs": {"value": "slot:value"}, "params": {"offset": 1.0}, "outputs": {"calibrated": "x"}}
+  ]
+}
+
+### Attach it to a device. Slots bind to the default channels the device has;
+### `problems` lists what still keeps it from being enabled.
+# @name attachBlueprint
+POST {{registryUrl}}/devices/{{createNode.response.body.$.uuid}}/postprocessings
+Content-Type: application/json
+Authorization: Bearer {{signup.response.body.$.api_key}}
+
+{"blueprint_id": "{{createBlueprint.response.body.$.id}}"}
+
+### Calibrate this device's sensor, in force from valid_from onwards
+POST {{registryUrl}}/devices/{{createNode.response.body.$.uuid}}/postprocessings/{{attachBlueprint.response.body.$.id}}/calibrations
+Content-Type: application/json
+Authorization: Bearer {{signup.response.body.$.api_key}}
+
+{"step_key": "corrected", "params": {"coefficient": 0.002}, "valid_from": "2026-09-01T00:00:00Z"}
+
+### Enable it - refused while any slot is unbound or a step lacks its calibration
+PUT {{registryUrl}}/devices/{{createNode.response.body.$.uuid}}/postprocessings/{{attachBlueprint.response.body.$.id}}
+Content-Type: application/json
+Authorization: Bearer {{signup.response.body.$.api_key}}
+
+{"is_enabled": true}
+
+### Recompute a week of stored history (stored like live values, never alarmed on)
+POST {{registryUrl}}/devices/{{createNode.response.body.$.uuid}}/postprocessings/{{attachBlueprint.response.body.$.id}}/backfills
+Content-Type: application/json
+Authorization: Bearer {{signup.response.body.$.api_key}}
+
+{"start": "2026-09-01T00:00:00Z", "stop": "2026-09-08T00:00:00Z"}
+
+### Backfill progress: pending -> running -> done/failed
+GET {{registryUrl}}/devices/{{createNode.response.body.$.uuid}}/postprocessings/{{attachBlueprint.response.body.$.id}}/backfills
+Authorization: Bearer {{signup.response.body.$.api_key}}
+
+### Devices with a postprocessing attached
+GET {{registryUrl}}/devices?has_postprocessing=true
+Authorization: Bearer {{signup.response.body.$.api_key}}
+
+### Both fault-detection intervals. reading vs publish are deliberately
+### different: "not reading" and "not publishing" are separate faults once
+### telemetry is batched - see docs/architecture.md#device-fault-detection.
+PUT {{registryUrl}}/devices/{{createNode.response.body.$.uuid}}
+Content-Type: application/json
+Authorization: Bearer {{signup.response.body.$.api_key}}
+
+{"reading_interval_seconds": 300, "publish_interval_seconds": 3600}
+
+### Clear both intervals - stops absence monitoring for this device
+PUT {{registryUrl}}/devices/{{createNode.response.body.$.uuid}}
+Content-Type: application/json
+Authorization: Bearer {{signup.response.body.$.api_key}}
+
+{
+  "reading_interval_seconds": null,
+  "publish_interval_seconds": null
+}
+
+
+### ================= Error-path sanity checks =================
+
+### Duplicate email on signup -> 409
+POST {{registryUrl}}/owners
+Content-Type: application/json
+
+{
+  "name": "Duplicate",
+  "email": "{{ownerEmail}}",
+  "password": "Correct-Horse-Battery-42",
+  "terms_version": "{{accountTerms.response.body.$.version}}"
+}
+
+### No auth on a protected route -> 401
+GET {{registryUrl}}/meshes
+
+### Invalid/garbage verification token -> 400
+GET {{registryUrl}}/owners/verify-email?token=not-a-real-token
+
+### Unverified owner hitting a gated route -> 403 (run this right after "Create owner",
+### before "Verify email")
+POST {{registryUrl}}/meshes
+Content-Type: application/json
+Authorization: Bearer {{signup.response.body.$.api_key}}
+
+{
+  "channel_id": "ShouldFail",
+  "psk_b64": "AAAA"
+}
+
+
+### ================= Readings role =================
+# Reuses the same bearer key as registry (HTTP introspection) - see
+# docs/architecture.md#readings-authentication.
+
+### Two ways to address the same device, both landing on the same view and
+### returning identical bodies. See docs/api-reference.md#which-address-to-use.
+###
+### 1. By registry device UUID - the default, and the same identifier
+###    GET {{registryUrl}}/devices/{{id}} takes. The "Pre-register a node"
+###    request above (@name createNode) creates this exact device, so both
+###    forms below address the same one.
+GET {{readingsUrl}}/readings/devices/{{createNode.response.body.$.uuid}}/latest?lookback=-30d
+Authorization: Bearer {{signup.response.body.$.api_key}}
+
+### 2. By mesh + Meshtastic node number - the store-native address, and the
+###    only one that reaches a device with telemetry but no registration row.
+###    "nodes", not "devices": a different identifier space from the UUID above.
+GET {{readingsUrl}}/readings/meshes/{{createMesh.response.body.$.id}}/nodes/{{nodeId}}/latest?lookback=-30d
+Authorization: Bearer {{signup.response.body.$.api_key}}
+
+### Latest readings on a public mesh need no credentials (publish it with
+### "is_public": true first). Timeseries and quality still need a key.
+GET {{readingsUrl}}/readings/devices/{{createNode.response.body.$.uuid}}/latest
+
+### Radio links heard on a mesh, longest first. since is 24h, 7d (default) or 30d.
+GET {{registryUrl}}/meshes/{{createMesh.response.body.$.id}}/links?since=7d
+Authorization: Bearer {{signup.response.body.$.api_key}}
+
+### Traceroutes heard on a mesh, newest first; pass the last heard_at as `before` for more.
+GET {{registryUrl}}/meshes/{{createMesh.response.body.$.id}}/traceroutes?limit=20
+Authorization: Bearer {{signup.response.body.$.api_key}}
+
+### Mesh traffic stats: totals, packets by portnum, busiest nodes, gateways, hops, signal.
+### range is 1h, 24h (default), 7d or 30d; no key needed on a public mesh.
+GET {{readingsUrl}}/readings/meshes/{{createMesh.response.body.$.id}}/stats?range=24h
+Authorization: Bearer {{signup.response.body.$.api_key}}
+
+### One device's packets by portnum and over time
+GET {{readingsUrl}}/readings/devices/{{createNode.response.body.$.uuid}}/traffic?range=7d
+Authorization: Bearer {{signup.response.body.$.api_key}}
+
+### Timeseries for a device/measurement
+GET {{readingsUrl}}/readings/devices/{{createNode.response.body.$.uuid}}?channel=device_metrics.battery_level&start=-1h&agg=mean
+Authorization: Bearer {{signup.response.body.$.api_key}}
+
+### Latest reading for one measurement
+GET {{readingsUrl}}/readings/devices/{{createNode.response.body.$.uuid}}/latest?payload_kind=telemetry:device_metrics&lookback=-30d
+Authorization: Bearer {{signup.response.body.$.api_key}}
+
+### readings has no device, channel or catalog listing - what *exists* is
+### registry's job; see the registry sections above for GET /devices,
+### /devices/{id}/measurements and /measurements.
+
+### Device listing, removed -> 404
+GET {{readingsUrl}}/readings/nodes?lookback=-30d
+Authorization: Bearer {{signup.response.body.$.api_key}}
+
+### Catalog read-through, removed -> 404
+GET {{readingsUrl}}/readings/measurements
+Authorization: Bearer {{signup.response.body.$.api_key}}

@@ -1,0 +1,8 @@
+# source_publish_fake.py - builds and encrypts Meshtastic packets with the shared codec.
+-e ../mesh_things[codec]
+
+# sink_consume.py, sink_count.py and source_publish_fake.py - MQTT, as a sink's consumer or a fake gateway.
+paho-mqtt>=2
+
+# monitor_status.py - it talks to the server monitor, not to the API.
+requests

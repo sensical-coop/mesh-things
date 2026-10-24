@@ -21,15 +21,15 @@ jobs:
 #      matrix:
 #        include:
 #          - name: pipeline
-#            dockerfile: meshtastic_things/Dockerfile
+#            dockerfile: server/Dockerfile
 #          - name: api
-#            dockerfile: meshtastic_things/api/Dockerfile
+#            dockerfile: server/api/Dockerfile
 #          - name: flink
-#            dockerfile: meshtastic_things/flink/Dockerfile
+#            dockerfile: server/flink/Dockerfile
 #          - name: quality-worker
-#            dockerfile: meshtastic_things/quality_worker/Dockerfile
+#            dockerfile: server/quality_worker/Dockerfile
 #          - name: monitor
-#            dockerfile: meshtastic_things/monitor/Dockerfile
+#            dockerfile: server/monitor/Dockerfile
 #    steps:
 #      - uses: actions/checkout@v4
 #      - run: echo "REPO_LC=${GITHUB_REPOSITORY,,}" >> "$GITHUB_ENV"
@@ -40,7 +40,7 @@ jobs:
 #          password: ${{ secrets.GITHUB_TOKEN }}
 #      - uses: docker/build-push-action@v6
 #        with:
-#          context: ./meshtastic_things
+#          context: ./server
 #          file: ${{ matrix.dockerfile }}
 #          push: true
 #          tags: |
