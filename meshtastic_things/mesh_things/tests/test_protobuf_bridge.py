@@ -1,5 +1,7 @@
 import pytest
 
+pytest.importorskip("meshtastic", reason="needs mesh-things[protobuf]")
+
 from mesh_things.protobuf import latest_messages, payload_message, series_messages
 
 

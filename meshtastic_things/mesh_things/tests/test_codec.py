@@ -1,6 +1,11 @@
 import base64
 import os
 
+import pytest
+
+pytest.importorskip("cryptography", reason="needs mesh-things[codec]")
+pytest.importorskip("meshtastic", reason="needs mesh-things[codec]")
+
 from cryptography.hazmat.backends import default_backend
 from cryptography.hazmat.primitives.ciphers import Cipher, algorithms, modes
 from meshtastic.protobuf import mesh_pb2, mqtt_pb2, telemetry_pb2

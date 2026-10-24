@@ -1,3 +1,7 @@
+import pytest
+
+pytest.importorskip("meshtastic", reason="needs mesh-things[protobuf]")
+
 from meshtastic.protobuf import telemetry_pb2
 
 from mesh_things.catalog import is_catalogued, telemetry_variants
