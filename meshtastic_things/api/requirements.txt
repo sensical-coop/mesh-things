@@ -9,6 +9,8 @@ structlog==24.4.0
 whitenoise==6.8.2
 gunicorn==23.0.0
 redis==5.2.1
+# The EMQX REST API, through the same HTTP library as the mesh-things client
+httpx==0.28.1
 # Channel decryption, to prove a discovered gateway; meshtastic comes with mesh-things[codec]
 cryptography==50.0.2
 influxdb-client==1.50.0

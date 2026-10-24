@@ -33,15 +33,17 @@ class EmqxClientTests(SimpleTestCase):
         self.calls = []
         self.responses = {}
 
-        def request(method, url, json=None, timeout=None):
+        def request(method, url, json=None):
             path = url.removeprefix("https://emqx.example.org:18084/api/v5")
             self.calls.append((method, path, json))
             return self.responses.get((method, path), _response())
 
-        self.client._session.request = request
+        self.client._http.request = request
 
     def test_authenticates_with_the_key_and_secret(self):
-        self.assertEqual(EmqxClient("https://x", "key", "secret")._session.auth, ("key", "secret"))
+        http = EmqxClient("https://x", "key", "secret")._http
+        sent = next(http.auth.sync_auth_flow(http.build_request("GET", "https://x/status")))
+        self.assertEqual(sent.headers["authorization"], "Basic a2V5OnNlY3JldA==")
 
     def test_apply_updates_connector_then_source_then_rule(self):
         self.client.apply_source(_source())

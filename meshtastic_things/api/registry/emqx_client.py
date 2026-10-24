@@ -10,7 +10,7 @@ built-in authorization database, which must be checked before any other source.
 """
 from urllib.parse import quote
 
-import requests
+import httpx
 import structlog
 
 from mesh_things.env import env_str
@@ -34,12 +34,10 @@ POOL_SIZE = 1
 class EmqxClient:
     def __init__(self, base_url: str, api_key: str, api_secret: str, timeout: float = 10.0):
         self.base_url = base_url.rstrip("/")
-        self._session = requests.Session()
-        self._session.auth = (api_key, api_secret)
-        self._timeout = timeout
+        self._http = httpx.Client(auth=(api_key, api_secret), timeout=timeout)
 
-    def _request(self, method: str, path: str, json=None) -> requests.Response:
-        return self._session.request(method, f"{self.base_url}{path}", json=json, timeout=self._timeout)
+    def _request(self, method: str, path: str, json=None) -> httpx.Response:
+        return self._http.request(method, f"{self.base_url}{path}", json=json)
 
     def _upsert(self, path: str, collection: str, body: dict, create_extra: dict) -> None:
         """PUT the resource, creating it with POST when EMQX does not know it."""
