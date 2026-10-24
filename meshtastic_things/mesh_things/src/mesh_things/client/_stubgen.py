@@ -5,7 +5,7 @@ Run by scripts/regen-client-schema.sh after the snapshot is refreshed.
 import sys
 from collections import defaultdict
 
-from .schema import Operation, Parameter, operations
+from .schema import Operation, Parameter, accepts_datetime, operations
 
 _TYPES = {"string": "str", "integer": "int", "number": "float", "boolean": "bool"}
 
@@ -16,7 +16,14 @@ def _class_name(namespace: str, is_async: bool) -> str:
 
 
 def _type(param: Parameter) -> str:
-    text = "int | str" if param.name == "node_id" else _TYPES.get(param.type, "Any")
+    if param.enum is not None:
+        text = f"Literal[{', '.join(map(repr, param.enum))}]"
+    elif param.name == "node_id":
+        text = "int | str"
+    elif accepts_datetime(param):
+        text = "str | datetime | date"
+    else:
+        text = _TYPES.get(param.type, "Any")
     return text if param.required else f"{text} | None = None"
 
 
@@ -46,7 +53,8 @@ def render() -> str:
     namespaces = sorted(by_namespace)
     out = [
         "# Generated from openapi.json by mesh_things.client._stubgen. Do not edit.\n",
-        "from typing import Any\n",
+        "from datetime import date, datetime\n",
+        "from typing import Any, Literal\n",
     ]
     for is_async in (False, True):
         for namespace in namespaces:

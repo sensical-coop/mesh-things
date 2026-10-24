@@ -1,12 +1,15 @@
 """The sync and async clients, with one namespace per API tag and one method per operation."""
 import asyncio
 import time
+from collections.abc import AsyncIterator, Iterator
+from datetime import date
+from pathlib import Path
 from typing import TYPE_CHECKING, Any, Callable
 
 import httpx
 
-from . import _core
-from .errors import Throttled
+from . import _core, _helpers
+from .errors import NotFound, Throttled
 from .schema import Operation, operations
 
 if TYPE_CHECKING:
@@ -124,6 +127,62 @@ class MeshThings(_Client, SyncNamespaces):
             return self.call(op.operation_id, *args, **kwargs)
         return self._decorate(method, op)
 
+    def get_terms(self, kind: str = "account", locale: str = "en") -> dict | None:
+        """The terms of `kind`: `account`, `meshes`, `sinks` or `sources`.
+
+        Returns None on an instance that enforces no terms. Pass the result to
+        `terms_fields()` to accept them when creating the resource.
+        """
+        try:
+            return self.call(_helpers.terms_operation(kind), locale=locale)
+        except NotFound:
+            return None
+
+    def wait_for_export(self, mesh_id: str, export_id: str, *, interval: float = 5.0,
+                        timeout: float | None = None) -> dict:
+        """Poll an export until it is ready and return it.
+
+        Raises:
+            ExportFailed: If it ends `failed` or `expired`.
+            TimeoutError: If it is still running after `timeout` seconds.
+        """
+        until = _helpers.deadline(timeout)
+        while True:
+            export = self.call(_helpers.EXPORT_GET, mesh_id, export_id)
+            if _helpers.finished_export(export):
+                return export
+            _helpers.check_deadline(until, export)
+            time.sleep(interval)
+
+    def download(self, url: str, path: str | Path | None = None) -> bytes | Path:
+        """Fetch a presigned link, such as a ready export's `url`. Writes to `path` when given."""
+        with self._http.stream("GET", url) as response:
+            response.raise_for_status()
+            if path is None:
+                return response.read()
+            target = Path(path)
+            with target.open("wb") as out:
+                for chunk in response.iter_bytes():
+                    out.write(chunk)
+            return target
+
+    def download_partition(self, mesh_id: str, day: str | date, hour: int,
+                           path: str | Path | None = None) -> bytes | Path:
+        """Fetch one hour of a mesh's Parquet archive. Writes to `path` when given."""
+        return self.download(self.call(_helpers.PARTITION, mesh_id, day, hour), path)
+
+    def traceroutes(self, mesh_id: str, *, node_id: int | str | None = None,
+                    page_size: int = 100) -> Iterator[dict]:
+        """Every traceroute heard on a mesh, newest first, fetched a page at a time."""
+        size = _helpers.page_size(page_size)
+        before = None
+        while True:
+            page = self.call(_helpers.TRACEROUTES, mesh_id, limit=size, before=before, node_id=node_id)
+            yield from page
+            before = _helpers.next_before(page, size)
+            if before is None:
+                return
+
     def close(self) -> None:
         self._http.close()
 
@@ -171,6 +230,63 @@ class AsyncMeshThings(_Client, AsyncNamespaces):
         async def method(*args, **kwargs):
             return await self.call(op.operation_id, *args, **kwargs)
         return self._decorate(method, op)
+
+    async def get_terms(self, kind: str = "account", locale: str = "en") -> dict | None:
+        """The terms of `kind`: `account`, `meshes`, `sinks` or `sources`.
+
+        Returns None on an instance that enforces no terms. Pass the result to
+        `terms_fields()` to accept them when creating the resource.
+        """
+        try:
+            return await self.call(_helpers.terms_operation(kind), locale=locale)
+        except NotFound:
+            return None
+
+    async def wait_for_export(self, mesh_id: str, export_id: str, *, interval: float = 5.0,
+                              timeout: float | None = None) -> dict:
+        """Poll an export until it is ready and return it.
+
+        Raises:
+            ExportFailed: If it ends `failed` or `expired`.
+            TimeoutError: If it is still running after `timeout` seconds.
+        """
+        until = _helpers.deadline(timeout)
+        while True:
+            export = await self.call(_helpers.EXPORT_GET, mesh_id, export_id)
+            if _helpers.finished_export(export):
+                return export
+            _helpers.check_deadline(until, export)
+            await asyncio.sleep(interval)
+
+    async def download(self, url: str, path: str | Path | None = None) -> bytes | Path:
+        """Fetch a presigned link, such as a ready export's `url`. Writes to `path` when given."""
+        async with self._http.stream("GET", url) as response:
+            response.raise_for_status()
+            if path is None:
+                return await response.aread()
+            target = Path(path)
+            with target.open("wb") as out:
+                async for chunk in response.aiter_bytes():
+                    out.write(chunk)
+            return target
+
+    async def download_partition(self, mesh_id: str, day: str | date, hour: int,
+                                 path: str | Path | None = None) -> bytes | Path:
+        """Fetch one hour of a mesh's Parquet archive. Writes to `path` when given."""
+        return await self.download(await self.call(_helpers.PARTITION, mesh_id, day, hour), path)
+
+    async def traceroutes(self, mesh_id: str, *, node_id: int | str | None = None,
+                          page_size: int = 100) -> AsyncIterator[dict]:
+        """Every traceroute heard on a mesh, newest first, fetched a page at a time."""
+        size = _helpers.page_size(page_size)
+        before = None
+        while True:
+            page = await self.call(_helpers.TRACEROUTES, mesh_id, limit=size, before=before, node_id=node_id)
+            for traceroute in page:
+                yield traceroute
+            before = _helpers.next_before(page, size)
+            if before is None:
+                return
 
     async def aclose(self) -> None:
         await self._http.aclose()

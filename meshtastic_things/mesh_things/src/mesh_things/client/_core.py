@@ -3,21 +3,31 @@ import inspect
 import os
 import warnings
 from dataclasses import dataclass
-from typing import Any
+from datetime import date, datetime, timezone
+from typing import Any, Literal
 from urllib.parse import quote
 
 import httpx
 
 import mesh_things
 from mesh_things import node_ids
+from mesh_things.influx_query import split_channel, validate_duration, validate_range_bound
 
 from .errors import error_for
-from .schema import Operation
+from .schema import Operation, Parameter, accepts_datetime
 
 URL_ENV = "MESH_THINGS_URL"
 API_KEY_ENV = "MESH_THINGS_API_KEY"
 _READINGS_PREFIX = "/readings/"
 _PYTHON_TYPES = {"string": str, "integer": int, "number": float, "boolean": bool}
+# The readings query parameters the schema types only as strings, checked with the
+# validators the readings API itself uses.
+_FREE_TEXT_CHECKS = {
+    "start": lambda value: validate_range_bound(value, "start"),
+    "stop": lambda value: validate_range_bound(value, "stop"),
+    "window": lambda value: validate_duration(value, "window"),
+    "channel": split_channel,
+}
 
 
 class MeshThingsVersionWarning(UserWarning):
@@ -67,8 +77,12 @@ def signature(op: Operation) -> inspect.Signature:
 
 def _annotation(param) -> Any:
     python_type = _PYTHON_TYPES.get(param.type, Any)
-    if param.name == "node_id":
+    if param.enum is not None:
+        python_type = Literal[param.enum]
+    elif param.name == "node_id":
         python_type = int | str
+    elif accepts_datetime(param):
+        python_type = str | datetime | date
     return python_type if param.required else python_type | None
 
 
@@ -81,13 +95,29 @@ def _path_value(name: str, value: Any) -> str:
     return quote(str(value), safe="")
 
 
+def _query_value(param: Parameter, value: Any) -> Any:
+    """Dates and datetimes as ISO 8601 in UTC, after checking the value the way the API will."""
+    if isinstance(value, datetime):
+        value = value.astimezone(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ") if value.tzinfo else value.isoformat()
+    elif isinstance(value, date):
+        value = value.isoformat()
+    if param.enum is not None and value not in param.enum:
+        raise ValueError(f"Invalid {param.name}: {value!r} (allowed: {', '.join(map(str, param.enum))})")
+    check = _FREE_TEXT_CHECKS.get(param.name) if param.format is None else None
+    if check is not None:
+        check(value)
+    return value
+
+
 def prepare(op: Operation, base_url: str, readings_url: str | None, args: tuple, kwargs: dict) -> PreparedRequest:
     bound = signature(op).bind(*args, **kwargs)
     values = bound.arguments
     path = op.path
     for p in op.path_params:
         path = path.replace(f"{{{p.name}}}", _path_value(p.name, values[p.name]))
-    params = {p.name: values[p.name] for p in op.query_params if values.get(p.name) is not None}
+    params = {
+        p.name: _query_value(p, values[p.name]) for p in op.query_params if values.get(p.name) is not None
+    }
     root = readings_url if readings_url and path.startswith(_READINGS_PREFIX) else base_url
     return PreparedRequest(op.method, f"{root}{path}", params, values.get("body"))
 

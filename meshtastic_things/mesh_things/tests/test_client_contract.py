@@ -3,13 +3,9 @@ import keyword
 from collections import Counter
 from importlib import resources
 
-from mesh_things.client import MeshThings, errors
+from mesh_things.client import MeshThings, _helpers
 from mesh_things.client._stubgen import render
 from mesh_things.client.schema import operations
-
-# operationIds the hand-written client code refers to by name.
-REFERENCED = {errors.EXPORT_CREATE}
-
 
 def test_every_operation_gets_a_unique_valid_method():
     names = Counter((op.namespace, op.name) for op in operations().values())
@@ -38,7 +34,7 @@ def test_every_operation_is_bound_on_the_client():
 
 
 def test_referenced_operations_exist():
-    assert REFERENCED <= set(operations())
+    assert _helpers.REFERENCED <= set(operations())
 
 
 def test_type_stub_is_up_to_date():

@@ -1,5 +1,6 @@
 # Generated from openapi.json by mesh_things.client._stubgen. Do not edit.
-from typing import Any
+from datetime import date, datetime
+from typing import Any, Literal
 
 class Algorithms:
     def list(self) -> Any:
@@ -242,7 +243,7 @@ class Measurements:
     def get(self, measurement_id: str) -> Any:
         """Return one measurement type."""
 
-    def list(self, *, field_name: str | None = None, kind: str | None = None, payload_kind: str | None = None) -> Any:
+    def list(self, *, field_name: str | None = None, kind: Literal['computed', 'device', 'telemetry'] | None = None, payload_kind: str | None = None) -> Any:
         """List the shared catalog of measurement types and their units.
 
         Sensor fields are named `telemetry:<variant>`. Blueprint outputs from
@@ -309,7 +310,7 @@ class Meshes:
         source and the terms status are included only for the mesh's owner.
         """
 
-    def links_list(self, mesh_id: str, *, node_id: int | str | None = None, since: str | None = None) -> Any:
+    def links_list(self, mesh_id: str, *, node_id: int | str | None = None, since: Literal['24h', '30d', '7d'] | None = None) -> Any:
         """List the radio links heard on this mesh, longest first.
 
         A link is one node heard by another, as one source reports it:
@@ -367,7 +368,7 @@ class Meshes:
                 other value.
         """
 
-    def traceroutes_list(self, mesh_id: str, *, before: str | None = None, limit: int | None = None, node_id: int | str | None = None) -> Any:
+    def traceroutes_list(self, mesh_id: str, *, before: str | datetime | date | None = None, limit: int | None = None, node_id: int | str | None = None) -> Any:
         """List the traceroutes heard on this mesh, newest first.
 
         A traceroute heard by several gateways is listed once, with the most
@@ -613,7 +614,7 @@ class PostprocessingBackfills:
         an hour is presumed abandoned and can be claimed again.
         """
 
-    def list(self, *, status: str | None = None) -> Any:
+    def list(self, *, status: Literal['done', 'failed', 'pending', 'running'] | None = None) -> Any:
         """List backfills across every device, oldest first. Superusers only.
 
         Args:
@@ -704,7 +705,7 @@ class Readings:
         mesh's owner while they are an operator, and to superusers.
         """
 
-    def archive_meshes_get(self, mesh_id: str, *, start: str | None = None, stop: str | None = None) -> Any:
+    def archive_meshes_get(self, mesh_id: str, *, start: str | datetime | date | None = None, stop: str | datetime | date | None = None) -> Any:
         """List the hourly Parquet files archived for a mesh, oldest first.
 
         Only devices whose archive is switched on are stored, from the moment it
@@ -726,7 +727,7 @@ class Readings:
         an operator, and to superusers.
         """
 
-    def devices_get(self, device_uuid: str, *, agg: str | None = None, channel: str | None = None, payload_kind: str | None = None, start: str | None = None, stop: str | None = None, window: str | None = None) -> Any:
+    def devices_get(self, device_uuid: str, *, agg: Literal['count', 'first', 'last', 'max', 'mean', 'min', 'sum'] | None = None, channel: str | None = None, payload_kind: str | None = None, start: str | datetime | date | None = None, stop: str | datetime | date | None = None, window: str | None = None) -> Any:
         """Readings over a time range, addressed by the device's registration ID."""
 
     def devices_latest_get(self, device_uuid: str, *, lookback: str | None = None, payload_kind: str | None = None) -> Any:
@@ -736,10 +737,10 @@ class Readings:
         registrations are not.
         """
 
-    def devices_quality_get(self, device_uuid: str, *, start: str | None = None, stop: str | None = None) -> Any:
+    def devices_quality_get(self, device_uuid: str, *, start: str | datetime | date | None = None, stop: str | datetime | date | None = None) -> Any:
         """Data-quality figures for a device, addressed by its registration ID."""
 
-    def devices_traffic_get(self, device_uuid: str, *, range: str | None = None) -> Any:
+    def devices_traffic_get(self, device_uuid: str, *, range: Literal['1h', '24h', '30d', '7d'] | None = None) -> Any:
         """A device's packets over a fixed range, addressed by its registration ID."""
 
     def exports_list(self) -> Any:
@@ -783,7 +784,7 @@ class Readings:
         is deleted. Available to the mesh's owner and to superusers.
         """
 
-    def meshes_nodes_get(self, mesh_id: str, node_id: int | str, *, agg: str | None = None, channel: str | None = None, payload_kind: str | None = None, start: str | None = None, stop: str | None = None, window: str | None = None) -> Any:
+    def meshes_nodes_get(self, mesh_id: str, node_id: int | str, *, agg: Literal['count', 'first', 'last', 'max', 'mean', 'min', 'sum'] | None = None, channel: str | None = None, payload_kind: str | None = None, start: str | datetime | date | None = None, stop: str | datetime | date | None = None, window: str | None = None) -> Any:
         """Return a device's readings for one measurement over a time range.
 
         Downsampling covers numeric fields only, so text fields such as
@@ -819,7 +820,7 @@ class Readings:
                 date or a timestamp. Defaults to `-30d`.
         """
 
-    def meshes_nodes_quality_get(self, mesh_id: str, node_id: int | str, *, start: str | None = None, stop: str | None = None) -> Any:
+    def meshes_nodes_quality_get(self, mesh_id: str, node_id: int | str, *, start: str | datetime | date | None = None, stop: str | datetime | date | None = None) -> Any:
         """Return data-quality figures for a device over a time range.
 
         Covers the number of readings recorded, alarms raised per detector, the
@@ -839,7 +840,7 @@ class Readings:
                 Defaults to `now()`.
         """
 
-    def meshes_nodes_traffic_get(self, mesh_id: str, node_id: int | str, *, range: str | None = None) -> Any:
+    def meshes_nodes_traffic_get(self, mesh_id: str, node_id: int | str, *, range: Literal['1h', '24h', '30d', '7d'] | None = None) -> Any:
         """Return how much a node transmitted over a fixed range, and of which kinds of packet.
 
         Counts every packet the mesh's gateways heard from the node, including ones
@@ -852,7 +853,7 @@ class Readings:
                 Defaults to `24h`.
         """
 
-    def meshes_stats_get(self, mesh_id: str, *, range: str | None = None) -> Any:
+    def meshes_stats_get(self, mesh_id: str, *, range: Literal['1h', '24h', '30d', '7d'] | None = None) -> Any:
         """Return traffic and congestion figures for a mesh over a fixed range.
 
         Counts every packet the mesh's registered gateways hear, including text
@@ -1352,7 +1353,7 @@ class AsyncMeasurements:
     async def get(self, measurement_id: str) -> Any:
         """Return one measurement type."""
 
-    async def list(self, *, field_name: str | None = None, kind: str | None = None, payload_kind: str | None = None) -> Any:
+    async def list(self, *, field_name: str | None = None, kind: Literal['computed', 'device', 'telemetry'] | None = None, payload_kind: str | None = None) -> Any:
         """List the shared catalog of measurement types and their units.
 
         Sensor fields are named `telemetry:<variant>`. Blueprint outputs from
@@ -1419,7 +1420,7 @@ class AsyncMeshes:
         source and the terms status are included only for the mesh's owner.
         """
 
-    async def links_list(self, mesh_id: str, *, node_id: int | str | None = None, since: str | None = None) -> Any:
+    async def links_list(self, mesh_id: str, *, node_id: int | str | None = None, since: Literal['24h', '30d', '7d'] | None = None) -> Any:
         """List the radio links heard on this mesh, longest first.
 
         A link is one node heard by another, as one source reports it:
@@ -1477,7 +1478,7 @@ class AsyncMeshes:
                 other value.
         """
 
-    async def traceroutes_list(self, mesh_id: str, *, before: str | None = None, limit: int | None = None, node_id: int | str | None = None) -> Any:
+    async def traceroutes_list(self, mesh_id: str, *, before: str | datetime | date | None = None, limit: int | None = None, node_id: int | str | None = None) -> Any:
         """List the traceroutes heard on this mesh, newest first.
 
         A traceroute heard by several gateways is listed once, with the most
@@ -1723,7 +1724,7 @@ class AsyncPostprocessingBackfills:
         an hour is presumed abandoned and can be claimed again.
         """
 
-    async def list(self, *, status: str | None = None) -> Any:
+    async def list(self, *, status: Literal['done', 'failed', 'pending', 'running'] | None = None) -> Any:
         """List backfills across every device, oldest first. Superusers only.
 
         Args:
@@ -1814,7 +1815,7 @@ class AsyncReadings:
         mesh's owner while they are an operator, and to superusers.
         """
 
-    async def archive_meshes_get(self, mesh_id: str, *, start: str | None = None, stop: str | None = None) -> Any:
+    async def archive_meshes_get(self, mesh_id: str, *, start: str | datetime | date | None = None, stop: str | datetime | date | None = None) -> Any:
         """List the hourly Parquet files archived for a mesh, oldest first.
 
         Only devices whose archive is switched on are stored, from the moment it
@@ -1836,7 +1837,7 @@ class AsyncReadings:
         an operator, and to superusers.
         """
 
-    async def devices_get(self, device_uuid: str, *, agg: str | None = None, channel: str | None = None, payload_kind: str | None = None, start: str | None = None, stop: str | None = None, window: str | None = None) -> Any:
+    async def devices_get(self, device_uuid: str, *, agg: Literal['count', 'first', 'last', 'max', 'mean', 'min', 'sum'] | None = None, channel: str | None = None, payload_kind: str | None = None, start: str | datetime | date | None = None, stop: str | datetime | date | None = None, window: str | None = None) -> Any:
         """Readings over a time range, addressed by the device's registration ID."""
 
     async def devices_latest_get(self, device_uuid: str, *, lookback: str | None = None, payload_kind: str | None = None) -> Any:
@@ -1846,10 +1847,10 @@ class AsyncReadings:
         registrations are not.
         """
 
-    async def devices_quality_get(self, device_uuid: str, *, start: str | None = None, stop: str | None = None) -> Any:
+    async def devices_quality_get(self, device_uuid: str, *, start: str | datetime | date | None = None, stop: str | datetime | date | None = None) -> Any:
         """Data-quality figures for a device, addressed by its registration ID."""
 
-    async def devices_traffic_get(self, device_uuid: str, *, range: str | None = None) -> Any:
+    async def devices_traffic_get(self, device_uuid: str, *, range: Literal['1h', '24h', '30d', '7d'] | None = None) -> Any:
         """A device's packets over a fixed range, addressed by its registration ID."""
 
     async def exports_list(self) -> Any:
@@ -1893,7 +1894,7 @@ class AsyncReadings:
         is deleted. Available to the mesh's owner and to superusers.
         """
 
-    async def meshes_nodes_get(self, mesh_id: str, node_id: int | str, *, agg: str | None = None, channel: str | None = None, payload_kind: str | None = None, start: str | None = None, stop: str | None = None, window: str | None = None) -> Any:
+    async def meshes_nodes_get(self, mesh_id: str, node_id: int | str, *, agg: Literal['count', 'first', 'last', 'max', 'mean', 'min', 'sum'] | None = None, channel: str | None = None, payload_kind: str | None = None, start: str | datetime | date | None = None, stop: str | datetime | date | None = None, window: str | None = None) -> Any:
         """Return a device's readings for one measurement over a time range.
 
         Downsampling covers numeric fields only, so text fields such as
@@ -1929,7 +1930,7 @@ class AsyncReadings:
                 date or a timestamp. Defaults to `-30d`.
         """
 
-    async def meshes_nodes_quality_get(self, mesh_id: str, node_id: int | str, *, start: str | None = None, stop: str | None = None) -> Any:
+    async def meshes_nodes_quality_get(self, mesh_id: str, node_id: int | str, *, start: str | datetime | date | None = None, stop: str | datetime | date | None = None) -> Any:
         """Return data-quality figures for a device over a time range.
 
         Covers the number of readings recorded, alarms raised per detector, the
@@ -1949,7 +1950,7 @@ class AsyncReadings:
                 Defaults to `now()`.
         """
 
-    async def meshes_nodes_traffic_get(self, mesh_id: str, node_id: int | str, *, range: str | None = None) -> Any:
+    async def meshes_nodes_traffic_get(self, mesh_id: str, node_id: int | str, *, range: Literal['1h', '24h', '30d', '7d'] | None = None) -> Any:
         """Return how much a node transmitted over a fixed range, and of which kinds of packet.
 
         Counts every packet the mesh's gateways heard from the node, including ones
@@ -1962,7 +1963,7 @@ class AsyncReadings:
                 Defaults to `24h`.
         """
 
-    async def meshes_stats_get(self, mesh_id: str, *, range: str | None = None) -> Any:
+    async def meshes_stats_get(self, mesh_id: str, *, range: Literal['1h', '24h', '30d', '7d'] | None = None) -> Any:
         """Return traffic and congestion figures for a mesh over a fixed range.
 
         Counts every packet the mesh's registered gateways hear, including text

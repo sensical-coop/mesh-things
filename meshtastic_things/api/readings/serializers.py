@@ -1,6 +1,8 @@
 from django.conf import settings
 from rest_framework import serializers
 
+from mesh_things import exports
+
 
 class PointSerializer(serializers.Serializer):
     time = serializers.CharField()
@@ -219,7 +221,7 @@ class ArchiveCredentialsSerializer(serializers.Serializer):
 
 
 class ExportRequestSerializer(serializers.Serializer):
-    format = serializers.ChoiceField(choices=["csv", "parquet"])
+    format = serializers.ChoiceField(choices=exports.FORMATS)
     start = serializers.DateField(help_text="First day, as `YYYY-MM-DD` (UTC).")
     stop = serializers.DateField(help_text="Last day, included, as `YYYY-MM-DD` (UTC).")
     node_ids = serializers.ListField(
@@ -235,7 +237,7 @@ class ExportRequestSerializer(serializers.Serializer):
             raise serializers.ValidationError({"stop": ["Must not be before start."]})
         if (data["stop"] - data["start"]).days + 1 > settings.EXPORT_MAX_DAYS:
             raise serializers.ValidationError({"stop": [f"An export covers at most {settings.EXPORT_MAX_DAYS} days."]})
-        if data["format"] == "parquet" and data.get("node_ids"):
+        if data["format"] == exports.PARQUET and data.get("node_ids"):
             raise serializers.ValidationError(
                 {"node_ids": ["Only CSV exports can be limited to devices; Parquet files hold the whole mesh."]}
             )
@@ -245,11 +247,11 @@ class ExportRequestSerializer(serializers.Serializer):
 class ExportSerializer(serializers.Serializer):
     id = serializers.UUIDField()
     mesh_id = serializers.UUIDField()
-    format = serializers.ChoiceField(choices=["csv", "parquet"])
+    format = serializers.ChoiceField(choices=exports.FORMATS)
     start = serializers.DateField()
     stop = serializers.DateField()
     node_ids = serializers.ListField(child=serializers.IntegerField(), allow_null=True)
-    status = serializers.ChoiceField(choices=["queued", "running", "ready", "failed", "expired"])
+    status = serializers.ChoiceField(choices=exports.STATUSES)
     days_done = serializers.IntegerField()
     days_total = serializers.IntegerField()
     size = serializers.IntegerField(allow_null=True, help_text="Zip size in bytes, once ready.")

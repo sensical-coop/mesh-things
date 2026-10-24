@@ -18,6 +18,7 @@ class Parameter:
     required: bool
     type: str | None
     format: str | None
+    enum: tuple | None
     description: str
 
 
@@ -34,6 +35,11 @@ class Operation:
     body_required: bool
     deprecated: bool
     description: str
+
+
+def accepts_datetime(param: Parameter) -> bool:
+    """Whether a parameter is a date or a time, so a `date` or `datetime` may be passed."""
+    return param.format in ("date", "date-time") or param.name in ("start", "stop", "before")
 
 
 def method_name(operation_id: str, namespace: str) -> str:
@@ -58,6 +64,7 @@ def _parameter(spec: dict) -> Parameter:
         required=spec.get("required", False),
         type=schema.get("type"),
         format=schema.get("format"),
+        enum=tuple(schema["enum"]) if "enum" in schema else None,
         description=spec.get("description", ""),
     )
 

@@ -61,6 +61,15 @@ class ServerError(ApiError):
     """5xx."""
 
 
+class ExportFailed(Exception):
+    """An export ended `failed` or `expired` instead of `ready`. `export` is its last state."""
+
+    def __init__(self, export: dict):
+        reason = f": {export['error']}" if export.get("error") else ""
+        super().__init__(f"Export {export['id']} is {export['status']}{reason}")
+        self.export = export
+
+
 _BY_STATUS = {400: ValidationFailed, 401: Unauthorized, 403: Forbidden, 404: NotFound, 409: Conflict, 429: Throttled}
 
 # The one 429 that is not a rate limit, and so carries no Retry-After.

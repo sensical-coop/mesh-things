@@ -19,21 +19,11 @@ import structlog
 from django.conf import settings
 
 from mesh_things.channels import DERIVED_KIND, TELEMETRY, channel_name, namespace_of, payload_kind_of_measurement
+from mesh_things.exports import ACTIVE, CSV, EXPIRED, FAILED, PARQUET, QUEUED, READY, RUNNING
 
 from . import archive
 
 log = structlog.get_logger()
-
-CSV = "csv"
-PARQUET = "parquet"
-FORMATS = (CSV, PARQUET)
-
-QUEUED = "queued"
-RUNNING = "running"
-READY = "ready"
-FAILED = "failed"
-EXPIRED = "expired"
-ACTIVE = (QUEUED, RUNNING)
 
 EXPORT_TTL_S = 24 * 3600
 EXPORT_HISTORY_S = 30 * 24 * 3600
