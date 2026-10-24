@@ -17,8 +17,8 @@ stage directly. NEVER commit.
 Make sure that the code runs, and that no images are left stale. There should be a series of profiles
 that keep the API simple to rebuild (not having stale images) if there is a change in one.
 
-If there are changes to the endpoints, add examples in the examples folder AND update the docs folder, as well
-as architecture.
+If there are changes to the endpoints, add examples in `meshtastic_things/mesh_things/examples/` (they go
+through the mesh-things client, and a test runs each one) AND update the docs folder, as well as architecture.
 
 Any change to the API's schema (an endpoint, a parameter, a serializer field, or even a docstring) raises
 `__version__` in `meshtastic_things/mesh_things/src/mesh_things/__init__.py` and is followed by

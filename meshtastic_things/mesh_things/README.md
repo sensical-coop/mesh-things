@@ -11,6 +11,9 @@ pip install mesh-things[pandas]      # readings and exports as DataFrames
 pip install mesh-things[archive]     # the Parquet archive, read straight from S3 (adds pyarrow)
 ```
 
+Runnable examples for every part of the API, from signing up to reading the archive,
+are in [examples/](examples/README.md) and in the source distribution.
+
 ## The client
 
 Every API operation is a method, generated from the OpenAPI document this release was

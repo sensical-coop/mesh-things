@@ -36,8 +36,8 @@ jobs:
           python -m venv /tmp/wheel
           /tmp/wheel/bin/pip install "$(ls dist/*.whl)[codec,pandas,archive]" pytest
           # Outside the checkout, so neither pytest.ini nor the source tree is picked up.
-          cp -r tests /tmp/wheel-tests
-          cd /tmp/wheel-tests && /tmp/wheel/bin/python -m pytest -q -p no:cacheprovider
+          mkdir /tmp/wheel-check && cp -r tests examples /tmp/wheel-check/
+          cd /tmp/wheel-check && /tmp/wheel/bin/python -m pytest -q -p no:cacheprovider tests
       - uses: actions/upload-artifact@v4
         with:
           name: dist
