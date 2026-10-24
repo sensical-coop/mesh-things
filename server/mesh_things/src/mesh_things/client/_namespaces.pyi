@@ -218,7 +218,9 @@ class Devices:
 
         Position and identity fields are filled in from what the device reports
         until they are set here, after which the values given take precedence.
-        Disallowing a gateway stops its traffic being decoded.
+        Disallowing a gateway stops its traffic being decoded. Turning a node into
+        a gateway registers it with the decoder, which refuses a node number that
+        another allowed gateway on the instance already uses.
 
         `archive_enabled` stores the device's readings in the Parquet archive from
         then on. It is accepted only on a mesh owned by an operator and on
@@ -226,7 +228,7 @@ class Devices:
         and keeps those already stored.
 
         Nothing in the request is applied if the pipeline cannot be told about a
-        change to `archive_enabled` or `is_allowed`.
+        change to `archive_enabled`, `is_allowed` or `is_gateway`.
         """
 
 class Health:
@@ -1347,7 +1349,9 @@ class AsyncDevices:
 
         Position and identity fields are filled in from what the device reports
         until they are set here, after which the values given take precedence.
-        Disallowing a gateway stops its traffic being decoded.
+        Disallowing a gateway stops its traffic being decoded. Turning a node into
+        a gateway registers it with the decoder, which refuses a node number that
+        another allowed gateway on the instance already uses.
 
         `archive_enabled` stores the device's readings in the Parquet archive from
         then on. It is accepted only on a mesh owned by an operator and on
@@ -1355,7 +1359,7 @@ class AsyncDevices:
         and keeps those already stored.
 
         Nothing in the request is applied if the pipeline cannot be told about a
-        change to `archive_enabled` or `is_allowed`.
+        change to `archive_enabled`, `is_allowed` or `is_gateway`.
         """
 
 class AsyncHealth:

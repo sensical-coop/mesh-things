@@ -468,6 +468,9 @@ class MeshSerializer(_MeshTermsMixin, serializers.ModelSerializer):
             "discover_gateways": {"required": False, "help_text": _DISCOVER_HELP},
         }
 
+    # Viewers other than the owner and superusers get MeshPublicSerializer instead.
+    owner_only_fields = tuple(field for field in Meta.fields if field not in MeshPublicSerializer.Meta.fields)
+
     def validate_source_id(self, value):
         return _validate_visible_source(self, value)
 
@@ -481,6 +484,10 @@ class MeshSerializer(_MeshTermsMixin, serializers.ModelSerializer):
         if (viewer_id is None or viewer_id != instance.owner_id) and not self.context.get("viewer_is_superuser"):
             return MeshPublicSerializer(instance).data
         return super().to_representation(instance)
+
+
+class MeshCreateSerializer(MeshSerializer):
+    """Creating a mesh: its own schema component, so the response's owner-only fields can be optional."""
 
 
 class MeshUpdateSerializer(_MeshTermsMixin, serializers.ModelSerializer):
@@ -963,11 +970,13 @@ class DeviceReadSerializer(serializers.ModelSerializer):
         links = sorted(instance.telemetry_variants.all(), key=lambda link: link.first_seen)
         return [str(link.telemetry_variant_id) for link in links]
 
+    owner_only_fields = ("admin_keys_b64", "archive_enabled", "archive_enabled_at", "archive_enabled_by")
+
     def to_representation(self, instance):
         data = super().to_representation(instance)
         viewer_id = self.context.get("viewer_id")
         if (viewer_id is None or viewer_id != instance.mesh.owner_id) and not self.context.get("viewer_is_superuser"):
-            for field in ("admin_keys_b64", "archive_enabled", "archive_enabled_at", "archive_enabled_by"):
+            for field in self.owner_only_fields:
                 data.pop(field, None)
         return data
 
@@ -1019,7 +1028,7 @@ class AlgorithmSerializer(serializers.Serializer):
 
 
 class DeviceUpdateSerializer(serializers.ModelSerializer):
-    """node_id/mesh are fixed at creation. Role is editable"""
+    """node_id/mesh are fixed at creation. Role and whether it is a gateway are editable."""
 
     admin_keys_b64 = serializers.ListField(
         child=serializers.CharField(),
@@ -1035,6 +1044,7 @@ class DeviceUpdateSerializer(serializers.ModelSerializer):
             "label",
             "admin_keys_b64",
             "is_allowed",
+            "is_gateway",
             "latitude",
             "longitude",
             "name",
@@ -1049,6 +1059,7 @@ class DeviceUpdateSerializer(serializers.ModelSerializer):
         extra_kwargs = {
             "label": {"required": False},
             "is_allowed": {"required": False},
+            "is_gateway": {"required": False, "help_text": "Whether the device publishes the mesh's traffic to MQTT."},
             "reading_interval_seconds": {"required": False},
             "publish_interval_seconds": {"required": False},
             "absence_detection_enabled": {"required": False},

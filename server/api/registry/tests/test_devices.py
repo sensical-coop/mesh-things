@@ -1054,3 +1054,88 @@ class DeviceTelemetryVariantIdsTests(RegistryTestCase):
                 resp = self.client.get("/devices", {"telemetry_variant": value}, **self.auth_headers(self.owner))
                 self.assertEqual(resp.status_code, 400)
                 self.assertIn("telemetry_variant", resp.json())
+
+
+class DeviceRoleChangeTests(RegistryTestCase):
+    def _put(self, owner, device, body):
+        return self.client.put(f"/devices/{device['uuid']}", body, format="json", **self.auth_headers(owner))
+
+    def test_turning_a_node_into_a_gateway_registers_its_key(self):
+        owner = self.create_owner()
+        mesh = self.create_mesh(owner)
+        node = self.create_node(owner, mesh, device_id=7)
+
+        resp = self._put(owner, node, {"is_gateway": True})
+
+        self.assertEqual(resp.status_code, 200, resp.content)
+        self.assertTrue(resp.json()["is_gateway"])
+        self.assertEqual(self.fake_publisher.publish_gateway_upsert.call_count, 1)
+        self.fake_publisher.publish_node_unreject.assert_not_called()
+
+    def test_turning_a_gateway_into_a_node_removes_its_key(self):
+        owner = self.create_owner()
+        mesh = self.create_mesh(owner)
+        gateway = self.create_gateway(owner, mesh, device_id=7)
+
+        resp = self._put(owner, gateway, {"is_gateway": False})
+
+        self.assertEqual(resp.status_code, 200, resp.content)
+        self.assertFalse(resp.json()["is_gateway"])
+        self.assertEqual(self.fake_publisher.publish_gateway_delete.call_count, 1)
+        self.fake_publisher.publish_node_reject.assert_not_called()
+
+    def test_a_rejected_gateway_becomes_a_rejected_node(self):
+        owner = self.create_owner()
+        mesh = self.create_mesh(owner)
+        gateway = self.create_gateway(owner, mesh, device_id=7)
+        self._put(owner, gateway, {"is_allowed": False})
+        self.fake_publisher.publish_gateway_delete.reset_mock()
+
+        resp = self._put(owner, gateway, {"is_gateway": False})
+
+        self.assertEqual(resp.status_code, 200, resp.content)
+        self.fake_publisher.publish_gateway_delete.assert_not_called()
+        self.assertEqual(self.fake_publisher.publish_node_reject.call_count, 1)
+
+    def test_a_rejected_node_allowed_as_a_gateway_in_one_request(self):
+        owner = self.create_owner()
+        mesh = self.create_mesh(owner)
+        node = self.create_node(owner, mesh, device_id=7)
+        self._put(owner, node, {"is_allowed": False})
+
+        resp = self._put(owner, node, {"is_gateway": True, "is_allowed": True})
+
+        self.assertEqual(resp.status_code, 200, resp.content)
+        self.assertEqual(self.fake_publisher.publish_node_unreject.call_count, 1)
+        self.assertEqual(self.fake_publisher.publish_gateway_upsert.call_count, 1)
+
+    def test_a_gateway_node_number_already_allowed_elsewhere_conflicts(self):
+        owner = self.create_owner()
+        mesh_a = self.create_mesh(owner, channel_id="A")
+        mesh_b = self.create_mesh(owner, channel_id="B")
+        self.create_gateway(owner, mesh_a, device_id=7)
+        node = self.create_node(owner, mesh_b, device_id=7)
+        self.fake_publisher.publish_gateway_upsert.reset_mock()
+
+        resp = self._put(owner, node, {"is_gateway": True})
+
+        self.assertEqual(resp.status_code, 409, resp.content)
+        self.fake_publisher.publish_gateway_upsert.assert_not_called()
+        self.assertFalse(Device.objects.get(pk=uuid.UUID(node["uuid"])).is_gateway)
+
+    def test_a_failed_publish_changes_nothing_and_restores_the_decoder(self):
+        owner = self.create_owner()
+        mesh = self.create_mesh(owner)
+        gateway = self.create_gateway(owner, mesh, device_id=7)
+        self.fake_publisher.publish_gateway_upsert.reset_mock()
+        self.fake_publisher.publish_node_reject.side_effect = RuntimeError("kafka down")
+
+        resp = self._put(owner, gateway, {"is_gateway": False, "is_allowed": False})
+
+        self.assertEqual(resp.status_code, 502, resp.content)
+        self.fake_publisher.publish_node_reject.side_effect = None
+        device = Device.objects.get(pk=uuid.UUID(gateway["uuid"]))
+        self.assertTrue(device.is_gateway)
+        self.assertTrue(device.is_allowed)
+        # The key removed first is registered again.
+        self.assertEqual(self.fake_publisher.publish_gateway_upsert.call_count, 1)
