@@ -1,4 +1,5 @@
 import os
+from urllib.parse import urlencode
 
 import structlog
 from django.conf import settings
@@ -53,9 +54,10 @@ def send_templated_email(to_email: str, subject: str, template_name: str, contex
     email_health.record_sent(template_name)
 
 
-def send_verification_email(owner, token: str) -> None:
-
-    verify_link = f"{frontend_url('verify-email')}?token={token}"
+def send_verification_email(owner, token: str, next_path: str | None = None) -> None:
+    """Email the owner a verification link, which sends them on to `next_path` once verified."""
+    query = {"next": next_path, "token": token} if next_path else {"token": token}
+    verify_link = f"{frontend_url('verify-email')}?{urlencode(query)}"
     send_templated_email(
         to_email=owner.email,
         subject="Verify your email - Mesh Things",

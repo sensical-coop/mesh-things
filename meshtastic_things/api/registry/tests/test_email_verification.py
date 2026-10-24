@@ -267,3 +267,58 @@ class CreateOwnerHelperTests(RegistryTestCase):
         )
 
         self.assertEqual(resp.status_code, 201, resp.content)
+
+
+class ReturnPathTests(RegistryTestCase):
+    def _signup(self, email, **extra):
+        return self.client.post(
+            "/owners",
+            {**SIGNUP_TERMS, "name": "Nina", "email": email, "password": "Correct-Horse-Battery-42", **extra},
+            format="json",
+        )
+
+    def test_signup_with_next_puts_it_in_the_verification_link(self):
+        resp = self._signup("next-a@example.com", next="/start")
+
+        self.assertEqual(resp.status_code, 201, resp.content)
+        self.assertIn("verify-email?next=%2Fstart&token=", mail.outbox[0].body)
+        self.assertNotIn("next", resp.json())
+
+    def test_the_link_with_next_still_verifies(self):
+        self._signup("next-b@example.com", next="/start")
+
+        resp = self.client.get(f"/owners/verify-email?token={_extract_token(mail.outbox[0])}")
+
+        self.assertEqual(resp.status_code, 200, resp.content)
+        self.assertTrue(Owner.objects.get(email="next-b@example.com").is_active)
+
+    def test_signup_refuses_a_path_outside_the_allowlist(self):
+        for i, bad in enumerate(["https://evil.example", "//evil.example", "/console/meshes", "/start?x=1"]):
+            with self.subTest(next=bad):
+                resp = self._signup(f"next-bad-{i}@example.com", next=bad)
+                self.assertEqual(resp.status_code, 400, resp.content)
+                self.assertIn("next", resp.json())
+        self.assertEqual(len(mail.outbox), 0)
+
+    def test_allowlist_comes_from_settings(self):
+        with self.settings(FRONTEND_RETURN_PATHS=["/welcome"]):
+            self.assertEqual(self._signup("next-c@example.com", next="/start").status_code, 400)
+            self.assertEqual(self._signup("next-d@example.com", next="/welcome").status_code, 201)
+
+    def test_resend_with_next_puts_it_in_the_new_link(self):
+        owner = self._signup("next-e@example.com").json()
+        mail.outbox.clear()
+
+        resp = self.client.post("/owners/me/resend-verification", {"next": "/start"}, format="json", **self.auth_headers(owner))
+
+        self.assertEqual(resp.status_code, 200, resp.content)
+        self.assertIn("verify-email?next=%2Fstart&token=", mail.outbox[0].body)
+
+    def test_resend_refuses_a_path_outside_the_allowlist(self):
+        owner = self._signup("next-f@example.com").json()
+        mail.outbox.clear()
+
+        resp = self.client.post("/owners/me/resend-verification", {"next": "https://evil.example"}, format="json", **self.auth_headers(owner))
+
+        self.assertEqual(resp.status_code, 400, resp.content)
+        self.assertEqual(len(mail.outbox), 0)

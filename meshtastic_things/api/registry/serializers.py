@@ -155,7 +155,28 @@ class OwnerReadSerializer(serializers.ModelSerializer):
         return acceptance.terms_version if acceptance else None
 
 
-class OwnerCreateSerializer(_TermsAcceptanceInputMixin, serializers.ModelSerializer):
+class _ReturnPathInputMixin(serializers.Serializer):
+    next = serializers.CharField(
+        required=False,
+        write_only=True,
+        help_text=(
+            "Frontend page the verification link sends the owner to once verified, for "
+            "example `/start` to resume the onboarding. Only the paths this instance allows "
+            "are accepted."
+        ),
+    )
+
+    def validate_next(self, value):
+        if value not in settings.FRONTEND_RETURN_PATHS:
+            raise serializers.ValidationError("This page is not an allowed return path.")
+        return value
+
+
+class ResendVerificationSerializer(_ReturnPathInputMixin):
+    pass
+
+
+class OwnerCreateSerializer(_ReturnPathInputMixin, _TermsAcceptanceInputMixin, serializers.ModelSerializer):
     terms_kind = TermsKind.ACCOUNT
 
     email = serializers.EmailField(validators=[])
@@ -163,7 +184,7 @@ class OwnerCreateSerializer(_TermsAcceptanceInputMixin, serializers.ModelSeriali
 
     class Meta:
         model = Owner
-        fields = ["name", "email", "password", "terms_version", "terms_locale"]
+        fields = ["name", "email", "password", "terms_version", "terms_locale", "next"]
 
     def validate(self, attrs):
         try:
