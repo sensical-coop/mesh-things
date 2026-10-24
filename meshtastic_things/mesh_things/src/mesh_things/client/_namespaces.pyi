@@ -566,8 +566,9 @@ class Owners:
                 alarm, no summaries) up to 2592000 (30 days). Leave unset or
                 null to use the server default.
             status_alerts_enabled: Email me when a source I created stays
-                disconnected, or a sink I created with meshes or devices
-                attached has nobody connected. Defaults to false.
+                disconnected or stops receiving messages, or a sink I created
+                with meshes or devices attached has nobody connected. Defaults
+                to false. Superusers are always emailed about silent sources.
             source_rate_alerts_enabled: Email me when a source I created
                 averages more messages per second over an hour than this
                 instance allows. Defaults to false. Superusers are always
@@ -1017,6 +1018,15 @@ class Sources:
 
         Each carries its bridge's status, `unknown` for all of them when the
         broker cannot be asked. Remote passwords are never included.
+        """
+
+    def restart_create(self, source_id: str) -> Any:
+        """Restart a source's bridge and return the source with its new status. Operators only, on the sources they created.
+
+        Reapplies the source's settings on the broker and subscribes to the
+        remote topic again. Use it when a source shows `connected` but its
+        meshes have stopped receiving data. A paused source answers `409`, and
+        `502` means the broker could not restart it.
         """
 
     def terms_acceptance_create(self, source_id: str, *, body: dict[str, Any] | None = None) -> Any:
@@ -1676,8 +1686,9 @@ class AsyncOwners:
                 alarm, no summaries) up to 2592000 (30 days). Leave unset or
                 null to use the server default.
             status_alerts_enabled: Email me when a source I created stays
-                disconnected, or a sink I created with meshes or devices
-                attached has nobody connected. Defaults to false.
+                disconnected or stops receiving messages, or a sink I created
+                with meshes or devices attached has nobody connected. Defaults
+                to false. Superusers are always emailed about silent sources.
             source_rate_alerts_enabled: Email me when a source I created
                 averages more messages per second over an hour than this
                 instance allows. Defaults to false. Superusers are always
@@ -2127,6 +2138,15 @@ class AsyncSources:
 
         Each carries its bridge's status, `unknown` for all of them when the
         broker cannot be asked. Remote passwords are never included.
+        """
+
+    async def restart_create(self, source_id: str) -> Any:
+        """Restart a source's bridge and return the source with its new status. Operators only, on the sources they created.
+
+        Reapplies the source's settings on the broker and subscribes to the
+        remote topic again. Use it when a source shows `connected` but its
+        meshes have stopped receiving data. A paused source answers `409`, and
+        `502` means the broker could not restart it.
         """
 
     async def terms_acceptance_create(self, source_id: str, *, body: dict[str, Any] | None = None) -> Any:

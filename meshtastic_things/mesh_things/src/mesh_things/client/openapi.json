@@ -2395,7 +2395,7 @@
       },
       "put": {
         "operationId": "owners_me_update",
-        "description": "Update the authenticated owner's name, email address, or email preferences.\n\nChanging the email address deactivates the account until the new one\nis verified, and sends a fresh verification email.\n\nArgs:\n    alarm_email_cooldown_seconds: Length of a device's alarm window,\n        in seconds. The first alarm on a device is emailed straight\n        away; any further alarms on that device during the window are\n        sent as one summary when it ends. Accepts 0 (email on every\n        alarm, no summaries) up to 2592000 (30 days). Leave unset or\n        null to use the server default.\n    status_alerts_enabled: Email me when a source I created stays\n        disconnected, or a sink I created with meshes or devices\n        attached has nobody connected. Defaults to false.\n    source_rate_alerts_enabled: Email me when a source I created\n        averages more messages per second over an hour than this\n        instance allows. Defaults to false. Superusers are always\n        emailed about busy sources.",
+        "description": "Update the authenticated owner's name, email address, or email preferences.\n\nChanging the email address deactivates the account until the new one\nis verified, and sends a fresh verification email.\n\nArgs:\n    alarm_email_cooldown_seconds: Length of a device's alarm window,\n        in seconds. The first alarm on a device is emailed straight\n        away; any further alarms on that device during the window are\n        sent as one summary when it ends. Accepts 0 (email on every\n        alarm, no summaries) up to 2592000 (30 days). Leave unset or\n        null to use the server default.\n    status_alerts_enabled: Email me when a source I created stays\n        disconnected or stops receiving messages, or a sink I created\n        with meshes or devices attached has nobody connected. Defaults\n        to false. Superusers are always emailed about silent sources.\n    source_rate_alerts_enabled: Email me when a source I created\n        averages more messages per second over an hour than this\n        instance allows. Defaults to false. Superusers are always\n        emailed about busy sources.",
         "tags": [
           "owners"
         ],
@@ -4887,6 +4887,46 @@
         "responses": {
           "204": {
             "description": "Deleted."
+          }
+        }
+      }
+    },
+    "/sources/{source_id}/restart": {
+      "post": {
+        "operationId": "sources_restart_create",
+        "description": "Restart a source's bridge and return the source with its new status. Operators only, on the sources they created.\n\nReapplies the source's settings on the broker and subscribes to the\nremote topic again. Use it when a source shows `connected` but its\nmeshes have stopped receiving data. A paused source answers `409`, and\n`502` means the broker could not restart it.",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "source_id",
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            },
+            "required": true
+          }
+        ],
+        "tags": [
+          "sources"
+        ],
+        "security": [
+          {
+            "bearerAuth": []
+          },
+          {
+            "cookieAuth": []
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SourceRead"
+                }
+              }
+            },
+            "description": ""
           }
         }
       }
@@ -8309,7 +8349,7 @@
           },
           "status_alerts_enabled": {
             "type": "boolean",
-            "description": "Email me when a source I created stays disconnected, or a sink I created with meshes or devices attached has nobody connected. Off by default."
+            "description": "Email me when a source I created stays disconnected or stops receiving messages, or a sink I created with meshes or devices attached has nobody connected. Off by default. Superusers are always emailed about silent sources."
           },
           "source_rate_alerts_enabled": {
             "type": "boolean",
