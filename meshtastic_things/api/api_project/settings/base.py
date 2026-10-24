@@ -5,6 +5,7 @@ from pathlib import Path
 import dj_database_url
 from django.core.exceptions import ImproperlyConfigured
 
+import mesh_things
 from mesh_things.env import env_bool, env_int, env_list, env_str
 
 from common.gateway import public_base_url
@@ -44,6 +45,7 @@ INSTALLED_APPS = [
 ]
 MIDDLEWARE = [
     "api_project.middleware.InternalHostSecurityMiddleware",
+    "api_project.middleware.ApiVersionMiddleware",
     "django.contrib.sessions.middleware.SessionMiddleware",
     "django.middleware.common.CommonMiddleware",
     "django.contrib.auth.middleware.AuthenticationMiddleware",
@@ -57,6 +59,7 @@ if not IS_READINGS:
     ]
     MIDDLEWARE = [
         "api_project.middleware.InternalHostSecurityMiddleware",
+        "api_project.middleware.ApiVersionMiddleware",
         "whitenoise.middleware.WhiteNoiseMiddleware",
         "django.contrib.sessions.middleware.SessionMiddleware",
         "django.middleware.common.CommonMiddleware",
@@ -170,7 +173,8 @@ REST_FRAMEWORK = {
 
 SPECTACULAR_SETTINGS = {
     "TITLE": "Mesh Things API",
-    "VERSION": "1.0.0",
+    # The mesh-things package and the API share one version, bumped on every schema change.
+    "VERSION": mesh_things.__version__,
     "SERVERS": [{"url": public_base_url()}],
     # The catalog default and the per-device override share one choice set, so
     # they share one enum component rather than generating a near-duplicate each.
@@ -195,6 +199,7 @@ if CORS_ALLOWED_ORIGINS:
     # with credentials: 'include', which now applies to readings too since it
     # recognizes registry's session cookie (SessionAuthentication above).
     CORS_ALLOW_CREDENTIALS = True
+    CORS_EXPOSE_HEADERS = ["API-Version"]
     # readings has no CsrfViewMiddleware, but SessionAuthentication still checks
     # CSRF on its one write, POST /readings/archive/meshes/{id}/credentials, and
     # that check rejects cross-origin requests from origins not listed here.

@@ -20,6 +20,10 @@ that keep the API simple to rebuild (not having stale images) if there is a chan
 If there are changes to the endpoints, add examples in the examples folder AND update the docs folder, as well
 as architecture.
 
+Any change to the API's schema (an endpoint, a parameter, a serializer field, or even a docstring) raises
+`__version__` in `meshtastic_things/mesh_things/src/mesh_things/__init__.py` and is followed by
+`scripts/regen-client-schema.sh`, so the mesh-things package stays in sync. CI fails otherwise.
+
 ## Comments and Docstrings
 
 Keep comments and docstrings concise, purposeful, and non-verbose.
