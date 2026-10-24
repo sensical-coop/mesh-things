@@ -5,8 +5,8 @@ set -euo pipefail
 cd "$(dirname "$0")/.."
 
 BASE=${1:-origin/main}
-SNAPSHOT=meshtastic_things/mesh_things/src/mesh_things/client/openapi.json
-VERSION_FILE=meshtastic_things/mesh_things/src/mesh_things/__init__.py
+SNAPSHOT=server/mesh_things/src/mesh_things/client/openapi.json
+VERSION_FILE=server/mesh_things/src/mesh_things/__init__.py
 
 version_of() { sed -n 's/^__version__ = "\(.*\)"$/\1/p'; }
 

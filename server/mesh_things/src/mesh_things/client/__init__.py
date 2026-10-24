@@ -1,4 +1,4 @@
-"""Access to the meshtastic-things API, bound to the OpenAPI snapshot shipped beside it."""
+"""Access to the mesh-things API, bound to the OpenAPI snapshot shipped beside it."""
 from ._client import AsyncMeshThings, MeshThings, Namespace
 from ._core import MeshThingsVersionWarning
 from ._helpers import terms_fields

@@ -21,7 +21,7 @@ Env vars:
 
 The MQTT tools some walkthroughs below pair with (a fake gateway, a sink consumer) are
 not API clients, so they live in the repository's
-[meshtastic_things/examples/](../../examples/README.md).
+[server/examples/](../../examples/README.md).
 
 ## Registry role
 
@@ -237,7 +237,7 @@ python3 registry_device_postprocessing.py show --device-uuid <device uuid>
 ```
 
 To add your own algorithm, drop a decorated function into a module under
-`meshtastic_things/common/algorithms/`, declaring its parameters with `Param`
+`server/common/algorithms/`, declaring its parameters with `Param`
 and marking the per-sensor ones `calibration=True`. Registry imports the same
 registry, so a step naming an unknown function, mis-binding an input or setting
 a calibration parameter is rejected with a `400` when written.

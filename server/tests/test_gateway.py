@@ -8,8 +8,8 @@ from common.gateway import public_base_url
 
 ROOT = Path(__file__).resolve().parents[2]
 CADDYFILE = ROOT / "Caddyfile"
-READINGS_URLCONF = ROOT / "meshtastic_things/api/api_project/urls_readings.py"
-REGISTRY_URLS = ROOT / "meshtastic_things/api/registry/urls.py"
+READINGS_URLCONF = ROOT / "server/api/api_project/urls_readings.py"
+REGISTRY_URLS = ROOT / "server/api/registry/urls.py"
 
 def _caddyfile() -> str:
     return CADDYFILE.read_text()

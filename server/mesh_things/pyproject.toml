@@ -5,7 +5,7 @@ build-backend = "hatchling.build"
 [project]
 name = "mesh-things"
 dynamic = ["version"]
-description = "Python client for the meshtastic-things API, with the vocabulary and Meshtastic protocol helpers it is built on"
+description = "Python client for the mesh-things API, with the vocabulary and Meshtastic protocol helpers it is built on"
 readme = "README.md"
 license = "GPL-3.0-only"
 license-files = ["LICENSE"]

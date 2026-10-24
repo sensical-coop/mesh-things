@@ -231,7 +231,7 @@ def test_submitted_job_names_match_what_the_jobs_register():
 
     for service in FLINK_SUBMITTERS:
         _, job_file, job_name = _services(BASE_FILES)[service]["command"]
-        source = (ROOT / "meshtastic_things" / "flink" / job_file).read_text()
+        source = (ROOT / "server" / "flink" / job_file).read_text()
         registered = _re.search(r'env\.execute\("([^"]+)"\)', source)
 
         assert registered, f"{job_file} has no env.execute(<name>)"
@@ -384,7 +384,7 @@ def test_every_building_service_names_its_image_explicitly():
 
     assert anchors, "no shared image anchors defined"
     for name in anchors:
-        assert re.search(rf"^\s+image:\s+meshtastic-things/[\w-]+:latest\n", compose, re.M), (
+        assert re.search(rf"^\s+image:\s+mesh-things/[\w-]+:latest\n", compose, re.M), (
             f"x-{name}-image does not pin an image name"
         )
 
@@ -444,10 +444,10 @@ def test_ci_publishes_every_image_compose_builds():
     silently runs an older copy of that component - which is how quality_worker went
     unpublished."""
     compose_dockerfiles = set(re.findall(r"dockerfile:\s*(\S+)", _compose_text(BASE_FILES)))
-    compose_dockerfiles.add("Dockerfile")  # the root one, referenced as `build: ./meshtastic_things`
+    compose_dockerfiles.add("Dockerfile")  # the root one, referenced as `build: ./server`
 
     ci = WORKFLOW.read_text()
-    ci_dockerfiles = {p.split("meshtastic_things/")[-1] for p in re.findall(r"dockerfile:\s*(\S+)", ci)}
+    ci_dockerfiles = {p.split("server/")[-1] for p in re.findall(r"dockerfile:\s*(\S+)", ci)}
 
     missing = compose_dockerfiles - ci_dockerfiles
     assert not missing, f"built by compose but never published by CI: {sorted(missing)}"
@@ -612,7 +612,7 @@ def test_every_topic_created_at_startup_is_actually_used():
     topic_vars = set(re.findall(r"\$\$\{?([A-Z0-9_]+)", init))
     sources = "\n".join(
         path.read_text()
-        for path in (ROOT / "meshtastic_things").rglob("*.py")
+        for path in (ROOT / "server").rglob("*.py")
         if "/build/" not in str(path) and "__pycache__" not in str(path)
     )
 

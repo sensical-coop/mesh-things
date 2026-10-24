@@ -77,7 +77,7 @@ class _Client:
 
 
 class MeshThings(_Client, SyncNamespaces):
-    """Client for the meshtastic-things API.
+    """Client for the mesh-things API.
 
     Args:
         base_url: The API's root, for example `https://api.example.org`. Defaults to
@@ -194,7 +194,7 @@ class MeshThings(_Client, SyncNamespaces):
 
 
 class AsyncMeshThings(_Client, AsyncNamespaces):
-    """Async client for the meshtastic-things API. Takes the same arguments as `MeshThings`."""
+    """Async client for the mesh-things API. Takes the same arguments as `MeshThings`."""
 
     def __init__(
         self,

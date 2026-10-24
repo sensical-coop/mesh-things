@@ -16,7 +16,7 @@ jobs:
     runs-on: ubuntu-latest
     defaults:
       run:
-        working-directory: meshtastic_things/mesh_things
+        working-directory: server/mesh_things
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
@@ -41,7 +41,7 @@ jobs:
       - uses: actions/upload-artifact@v4
         with:
           name: dist
-          path: meshtastic_things/mesh_things/dist/
+          path: server/mesh_things/dist/
 
   publish:
     needs: build

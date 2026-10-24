@@ -1,6 +1,6 @@
 # mesh-things
 
-Python access to the meshtastic-things API, plus the vocabulary and Meshtastic protocol
+Python access to the mesh-things API, plus the vocabulary and Meshtastic protocol
 helpers the API itself is built on.
 
 ```bash

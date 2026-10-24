@@ -37,8 +37,8 @@ jobs:
       - name: The mesh-things snapshot and stub match the API
         run: >
           git diff --exit-code --
-          meshtastic_things/mesh_things/src/mesh_things/client/openapi.json
-          meshtastic_things/mesh_things/src/mesh_things/client/_namespaces.pyi
+          server/mesh_things/src/mesh_things/client/openapi.json
+          server/mesh_things/src/mesh_things/client/_namespaces.pyi
       - name: A schema change raises the mesh-things version
         run: scripts/check-client-version.sh "origin/${{ github.base_ref || 'main' }}"
 
@@ -75,7 +75,7 @@ jobs:
           - monitor/Dockerfile
     steps:
       - uses: actions/checkout@v4
-      - run: docker build -f "meshtastic_things/${{ matrix.dockerfile }}" ./meshtastic_things
+      - run: docker build -f "server/${{ matrix.dockerfile }}" ./server
 
   root-tests:
     runs-on: ubuntu-latest
@@ -85,7 +85,7 @@ jobs:
         with:
           python-version: "3.11"
       - run: >
-          pip install "./meshtastic_things/mesh_things[codec]"
-          -r meshtastic_things/requirements.txt -r meshtastic_things/requirements-test.txt
+          pip install "./server/mesh_things[codec]"
+          -r server/requirements.txt -r server/requirements-test.txt
       - run: pytest -q --ignore=api
-        working-directory: meshtastic_things
+        working-directory: server
