@@ -1312,8 +1312,8 @@ every owner's devices; anyone else's is scoped to devices on meshes they own.
 curl -s http://localhost:8090/devices/<device uuid> -H "Authorization: Bearer $OWNER_API_KEY" | python3 -m json.tool
 ```
 
-**Update** — `label`, `admin_keys_b64`, `is_allowed`, and the location/NodeInfo fields
-below are mutable; `node_id`, `mesh`, and role (`is_gateway`) are fixed at
+**Update** — `label`, `admin_keys_b64`, `is_allowed`, `is_gateway`, and the
+location/NodeInfo fields below are mutable; `node_id` and `mesh` are fixed at
 creation:
 
 ```bash
@@ -1321,6 +1321,19 @@ curl -s -X PUT http://localhost:8090/devices/<device uuid> \
   -H "Content-Type: application/json" \
   -H "Authorization: Bearer $OWNER_API_KEY" \
   -d '{"label": "renamed"}' | python3 -m json.tool
+```
+
+**Gateway or node** — `is_gateway` turns a registered node into a gateway, or back.
+Promoting an allowed node publishes its key to `mesh.keys.v1`, so its traffic starts
+decoding; demoting an allowed gateway deletes it there. A rejected device moves
+between the gateway and node reject states the same way. Promoting a node whose
+number an allowed gateway elsewhere on the instance already uses returns 409, and a
+failed publish returns 502 with nothing changed:
+
+```bash
+curl -s -X PUT http://localhost:8090/devices/<device uuid> \
+  -H "Content-Type: application/json" -H "Authorization: Bearer $OWNER_API_KEY" \
+  -d '{"is_gateway": true}' | python3 -m json.tool
 ```
 
 **Fault-detection intervals** — `reading_interval_seconds` (how often it samples,

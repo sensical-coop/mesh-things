@@ -283,7 +283,7 @@
       },
       "put": {
         "operationId": "devices_update",
-        "description": "Update a registered device.\n\nPosition and identity fields are filled in from what the device reports\nuntil they are set here, after which the values given take precedence.\nDisallowing a gateway stops its traffic being decoded.\n\n`archive_enabled` stores the device's readings in the Parquet archive from\nthen on. It is accepted only on a mesh owned by an operator and on\ninstances that run the archive. Turning it off stops storing new readings\nand keeps those already stored.\n\nNothing in the request is applied if the pipeline cannot be told about a\nchange to `archive_enabled` or `is_allowed`.",
+        "description": "Update a registered device.\n\nPosition and identity fields are filled in from what the device reports\nuntil they are set here, after which the values given take precedence.\nDisallowing a gateway stops its traffic being decoded. Turning a node into\na gateway registers it with the decoder, which refuses a node number that\nanother allowed gateway on the instance already uses.\n\n`archive_enabled` stores the device's readings in the Parquet archive from\nthen on. It is accepted only on a mesh owned by an operator and on\ninstances that run the archive. Turning it off stops storing new readings\nand keeps those already stored.\n\nNothing in the request is applied if the pipeline cannot be told about a\nchange to `archive_enabled`, `is_allowed` or `is_gateway`.",
         "parameters": [
           {
             "in": "path",
@@ -1433,17 +1433,17 @@
           "content": {
             "application/json": {
               "schema": {
-                "$ref": "#/components/schemas/Mesh"
+                "$ref": "#/components/schemas/MeshCreate"
               }
             },
             "application/x-www-form-urlencoded": {
               "schema": {
-                "$ref": "#/components/schemas/Mesh"
+                "$ref": "#/components/schemas/MeshCreate"
               }
             },
             "multipart/form-data": {
               "schema": {
-                "$ref": "#/components/schemas/Mesh"
+                "$ref": "#/components/schemas/MeshCreate"
               }
             }
           },
@@ -6532,10 +6532,6 @@
         },
         "required": [
           "absence_detection_enabled",
-          "admin_keys_b64",
-          "archive_enabled",
-          "archive_enabled_at",
-          "archive_enabled_by",
           "created_at",
           "discovered_at",
           "hardware_type",
@@ -6597,7 +6593,7 @@
       },
       "DeviceUpdate": {
         "type": "object",
-        "description": "node_id/mesh are fixed at creation. Role is editable",
+        "description": "node_id/mesh are fixed at creation. Role and whether it is a gateway are editable.",
         "properties": {
           "label": {
             "type": "string",
@@ -6614,6 +6610,10 @@
           },
           "is_allowed": {
             "type": "boolean"
+          },
+          "is_gateway": {
+            "type": "boolean",
+            "description": "Whether the device publishes the mesh's traffic to MQTT."
           },
           "latitude": {
             "type": "number",
@@ -7189,10 +7189,6 @@
           "created_at",
           "id",
           "owner_id",
-          "paused_at",
-          "psk_b64",
-          "terms_accepted_version",
-          "terms_expires_at",
           "updated_at"
         ]
       },
@@ -7247,6 +7243,104 @@
           "mean",
           "peak",
           "points"
+        ]
+      },
+      "MeshCreate": {
+        "type": "object",
+        "description": "Creating a mesh: its own schema component, so the response's owner-only fields can be optional.",
+        "properties": {
+          "id": {
+            "type": "string",
+            "format": "uuid",
+            "readOnly": true
+          },
+          "channel_id": {
+            "type": "string",
+            "maxLength": 255
+          },
+          "psk_b64": {
+            "type": "string",
+            "description": "Base64-encoded channel PSK"
+          },
+          "label": {
+            "type": "string",
+            "nullable": true,
+            "maxLength": 255
+          },
+          "owner_id": {
+            "type": "string",
+            "format": "uuid",
+            "readOnly": true
+          },
+          "is_public": {
+            "type": "boolean"
+          },
+          "source_id": {
+            "type": "string",
+            "format": "uuid",
+            "nullable": true,
+            "description": "Source the mesh's traffic is bridged from. Null for this instance's own broker."
+          },
+          "terms_version": {
+            "type": "string",
+            "writeOnly": true,
+            "description": "Version of the mesh terms accepted, from /meshes/terms. Required when the mesh uses the default broker (no source) and has no current acceptance; ignored otherwise."
+          },
+          "terms_locale": {
+            "allOf": [
+              {
+                "$ref": "#/components/schemas/TermsLocaleEnum"
+              }
+            ],
+            "writeOnly": true,
+            "default": "en",
+            "description": "Locale the terms were shown in.\n\n* `en` - en\n* `es` - es"
+          },
+          "terms_accepted_version": {
+            "type": "string",
+            "nullable": true,
+            "description": "Mesh terms version accepted. Null on a source, whose terms apply instead.",
+            "readOnly": true
+          },
+          "terms_expires_at": {
+            "type": "string",
+            "format": "date-time",
+            "nullable": true,
+            "description": "When the mesh terms acceptance lapses. Null for no time limit, or on a source.",
+            "readOnly": true
+          },
+          "paused_at": {
+            "type": "string",
+            "format": "date-time",
+            "readOnly": true,
+            "nullable": true,
+            "description": "Set while its mesh terms have lapsed; the mesh stores no new data."
+          },
+          "discover_gateways": {
+            "type": "boolean",
+            "description": "Register gateways whose packets decode with this mesh's channel and PSK automatically. Only an operator may switch it on for a mesh with a default or blank PSK."
+          },
+          "created_at": {
+            "type": "string",
+            "format": "date-time",
+            "readOnly": true
+          },
+          "updated_at": {
+            "type": "string",
+            "format": "date-time",
+            "readOnly": true
+          }
+        },
+        "required": [
+          "channel_id",
+          "created_at",
+          "id",
+          "owner_id",
+          "paused_at",
+          "psk_b64",
+          "terms_accepted_version",
+          "terms_expires_at",
+          "updated_at"
         ]
       },
       "MeshGatewayPair": {

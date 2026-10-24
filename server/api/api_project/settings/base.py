@@ -186,6 +186,10 @@ SPECTACULAR_SETTINGS = {
         "BackfillResultStatusEnum": [("done", "done"), ("failed", "failed")],
         "RfLinkSourceEnum": "registry.models.RfLinkSource",
     },
+    "POSTPROCESSING_HOOKS": [
+        "drf_spectacular.hooks.postprocess_schema_enums",
+        "registry.schema.owner_only_fields_optional",
+    ],
 }
 
 # CORS: no origins allowed by default.

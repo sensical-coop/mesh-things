@@ -60,6 +60,8 @@ python3 registry_create_gateway.py --device-id 111222333 --label "office gateway
 #    its channel and PSK is registered automatically (operator-only on a default or
 #    blank PSK). --wait keeps polling and prints each one as it appears.
 python3 registry_discover_gateways.py $MESH_ID --on --wait 300
+#    ... or promote a node that is already registered (and --node to demote it again)
+python3 registry_device_role.py --device-uuid <device_uuid>
 
 # 4. Edit the mesh (partial update - only what you pass changes; rotating the PSK
 #    republishes every gateway on this mesh with the new key)

@@ -2,6 +2,7 @@ import secrets
 import uuid
 from datetime import datetime, timedelta
 from datetime import timezone as dt_timezone
+from functools import partial
 
 import structlog
 from django.conf import settings
@@ -94,6 +95,7 @@ from .serializers import (
     MeasurementTypeCreateSerializer,
     MeasurementTypeReadSerializer,
     MeasurementTypeUpdateSerializer,
+    MeshCreateSerializer,
     MeshSerializer,
     MeshUpdateSerializer,
     EmailStatusSerializer,
@@ -969,7 +971,7 @@ class MeshListCreateView(APIView):
                 qs = qs.filter(owner_id=request.user.id)
         return Response(MeshSerializer(qs, many=True, context=_viewer_context(request)).data)
 
-    @extend_schema(request=MeshSerializer, responses={201: MeshSerializer})
+    @extend_schema(request=MeshCreateSerializer, responses={201: MeshSerializer})
     def post(self, request):
         """Create a mesh owned by the caller.
 
@@ -990,7 +992,7 @@ class MeshListCreateView(APIView):
             terms_locale: Locale the terms were shown in, `en` or `es`. Defaults
                 to `en`.
         """
-        serializer = MeshSerializer(data=request.data, context={"owner": request.user})
+        serializer = MeshCreateSerializer(data=request.data, context={"owner": request.user})
         serializer.is_valid(raise_exception=True)
         with transaction.atomic():
             mesh = serializer.save(owner=request.user)
@@ -1444,6 +1446,34 @@ class DeviceListCreateView(APIView):
         )
 
 
+def _publish_decoder_role(publisher, device, was_gateway: bool, was_allowed: bool) -> None:
+    """Tell the decoder that a device changed role or allowed state.
+
+    An allowed gateway has a registered key and a rejected node is on the mesh's
+    reject list; other devices have nothing published. The previous state is
+    retracted first, and put back if publishing the new one fails.
+    """
+    retracted = None
+    if was_gateway and was_allowed:
+        publisher.publish_gateway_delete(device)
+        retracted = partial(publish_gateway_state, publisher, device, device.mesh)
+    elif not was_gateway and not was_allowed:
+        publisher.publish_node_unreject(device)
+        retracted = partial(publisher.publish_node_reject, device)
+    try:
+        if device.is_gateway and device.is_allowed:
+            publish_gateway_state(publisher, device, device.mesh)
+        elif not device.is_gateway and not device.is_allowed:
+            publisher.publish_node_reject(device)
+    except Exception:
+        if retracted is not None:
+            try:
+                retracted()
+            except Exception as e:
+                log.error("device_decoder_restore_failed", device_id=str(device.id), error=str(e))
+        raise
+
+
 class DeviceDetailView(APIView):
     permission_classes = [IsVerifiedOwner]
 
@@ -1465,7 +1495,9 @@ class DeviceDetailView(APIView):
 
         Position and identity fields are filled in from what the device reports
         until they are set here, after which the values given take precedence.
-        Disallowing a gateway stops its traffic being decoded.
+        Disallowing a gateway stops its traffic being decoded. Turning a node into
+        a gateway registers it with the decoder, which refuses a node number that
+        another allowed gateway on the instance already uses.
 
         `archive_enabled` stores the device's readings in the Parquet archive from
         then on. It is accepted only on a mesh owned by an operator and on
@@ -1473,12 +1505,11 @@ class DeviceDetailView(APIView):
         and keeps those already stored.
 
         Nothing in the request is applied if the pipeline cannot be told about a
-        change to `archive_enabled` or `is_allowed`.
+        change to `archive_enabled`, `is_allowed` or `is_gateway`.
         """
         device = _get_device_or_404(device_uuid)
         _require_mesh_ownership(device.mesh, request.user)
-        changing_allowed = "is_allowed" in request.data
-        previous_allowed = device.is_allowed
+        previous_gateway, previous_allowed = device.is_gateway, device.is_allowed
         previous_archive = device.archive_enabled
         location_keys_present = "latitude" in request.data and "longitude" in request.data
         nodeinfo_fields = ("name", "short_name", "hardware_type", "role")
@@ -1517,22 +1548,12 @@ class DeviceDetailView(APIView):
                         raise BadGateway(f"Failed to publish the archive setting, nothing changed: {e}")
                     sinks_published = True
 
-                allowed_changed = changing_allowed and updated.is_allowed != previous_allowed
-                if allowed_changed:
-                    publisher = get_publisher()
+                allowed_changed = updated.is_allowed != previous_allowed
+                if allowed_changed or updated.is_gateway != previous_gateway:
                     try:
-                        if updated.is_gateway:
-                            if updated.is_allowed:
-                                publish_gateway_state(publisher, updated, updated.mesh)
-                            else:
-                                publisher.publish_gateway_delete(updated)
-                        elif updated.is_allowed:
-                            publisher.publish_node_unreject(updated)
-                        else:
-                            publisher.publish_node_reject(updated)
+                        _publish_decoder_role(get_publisher(), updated, previous_gateway, previous_allowed)
                     except Exception as e:
-                        action = "allow" if updated.is_allowed else "reject"
-                        raise BadGateway(f"Failed to publish device {action}, nothing changed: {e}")
+                        raise BadGateway(f"Failed to tell the decoder about the device, nothing changed: {e}")
         except IntegrityError:
             raise Conflict(f"Device with device_id {device.device_id} already has an allowed registration")
         except BadGateway:
