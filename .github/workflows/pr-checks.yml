@@ -34,8 +34,11 @@ jobs:
           fetch-depth: 0
       - run: cp env.example .env
       - run: scripts/regen-client-schema.sh
-      - name: The mesh-things snapshot matches the API
-        run: git diff --exit-code -- meshtastic_things/mesh_things/src/mesh_things/client/openapi.json
+      - name: The mesh-things snapshot and stub match the API
+        run: >
+          git diff --exit-code --
+          meshtastic_things/mesh_things/src/mesh_things/client/openapi.json
+          meshtastic_things/mesh_things/src/mesh_things/client/_namespaces.pyi
       - name: A schema change raises the mesh-things version
         run: scripts/check-client-version.sh "origin/${{ github.base_ref || 'main' }}"
 

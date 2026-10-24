@@ -1,0 +1,127 @@
+"""Request building and response handling shared by the sync and async clients."""
+import inspect
+import os
+import warnings
+from dataclasses import dataclass
+from typing import Any
+from urllib.parse import quote
+
+import httpx
+
+import mesh_things
+from mesh_things import node_ids
+
+from .errors import error_for
+from .schema import Operation
+
+URL_ENV = "MESH_THINGS_URL"
+API_KEY_ENV = "MESH_THINGS_API_KEY"
+_READINGS_PREFIX = "/readings/"
+_PYTHON_TYPES = {"string": str, "integer": int, "number": float, "boolean": bool}
+
+
+class MeshThingsVersionWarning(UserWarning):
+    """The API runs a different version than the one this package was built for."""
+
+
+@dataclass(frozen=True)
+class PreparedRequest:
+    method: str
+    url: str
+    params: dict[str, Any]
+    json: Any
+
+
+def resolve_base_url(base_url: str | None) -> str:
+    url = base_url or os.environ.get(URL_ENV, "").strip()
+    if not url:
+        raise ValueError(f"No API URL: pass base_url or set {URL_ENV}.")
+    return url.rstrip("/")
+
+
+def resolve_api_key(api_key: str | None) -> str | None:
+    return api_key or os.environ.get(API_KEY_ENV, "").strip() or None
+
+
+def signature(op: Operation) -> inspect.Signature:
+    """Path parameters positional, in path order; the body and query parameters keyword-only."""
+    empty = inspect.Parameter.empty
+    params = [
+        inspect.Parameter(p.name, inspect.Parameter.POSITIONAL_OR_KEYWORD, annotation=_annotation(p))
+        for p in op.path_params
+    ]
+    if op.has_body:
+        params.append(inspect.Parameter(
+            "body", inspect.Parameter.KEYWORD_ONLY,
+            default=empty if op.body_required else None, annotation=dict[str, Any],
+        ))
+    params += [
+        inspect.Parameter(
+            p.name, inspect.Parameter.KEYWORD_ONLY,
+            default=empty if p.required else None, annotation=_annotation(p),
+        )
+        for p in op.query_params
+    ]
+    return inspect.Signature(params, return_annotation=Any)
+
+
+def _annotation(param) -> Any:
+    python_type = _PYTHON_TYPES.get(param.type, Any)
+    if param.name == "node_id":
+        python_type = int | str
+    return python_type if param.required else python_type | None
+
+
+def _path_value(name: str, value: Any) -> str:
+    if name == "node_id" and isinstance(value, str):
+        number = node_ids.to_num(value)
+        if number is None:
+            raise ValueError(f"node_id {value!r} is neither a number nor a !aabbccdd id")
+        value = number
+    return quote(str(value), safe="")
+
+
+def prepare(op: Operation, base_url: str, readings_url: str | None, args: tuple, kwargs: dict) -> PreparedRequest:
+    bound = signature(op).bind(*args, **kwargs)
+    values = bound.arguments
+    path = op.path
+    for p in op.path_params:
+        path = path.replace(f"{{{p.name}}}", _path_value(p.name, values[p.name]))
+    params = {p.name: values[p.name] for p in op.query_params if values.get(p.name) is not None}
+    root = readings_url if readings_url and path.startswith(_READINGS_PREFIX) else base_url
+    return PreparedRequest(op.method, f"{root}{path}", params, values.get("body"))
+
+
+def warn_if_deprecated(op: Operation) -> None:
+    if op.deprecated:
+        warnings.warn(f"{op.method} {op.path} is deprecated by the API.", DeprecationWarning, stacklevel=4)
+
+
+def check_version(response: httpx.Response, seen: set) -> None:
+    """Warn once per client when the API reports a version other than this package's."""
+    version = response.headers.get("api-version")
+    if version and version != mesh_things.__version__ and version not in seen:
+        seen.add(version)
+        warnings.warn(
+            f"The API runs version {version} but mesh-things is {mesh_things.__version__}; "
+            "install the matching mesh-things release.",
+            MeshThingsVersionWarning,
+            stacklevel=4,
+        )
+
+
+def result(op: Operation, response: httpx.Response) -> Any:
+    """The decoded body of a success, the `Location` of a redirect, or the matching ApiError."""
+    if response.is_redirect:
+        return response.headers.get("location")
+    if response.is_success:
+        if response.status_code == 204 or not response.content:
+            return None
+        if response.headers.get("content-type", "").startswith("application/json"):
+            return response.json()
+        return response.content
+    try:
+        body = response.json()
+    except ValueError:
+        body = response.text
+    raise error_for(op.operation_id, response.status_code, body, dict(response.headers))
