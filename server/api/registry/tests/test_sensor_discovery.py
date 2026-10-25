@@ -585,7 +585,7 @@ class MeasurementTypeFilterTests(SeededCatalogTestCase):
 
 class QualityAndDerivedCatalogTests(SeededCatalogTestCase):
     """Computed channels (blueprint outputs, quality metrics) are catalogued and per-device-
-    linked the same way measured ones are - see docs/data-quality.md#code-locations."""
+    linked the same way measured ones are."""
 
     def setUp(self):
         super().setUp()

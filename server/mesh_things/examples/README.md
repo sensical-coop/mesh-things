@@ -22,8 +22,6 @@ The scripts read their settings from these environment variables, so you only ne
 | `MESH_THINGS_API_KEY` | Your API key. You receive it when you sign up with `registry_create_owner.py`. |
 | `SUPERUSER_API_KEY` | A superuser's key, only needed for the few scripts that manage the instance. |
 
-Some walkthroughs below also use two tools that are not API clients, a fake gateway and a sink consumer. They live in the repository's [server/examples/](../../examples/README.md) folder.
-
 ## Reading data
 
 These scripts only read from the API, so they are a safe way to explore. We suggest starting with `get_started.py`, which gives you an overview of your account.
@@ -151,17 +149,6 @@ export SOURCE_ID=...
 python3 registry_attach_mesh_to_source.py
 ```
 
-To try a source during development, you can publish fake readings to its broker as one of the mesh's gateways. The packets are real Meshtastic messages, encrypted with the mesh's key. Please use a test broker for this, never a public one.
-
-```bash
-python3 registry_create_gateway.py --node-id 439041101      # the gateway !1a2b3c4d
-python3 ../../examples/source_publish_fake.py --broker test-broker.example.org:8883 \
-  --username dev --password ... --topic-prefix msh/EU_868/2/e --channel LongFast \
-  --gateway-id '!1a2b3c4d' --count 10 --interval 5
-```
-
-The readings then appear like any others, for example with `readings.py`.
-
 ## Sharing data with others (sinks)
 
 A sink lets a service of your choice subscribe to the readings of your meshes and devices, as JSON, on this instance's broker. The service receives its own credentials, which are shown only once, when the sink is created or its password is renewed. Creating a sink needs the operator role.
@@ -177,12 +164,10 @@ export SINK_ID=...   # then share the broker, username, password and topic filte
 python3 registry_create_sink.py --update $SINK_ID --mesh-id "" --device-uuid <device uuid>
 python3 registry_create_sink.py --rotate $SINK_ID
 
-# 2. The service subscribes with those credentials. It needs no API key.
-SINK_BROKER=mqtt.example.org:8883 SINK_USERNAME=... SINK_PASSWORD=... \
-SINK_TOPIC_FILTER='mt-sources-sinks/<sink id>/#' python3 ../../examples/sink_consume.py
+# 2. The service subscribes with those credentials, using any MQTT client. It needs no API key.
+mosquitto_sub -h mqtt.example.org -p 8883 --capath /etc/ssl/certs \
+  -u ... -P ... -t 'mt-sources-sinks/<sink id>/#'
 ```
-
-To check a sink, `sink_count.py` counts the messages it delivers and prints a summary. With `--expect`, it exits with an error when fewer messages arrive than expected.
 
 ## The measurement catalog
 
