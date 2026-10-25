@@ -1,13 +1,21 @@
 """The registry calls the quality worker makes, through the mesh-things client."""
 import os
+from urllib.parse import urlsplit
 
 from mesh_things.client import Conflict, MeshThings, NotFound
 
 
+def _is_compose_service(url: str) -> bool:
+    """Whether the URL names a single-label host, such as `registry-api`, which only the compose network resolves."""
+    host = urlsplit(url).hostname or ""
+    return bool(host) and "." not in host and ":" not in host
+
+
 class RegistryClient:
     def __init__(self, base_url: str, api_key: str, timeout: float = 10.0):
-        # The registry is reached over the compose network, plain HTTP by design.
-        self._api = MeshThings(base_url, api_key, timeout=timeout, allow_insecure_http=True)
+        # Plain HTTP is by design on the compose network; any other host follows MESH_THINGS_ALLOW_HTTP.
+        allow = True if _is_compose_service(base_url) else None
+        self._api = MeshThings(base_url, api_key, timeout=timeout, allow_insecure_http=allow)
 
     def devices(self, **filters) -> list[dict]:
         """Superuser key -> every owner's devices"""

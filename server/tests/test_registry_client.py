@@ -13,7 +13,7 @@ def _registry(handler) -> tuple[RegistryClient, list[httpx.Request]]:
         seen.append(request)
         return handler(request)
 
-    registry = RegistryClient("http://registry.test", "key")
+    registry = RegistryClient("http://registry-api:8090", "key")
     registry._api = MeshThings(
         "http://registry.test", "key", http=httpx.Client(transport=httpx.MockTransport(record)), allow_insecure_http=True,
     )
@@ -38,3 +38,18 @@ def test_requests_the_worker_sends():
         ("PUT", "/postprocessing-backfills/b", ""),
     ]
     assert json.loads(seen[2].content) == {"status": "done", "points_published": 12, "error": None}
+
+
+def test_plain_http_is_allowed_only_to_a_compose_service(monkeypatch):
+    import pytest
+
+    from mesh_things.client import InsecureTransport
+
+    monkeypatch.delenv("MESH_THINGS_ALLOW_HTTP", raising=False)
+    RegistryClient("http://registry-api:8090", "key")
+    RegistryClient("https://api.example.org", "key")
+    for url in ("http://api.example.org", "http://10.0.0.5:8090", "http://[fd00::1]:8090"):
+        with pytest.raises(InsecureTransport):
+            RegistryClient(url, "key")
+    monkeypatch.setenv("MESH_THINGS_ALLOW_HTTP", "1")
+    RegistryClient("http://api.example.org", "key")

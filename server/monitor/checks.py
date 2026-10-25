@@ -201,27 +201,31 @@ class Checker:
     async def _await_sink(self, marker: int, subscribed: asyncio.Event, deadline_s: float) -> CheckResult:
         c = self.config
         started = time.monotonic()
+
+        async def delivered() -> CheckResult:
+            async with aiomqtt.Client(
+                c.sink_broker,
+                port=c.sink_port,
+                username=c.sink_user or None,
+                password=c.sink_pass or None,
+                tls_params=aiomqtt.TLSParameters() if c.sink_ssl else None,
+            ) as client:
+                await client.subscribe(c.sink_topic, qos=1)
+                subscribed.set()
+                async for message in client.messages:
+                    if marker_in_sink_message(message.payload, c.gateway_node_id) == marker:
+                        return _result(SINK, True, "probe delivered on the sink", started)
+            return _result(SINK, False, "sink subscription ended", started)
+
+        # wait_for rather than asyncio.timeout(), which needs Python 3.11; the package supports 3.10.
         try:
-            async with asyncio.timeout(deadline_s):
-                async with aiomqtt.Client(
-                    c.sink_broker,
-                    port=c.sink_port,
-                    username=c.sink_user or None,
-                    password=c.sink_pass or None,
-                    tls_params=aiomqtt.TLSParameters() if c.sink_ssl else None,
-                ) as client:
-                    await client.subscribe(c.sink_topic, qos=1)
-                    subscribed.set()
-                    async for message in client.messages:
-                        if marker_in_sink_message(message.payload, c.gateway_node_id) == marker:
-                            return _result(SINK, True, "probe delivered on the sink", started)
-        except TimeoutError:
+            return await asyncio.wait_for(delivered(), deadline_s)
+        except asyncio.TimeoutError:
             return _result(SINK, False, f"probe {marker} not delivered on the sink in time", started)
         except aiomqtt.MqttError as e:
             return _result(SINK, False, f"sink broker: {e}", started)
         finally:
             subscribed.set()
-        return _result(SINK, False, "sink subscription ended", started)
 
     async def probe(self, timeout_s: float | None = None) -> list[CheckResult]:
         """Publish one probe and follow it to the readings API, the registry and the sink."""

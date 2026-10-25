@@ -457,3 +457,51 @@ def test_the_root_check_follows_a_redirect():
 
     result = asyncio.run(go())
     assert result.ok, result.detail
+
+
+class _FakeSinkClient:
+    """Stands in for aiomqtt.Client: yields the given payloads, then waits forever."""
+
+    def __init__(self, payloads):
+        self._payloads = payloads
+
+    def __call__(self, *args, **kwargs):
+        return self
+
+    async def __aenter__(self):
+        return self
+
+    async def __aexit__(self, *exc):
+        return False
+
+    async def subscribe(self, topic, qos=0):
+        pass
+
+    @property
+    def messages(self):
+        async def stream():
+            for payload in self._payloads:
+                yield type("Message", (), {"payload": payload})()
+            await asyncio.Event().wait()
+        return stream()
+
+
+def _await_sink(monkeypatch, payloads, deadline_s):
+    import json
+
+    from monitor import checks
+
+    monkeypatch.setattr(checks.aiomqtt, "Client", _FakeSinkClient([json.dumps(p).encode() for p in payloads]))
+    checker = checks.Checker(_config(sink_broker="sink", sink_topic="mt-sinks/x/#"))
+    return asyncio.run(checker._await_sink(42, asyncio.Event(), deadline_s))
+
+
+def test_the_sink_check_sees_the_probe(monkeypatch):
+    probe = {"node_id": GATEWAY, "payload": {"device_metrics": {"uptime_seconds": 42}}}
+    result = _await_sink(monkeypatch, [{"node_id": 1}, probe], deadline_s=5)
+    assert result.ok, result.detail
+
+
+def test_the_sink_check_times_out(monkeypatch):
+    result = _await_sink(monkeypatch, [{"node_id": 1}], deadline_s=0.2)
+    assert not result.ok and "in time" in result.detail
