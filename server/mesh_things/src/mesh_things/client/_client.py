@@ -36,11 +36,16 @@ class _Client:
         api_key: str | None,
         readings_url: str | None,
         retries: int,
+        allow_insecure_http: bool | None,
     ):
         self.base_url = _core.resolve_base_url(base_url)
         self.readings_url = readings_url.rstrip("/") if readings_url else None
         self.retries = retries
+        self.allow_insecure_http = _core.resolve_allow_insecure_http(allow_insecure_http)
         key = _core.resolve_api_key(api_key)
+        if key:
+            for url in filter(None, (self.base_url, self.readings_url)):
+                _core.require_secure(url, "the API key", self.allow_insecure_http)
         self._headers = {"Authorization": f"Bearer {key}"} if key else {}
         self._versions_warned: set[str] = set()
         namespaces: dict[str, Namespace] = {}
@@ -89,6 +94,9 @@ class MeshThings(_Client, SyncNamespaces):
         timeout: Seconds before a request is abandoned.
         retries: How many times a rate-limited request is retried after the delay the API
             asks for.
+        allow_insecure_http: Send the API key over plain `http://` to a host other than
+            this machine. Defaults to `MESH_THINGS_ALLOW_HTTP`; otherwise that raises
+            `InsecureTransport`.
         http: An `httpx.Client` to send requests with, instead of a new one.
     """
 
@@ -100,10 +108,11 @@ class MeshThings(_Client, SyncNamespaces):
         readings_url: str | None = None,
         timeout: float = 30.0,
         retries: int = 0,
+        allow_insecure_http: bool | None = None,
         http: httpx.Client | None = None,
     ):
         self._http = http or httpx.Client(timeout=timeout)
-        super().__init__(base_url, api_key, readings_url, retries)
+        super().__init__(base_url, api_key, readings_url, retries, allow_insecure_http)
 
     def call(self, operation_id: str, *args: Any, **kwargs: Any) -> Any:
         """Run any operation by its operationId."""
@@ -204,10 +213,11 @@ class AsyncMeshThings(_Client, AsyncNamespaces):
         readings_url: str | None = None,
         timeout: float = 30.0,
         retries: int = 0,
+        allow_insecure_http: bool | None = None,
         http: httpx.AsyncClient | None = None,
     ):
         self._http = http or httpx.AsyncClient(timeout=timeout)
-        super().__init__(base_url, api_key, readings_url, retries)
+        super().__init__(base_url, api_key, readings_url, retries, allow_insecure_http)
 
     async def call(self, operation_id: str, *args: Any, **kwargs: Any) -> Any:
         """Run any operation by its operationId."""

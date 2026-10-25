@@ -42,6 +42,10 @@ api.meshes.create(body={"channel_id": "LongFast", "psk_b64": "..."})
   `date` and `datetime` objects are sent as ISO 8601, in UTC.
 - **Docs.** `help()` on a method shows the API's own documentation for it.
 - **Async.** `AsyncMeshThings` offers the same methods as coroutines.
+- **Plain HTTP.** An API key is only sent over `http://` to this machine (`localhost`,
+  `127.0.0.1`, `::1`). For any other host the client raises `InsecureTransport`, unless
+  you pass `allow_insecure_http=True` or set `MESH_THINGS_ALLOW_HTTP=1`, for a network you
+  trust. The archive's S3 credentials follow the same rule.
 
 ### Helpers
 
@@ -115,6 +119,7 @@ dicts.
 | `Throttled` | 429 rate limits. `retry_after` gives the wait, and `retries=` retries automatically. |
 | `ExportInProgress` | An export is already running. |
 | `ServerError` | 5xx |
+| `InsecureTransport` | A key or credentials would go over plain HTTP to another host. |
 
 All of them subclass `ApiError`. `wait_for_export` raises `ExportFailed` when the export
 ends `failed` or `expired`, and `TimeoutError` when the time runs out.

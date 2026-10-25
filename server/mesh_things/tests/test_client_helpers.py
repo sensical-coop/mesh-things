@@ -20,7 +20,7 @@ def _client(handler, cls=MeshThings):
 
     transport = httpx.MockTransport(record)
     http = httpx.Client(transport=transport) if cls is MeshThings else httpx.AsyncClient(transport=transport)
-    return cls(BASE, "secret", http=http), seen
+    return cls(BASE, "secret", http=http, allow_insecure_http=True), seen
 
 
 def _export(status, **extra):

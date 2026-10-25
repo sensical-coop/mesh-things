@@ -61,6 +61,10 @@ class ServerError(ApiError):
     """5xx."""
 
 
+class InsecureTransport(ValueError):
+    """Credentials would travel over plain HTTP to a host that is not this machine."""
+
+
 class ExportFailed(Exception):
     """An export ended `failed` or `expired` instead of `ready`. `export` is its last state."""
 

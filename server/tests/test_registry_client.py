@@ -14,7 +14,9 @@ def _registry(handler) -> tuple[RegistryClient, list[httpx.Request]]:
         return handler(request)
 
     registry = RegistryClient("http://registry.test", "key")
-    registry._api = MeshThings("http://registry.test", "key", http=httpx.Client(transport=httpx.MockTransport(record)))
+    registry._api = MeshThings(
+        "http://registry.test", "key", http=httpx.Client(transport=httpx.MockTransport(record)), allow_insecure_http=True,
+    )
     return registry, seen
 
 

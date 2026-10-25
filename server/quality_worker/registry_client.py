@@ -6,7 +6,8 @@ from mesh_things.client import Conflict, MeshThings, NotFound
 
 class RegistryClient:
     def __init__(self, base_url: str, api_key: str, timeout: float = 10.0):
-        self._api = MeshThings(base_url, api_key, timeout=timeout)
+        # The registry is reached over the compose network, plain HTTP by design.
+        self._api = MeshThings(base_url, api_key, timeout=timeout, allow_insecure_http=True)
 
     def devices(self, **filters) -> list[dict]:
         """Superuser key -> every owner's devices"""

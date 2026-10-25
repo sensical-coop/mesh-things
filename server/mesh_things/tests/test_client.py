@@ -27,7 +27,7 @@ def _client(handler, **kwargs) -> tuple[MeshThings, list[httpx.Request]]:
         seen.append(request)
         return handler(request)
 
-    api = MeshThings(BASE, "secret", http=httpx.Client(transport=httpx.MockTransport(record)), **kwargs)
+    api = MeshThings(BASE, "secret", http=httpx.Client(transport=httpx.MockTransport(record)), allow_insecure_http=True, **kwargs)
     return api, seen
 
 
@@ -127,10 +127,10 @@ def test_the_url_comes_from_the_environment(monkeypatch):
     monkeypatch.delenv("MESH_THINGS_URL", raising=False)
     with pytest.raises(ValueError, match="MESH_THINGS_URL"):
         MeshThings()
-    monkeypatch.setenv("MESH_THINGS_URL", "http://env.test/")
+    monkeypatch.setenv("MESH_THINGS_URL", "https://env.test/")
     monkeypatch.setenv("MESH_THINGS_API_KEY", "from-env")
     api = MeshThings()
-    assert api.base_url == "http://env.test"
+    assert api.base_url == "https://env.test"
     assert api._headers == {"Authorization": "Bearer from-env"}
     assert MeshThings(api_key="")._headers == {}
 
@@ -157,3 +157,23 @@ def test_deprecated_operations_warn():
 
     with pytest.warns(DeprecationWarning, match="/metrics"):
         _core.warn_if_deprecated(replace(operations()["metrics_retrieve"], deprecated=True))
+
+
+@pytest.mark.parametrize("url", ["http://localhost:8090", "http://127.0.0.1", "http://[::1]:8000", "https://api.test"])
+def test_a_key_may_go_to_this_machine_or_over_https(url, monkeypatch):
+    monkeypatch.delenv("MESH_THINGS_ALLOW_HTTP", raising=False)
+    MeshThings(url, "secret")
+
+
+def test_a_key_is_not_sent_over_plain_http_to_another_host(monkeypatch):
+    from mesh_things.client import InsecureTransport
+
+    monkeypatch.delenv("MESH_THINGS_ALLOW_HTTP", raising=False)
+    with pytest.raises(InsecureTransport, match="registry-api"):
+        MeshThings("http://registry-api:8090", "secret")
+    with pytest.raises(InsecureTransport):
+        MeshThings("https://api.test", "secret", readings_url="http://readings.test")
+    MeshThings("http://registry-api:8090", api_key="")  # no key, nothing to protect
+    MeshThings("http://registry-api:8090", "secret", allow_insecure_http=True)
+    monkeypatch.setenv("MESH_THINGS_ALLOW_HTTP", "1")
+    MeshThings("http://registry-api:8090", "secret")

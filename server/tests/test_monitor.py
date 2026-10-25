@@ -423,7 +423,7 @@ def test_setup_creates_the_mesh_and_retries_a_taken_gateway_number(monkeypatch, 
     transport = httpx.MockTransport(handler)
     monkeypatch.setattr(
         monitor_setup, "MeshThings",
-        lambda url, key: MeshThings(url, key, http=httpx.Client(transport=transport)),
+        lambda url, key: MeshThings(url, key, http=httpx.Client(transport=transport), allow_insecure_http=True),
     )
     monitor_setup.setup("http://api.test", "k", "LongFast", accept_terms=False, with_sink=False)
 
