@@ -1,11 +1,10 @@
 #!/usr/bin/env python3
-"""Create an MQTT sink, change what it carries, or rotate its password.
+"""Create an MQTT sink, change what it delivers, or renew its password.
 
-A sink lets a third party subscribe, on this instance's broker, to the readings of the
-meshes and devices attached to it. Creating one accepts the current sink terms on the
-operator's behalf (--accept-terms, after reading them with --show-terms) and prints the
-credentials, which are not shown again. Needs an operator key. See
-docs/api-reference.md#sinks.
+A sink lets a service of your choice subscribe to the readings of the meshes and
+devices you attach to it, on this instance's broker. Creating one accepts the current
+sink terms on your behalf (read them first with --show-terms) and prints the
+credentials, which are shown only once. It needs the operator role.
 """
 import argparse
 import os
@@ -49,7 +48,7 @@ def main():
     args = parser.parse_args()
 
     if not args.api_key:
-        sys.exit("No API key - pass --api-key or set MESH_THINGS_API_KEY (see registry_create_owner.py)")
+        sys.exit("Please pass --api-key or set MESH_THINGS_API_KEY (see registry_create_owner.py).")
     api = MeshThings(API_URL, args.api_key)
 
     if args.rotate:
@@ -82,7 +81,7 @@ def main():
         print_terms(terms)
         return
     if terms is not None and not args.accept_terms:
-        sys.exit("Read the terms with --show-terms, then pass --accept-terms to create the sink")
+        sys.exit("Please read the terms with --show-terms, then pass --accept-terms to create the sink.")
 
     try:
         sink = api.sinks.create(body={**fields, **terms_fields(terms)})

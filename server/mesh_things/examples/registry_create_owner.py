@@ -1,7 +1,9 @@
 #!/usr/bin/env python3
-"""Create a new owner ("sign up"), accepting the account terms. Save the returned
-api_key - it is never shown again. Read the terms first with --show-terms. See
-../../../docs/api-reference.md#owners."""
+"""Create your account and receive your API key, after reading and accepting the account terms.
+
+Please keep the API key it prints somewhere safe: it is shown only once. Read the
+terms first with --show-terms.
+"""
 import argparse
 import getpass
 import os
@@ -37,9 +39,9 @@ def main():
             print_terms(terms)
         return
     if terms is not None and not args.accept_terms:
-        sys.exit("Read the terms with --show-terms, then pass --accept-terms to sign up")
+        sys.exit("Please read the terms with --show-terms, then pass --accept-terms to sign up.")
     if not args.name or not args.email:
-        sys.exit("--name and --email are required to sign up")
+        sys.exit("Please pass --name and --email to sign up.")
 
     owner = api.owners.create(body={
         "name": args.name, "email": args.email, "password": getpass.getpass("Password: "), **terms_fields(terms),

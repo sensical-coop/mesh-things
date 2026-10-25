@@ -1,10 +1,10 @@
 #!/usr/bin/env python3
-"""Export a mesh's readings over a range of days as one zip, wait for it, and download it.
+"""Export a mesh's readings over a range of days as one zip file, wait for it and download it.
 
-CSV covers every device, a file per measurement and day plus channels.csv with units.
-Parquet holds the archive's hourly files and needs the operator role. Days are UTC.
-Pass --dataframe to load a CSV export with pandas (needs mesh-things[pandas]).
-See docs/api-reference.md#exports.
+A CSV export covers every device, with one file per measurement and day, plus
+channels.csv with the units. A Parquet export contains the archive's hourly files and
+needs the operator role. Days are in UTC. Pass --dataframe to load a CSV export into
+pandas afterwards, which needs mesh-things[pandas].
 """
 import argparse
 import os
@@ -27,9 +27,9 @@ def main() -> None:
     parser.add_argument("--dataframe", action="store_true", help="print each measurement's frame after downloading")
     args = parser.parse_args()
     if not args.api_key:
-        sys.exit("No API key - pass --api-key or set MESH_THINGS_API_KEY")
+        sys.exit("Please pass --api-key or set MESH_THINGS_API_KEY.")
     if not args.mesh_id:
-        sys.exit("No mesh - pass --mesh-id or set MESH_ID")
+        sys.exit("Please pass --mesh-id or set MESH_ID.")
     api = MeshThings(API_URL, args.api_key)
 
     body = {"format": args.format, "start": args.start, "stop": args.stop}
@@ -38,7 +38,7 @@ def main() -> None:
     try:
         export = api.readings.meshes_exports_create(args.mesh_id, body=body)
     except ExportInProgress:
-        sys.exit("Another export of yours is queued or running; list them with api.readings.exports_list()")
+        sys.exit("One of your exports is still being prepared. Please wait for it to finish, or list your exports with api.readings.exports_list().")
     print(f"Export {export['id']} {export['status']}, waiting for it")
 
     try:

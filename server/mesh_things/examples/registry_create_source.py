@@ -1,10 +1,10 @@
 #!/usr/bin/env python3
-"""Create a source: a remote MQTT broker whose traffic this instance ingests.
+"""Create a source: a remote MQTT broker whose traffic this instance brings in.
 
-Accepts the current source terms on the operator's behalf (--accept-terms is
-required, after reading them with --show-terms). Needs an operator key; --grant-operator makes an owner one first, with a superuser
-key. Prints a SOURCE_ID to export for registry_attach_mesh_to_source.py. See
-docs/api-reference.md#sources.
+Creating one accepts the current source terms on your behalf, so please read them
+first with --show-terms. It needs the operator role. A superuser can grant the role in
+the same step with --grant-operator. The script prints a SOURCE_ID to use with
+registry_attach_mesh_to_source.py.
 """
 import argparse
 import os
@@ -40,9 +40,9 @@ def main():
     args = parser.parse_args()
 
     if not args.api_key:
-        sys.exit("No API key - pass --api-key or set MESH_THINGS_API_KEY (see registry_create_owner.py)")
+        sys.exit("Please pass --api-key or set MESH_THINGS_API_KEY (see registry_create_owner.py).")
     if args.grant_operator and not args.superuser_api_key:
-        sys.exit("--grant-operator needs --superuser-api-key or SUPERUSER_API_KEY")
+        sys.exit("Please pass --superuser-api-key or set SUPERUSER_API_KEY to use --grant-operator.")
 
     api = MeshThings(API_URL, args.api_key)
     terms = api.get_terms("sources", locale=args.locale)
@@ -53,9 +53,9 @@ def main():
         print_terms(terms)
         return
     if terms is not None and not args.accept_terms:
-        sys.exit("Read the terms with --show-terms, then pass --accept-terms to create the source")
+        sys.exit("Please read the terms with --show-terms, then pass --accept-terms to create the source.")
     if not args.server or not args.topic:
-        sys.exit("--server and --topic are required to create a source")
+        sys.exit("Please pass --server and --topic to create a source.")
 
     # Only once the create is known to be valid, so a terms-only or invalid run changes no role.
     if args.grant_operator:

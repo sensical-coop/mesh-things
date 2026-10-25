@@ -1,8 +1,8 @@
 #!/usr/bin/env python3
-"""List operator requests and approve or reject them, with a superuser key.
+"""List the requests for the operator role, and approve or reject them, with a superuser key.
 
-Approving makes the requester an operator, and the requester is emailed either
-decision. See docs/api-reference.md#requesting-the-role.
+Approving a request makes the requester an operator. The requester is emailed the
+decision either way.
 """
 import argparse
 import os
@@ -25,7 +25,7 @@ def main():
     args = parser.parse_args()
 
     if not args.api_key:
-        sys.exit("No API key - pass --api-key or set SUPERUSER_API_KEY")
+        sys.exit("Please pass --api-key or set SUPERUSER_API_KEY.")
     api = MeshThings(API_URL, args.api_key)
 
     if args.list:

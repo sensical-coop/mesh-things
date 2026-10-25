@@ -1,8 +1,8 @@
 #!/usr/bin/env python3
-"""Print who hears whom on a mesh: its radio links, longest first, and its newest traceroutes.
+"""Who hears whom on a mesh: its radio links, longest first, and its newest traceroutes.
 
-Names come from the mesh's device list. A public mesh needs no MESH_THINGS_API_KEY. See
-../../../docs/api-reference.md#radio-links-and-traceroutes.
+Device names come from the mesh's device list. A public mesh can be read without an
+API key.
 """
 import argparse
 import itertools

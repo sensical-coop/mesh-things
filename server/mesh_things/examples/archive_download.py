@@ -1,10 +1,10 @@
 #!/usr/bin/env python3
-"""Download one hour of a mesh's Parquet archive, with no S3 client at all.
+"""Download one hour of a mesh's Parquet archive, without any S3 client.
 
-readings answers with a redirect to a temporary link, which the client follows
-without forwarding the API key. Useful where SigV4 is not available, or to fetch
-a single known hour. Hours are UTC, and the list of what exists comes from the
-manifest route. See docs/api-reference.md#parquet-archive.
+The API answers with a temporary link to the file, which the client follows without
+sending your API key. This is useful where you cannot use S3 credentials, or when you
+only need one known hour. Hours are in UTC, and the script lists the hours that exist
+before downloading. Leave out --day and --hour to get the latest one.
 """
 import argparse
 import os
@@ -24,9 +24,9 @@ def main() -> None:
     parser.add_argument("--out", help="Output file. Defaults to <day>-<hour>.parquet.")
     args = parser.parse_args()
     if not args.api_key:
-        sys.exit("No API key - pass --api-key or set MESH_THINGS_API_KEY")
+        sys.exit("Please pass --api-key or set MESH_THINGS_API_KEY.")
     if not args.mesh_id:
-        sys.exit("No mesh - pass --mesh-id or set MESH_ID")
+        sys.exit("Please pass --mesh-id or set MESH_ID.")
     if (args.day is None) != (args.hour is None):
         parser.error("--day and --hour go together")
     api = MeshThings(API_URL, args.api_key)
@@ -35,7 +35,7 @@ def main() -> None:
     print(f"{len(partitions)} hour(s) archived")
     if args.day is None:
         if not partitions:
-            sys.exit("Nothing archived yet")
+            sys.exit("Nothing has been archived for this mesh yet.")
         args.day, args.hour = partitions[-1]["dt"], partitions[-1]["hour"]
 
     out = api.download_partition(args.mesh_id, args.day, args.hour, args.out or f"{args.day}-{args.hour:02d}.parquet")

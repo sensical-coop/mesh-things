@@ -48,8 +48,7 @@ DETECTOR_CHOICES = [(name, name) for name in sorted(MEASUREMENT_DETECTORS)]
 
 
 def enabled_detectors_for(override: list[str] | None, catalog_default: list[str] | None) -> set[str]:
-    """`None` inherits the catalog default, `[]` means none - the same
-    distinction the interval fields make."""
+    """Return the detectors in force: `None` inherits the catalog default, and `[]` means none."""
     chosen = override if override is not None else catalog_default
     return set(chosen or ())
 

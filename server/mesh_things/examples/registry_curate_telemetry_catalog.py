@@ -1,24 +1,19 @@
 #!/usr/bin/env python3
-"""Curate quality config: a telemetry variant's default reading interval and
-default detectors (catalog-wide, superuser-only), and one device's range
-bounds (valid_min/valid_max, set by the mesh owner).
+"""Fine-tune the data quality checks: reporting intervals and plausible ranges.
 
-This is live config, not just documentation: every edit publishes to
-mesh.quality_config.v1, which the Flink quality checks hold as broadcast
-state. The interval sizes the flat-value window and feeds the completeness
-check; the range bounds drive the range check. See ../../../docs/data-quality.md.
+You can set two kinds of values:
 
-Range is deliberately per-device rather than catalog-wide - one device's
-plausible range for a channel can differ from another's reporting the same
-field - so --range-min/--range-max need --device-uuid, while the catalog
-options apply to every device reporting that telemetry variant.
+  for a kind of telemetry   how often devices usually report it, shared by every
+                            device (superusers only)
+  for one of your devices   the plausible range of one of its measurements, for the
+                            range check (the mesh's owner)
 
-Catalog rows themselves are pre-seeded from the Meshtastic protobuf schema
-when the registry_api container starts, not created here - this script only
-edits the ones that already exist. TelemetryVariant is keyed by wire-format
-message type (e.g. "telemetry:environment_metrics"), NOT verified hardware -
-a variant can be produced by several different chips. Catalog writes are
-superuser-only, see ../../../docs/architecture.md#sensor--measurement-catalog."""
+The checks use these values as soon as you save them. The range is set per device
+because the same measurement can have a different plausible range on different devices.
+
+The catalog itself is filled in by the instance from the Meshtastic definitions, so
+this script only edits entries that already exist.
+"""
 import argparse
 import os
 import sys
@@ -75,16 +70,16 @@ def main():
     setting_range = args.range_min is not None or args.range_max is not None
 
     if not args.api_key:
-        sys.exit("No API key - pass --api-key or set MESH_THINGS_API_KEY")
+        sys.exit("Please pass --api-key or set MESH_THINGS_API_KEY.")
     if not args.list and args.default_reading_interval_seconds is None and not setting_range:
         sys.exit(
             "Nothing to do - pass --list, --default-reading-interval-seconds, and/or "
             "--device-uuid and --field-name with --range-min/--range-max"
         )
     if setting_range and (args.range_min is None or args.range_max is None):
-        sys.exit("--range-min and --range-max must be given together")
+        sys.exit("Please give --range-min and --range-max together.")
     if setting_range and (args.device_uuid is None or args.field_name is None):
-        sys.exit("--range-min/--range-max require --device-uuid and --field-name")
+        sys.exit("Please pass --device-uuid and --field-name with --range-min and --range-max.")
 
     api = MeshThings(API_URL, args.api_key)
     telemetry_variant = find_telemetry_variant(api, args.payload_kind)
@@ -114,7 +109,7 @@ def main():
 
     if setting_range:
         measurement = find_device_measurement(api, args.device_uuid, args.payload_kind, args.field_name)
-        # valid_min/valid_max are always sent together - the API rejects one alone.
+        # valid_min/valid_max are always sent together, because the API rejects one alone.
         measurement = api.devices.measurements_update(
             args.device_uuid, measurement["id"], body={"valid_min": args.range_min, "valid_max": args.range_max},
         )

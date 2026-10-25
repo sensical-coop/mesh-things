@@ -1,9 +1,8 @@
 #!/usr/bin/env python3
-"""Print a mesh's traffic stats: totals, traffic by type, busiest nodes, gateways, overlap, relays and hops.
+"""A summary of a mesh's radio traffic: totals, packets by type, the busiest nodes, gateways and hops.
 
-Names are not in the stats response, so they are joined from the registry's
-device list. A public mesh needs no MESH_THINGS_API_KEY. See
-../../../docs/api-reference.md#mesh-traffic-stats.
+The statistics refer to devices by number, so the script adds their names from the
+mesh's device list. A public mesh can be read without an API key.
 """
 import argparse
 import os

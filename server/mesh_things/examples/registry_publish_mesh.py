@@ -1,9 +1,10 @@
 #!/usr/bin/env python3
-"""Make a mesh public, then show that publishing widens reads only.
+"""Make a mesh public, then show what that does and does not allow.
 
-Publishes the mesh, reads it and its devices' latest readings without
-credentials, optionally reads it as another owner and fails a write as that
-owner, and makes it private again. See docs/api-reference.md#public-meshes.
+The script publishes the mesh and reads it, its devices and their latest readings
+without any key. With --reader-api-key, it also reads the mesh as another owner and
+shows that this owner cannot change it. Finally, it makes the mesh private again,
+unless you pass --keep.
 """
 import argparse
 import os
@@ -54,9 +55,9 @@ def main():
     args = parser.parse_args()
 
     if not args.api_key:
-        sys.exit("No API key - pass --api-key or set MESH_THINGS_API_KEY (see registry_create_owner.py)")
+        sys.exit("Please pass --api-key or set MESH_THINGS_API_KEY (see registry_create_owner.py).")
     if not args.mesh_id:
-        sys.exit("No mesh - pass --mesh-id or set MESH_ID (see registry_create_mesh.py)")
+        sys.exit("Please pass --mesh-id or set MESH_ID (see registry_create_mesh.py).")
 
     owner = MeshThings(API_URL, args.api_key)
     owner.meshes.update(args.mesh_id, body={"is_public": True})

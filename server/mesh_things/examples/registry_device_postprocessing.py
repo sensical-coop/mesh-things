@@ -1,14 +1,14 @@
 #!/usr/bin/env python3
-"""Attach a blueprint to a device, calibrate it, enable it and backfill history.
+"""Attach a blueprint to a device, calibrate it, switch it on and compute past values.
 
-  attach     bind the blueprint's slots to the device's channels (default channels
-             bind on their own) and register its derived channels
-  calibrate  record a step's calibration, in force from --valid-from onwards
-  enable     start running it on live telemetry
-  backfill   recompute stored history, stored like live values but never alarmed on
-  show       print the device's postprocessings, what blocks them, and their backfills
+  attach     connect the blueprint's inputs to the device's channels and add the
+             channels it produces
+  calibrate  record the calibration of one step, in force from --valid-from onwards
+  enable     start computing values from live readings
+  backfill   compute values for past readings too (these never raise alarms)
+  show       list the device's postprocessings, anything blocking them, and their backfills
 
-Typical sequence for the NO2 example of registry_manage_blueprint.py:
+A typical sequence, for the NO2 example of registry_manage_blueprint.py:
 
   python3 registry_device_postprocessing.py attach --device-uuid <uuid> --blueprint-id <id>
   python3 registry_device_postprocessing.py calibrate --device-uuid <uuid> --postprocessing-id <id> \\
@@ -16,8 +16,6 @@ Typical sequence for the NO2 example of registry_manage_blueprint.py:
   python3 registry_device_postprocessing.py enable --device-uuid <uuid> --postprocessing-id <id>
   python3 registry_device_postprocessing.py backfill --device-uuid <uuid> --postprocessing-id <id> \\
       --start 2026-09-01
-
-See ../../../docs/data-quality.md#postprocessing.
 """
 import argparse
 import json
@@ -60,7 +58,7 @@ def main():
     args = parser.parse_args()
 
     if not args.api_key:
-        sys.exit("No API key - pass --api-key or set MESH_THINGS_API_KEY")
+        sys.exit("Please pass --api-key or set MESH_THINGS_API_KEY.")
     try:
         run(MeshThings(API_URL, args.api_key).devices, args)
     except ApiError as e:

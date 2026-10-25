@@ -1,6 +1,9 @@
 #!/usr/bin/env python3
-"""Register a gateway Device against a Mesh - the step that authorizes decoding
-for it. See docs/architecture.md#registered-gateways-only-gate."""
+"""Register a gateway on a mesh, the node that relays the mesh's traffic to the broker.
+
+Registering a gateway is what allows the instance to decode the mesh's traffic. The
+mesh's other nodes appear on their own once their packets are decoded.
+"""
 import argparse
 import os
 import sys
@@ -19,9 +22,9 @@ def main():
     args = parser.parse_args()
 
     if not args.api_key:
-        sys.exit("No API key - pass --api-key or set MESH_THINGS_API_KEY (see registry_create_owner.py)")
+        sys.exit("Please pass --api-key or set MESH_THINGS_API_KEY (see registry_create_owner.py).")
     if not args.mesh_id:
-        sys.exit("No mesh - pass --mesh-id or set MESH_ID (see registry_create_mesh.py)")
+        sys.exit("Please pass --mesh-id or set MESH_ID (see registry_create_mesh.py).")
 
     gateway = MeshThings(API_URL, args.api_key).devices.create(body={
         "node_id": args.node_id, "mesh_id": args.mesh_id, "is_gateway": True, "label": args.label,

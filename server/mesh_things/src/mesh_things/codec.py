@@ -102,7 +102,7 @@ def routing_fields(mp: mesh_pb2.MeshPacket) -> dict:
 def decode_message(raw: bytes, key_bytes: bytes | None) -> dict | None:
     """Parse, decrypt (if needed), decode, and shape the output.
 
-    Returns None if the message can't be decrypted, has an unknown
+    Returns None if the message cannot be decrypted, has an unknown
     portnum, or has no protobuf schema for that portnum.
     """
     se = parse_envelope(raw)

@@ -1,12 +1,12 @@
 #!/usr/bin/env python3
-"""Switch gateway discovery on or off for a mesh, and list the gateways it found.
+"""Switch gateway discovery on or off for a mesh, and list the gateways it has found.
 
-With discovery on, any gateway whose packets decode with the mesh's channel and PSK is
-registered without being added by hand. On a mesh with the default or a blank PSK only
-an operator may switch it on (403 otherwise).
+With discovery on, any gateway whose packets decode with the mesh's channel and key is
+registered for you. On a mesh that uses the default key, or no key, only an operator
+can switch it on.
 
   python3 registry_discover_gateways.py <mesh id> --on --wait 120
-  python3 registry_discover_gateways.py <mesh id>          # just list
+  python3 registry_discover_gateways.py <mesh id>          # only list them
   python3 registry_discover_gateways.py <mesh id> --off
 """
 import argparse
@@ -31,7 +31,7 @@ def main():
     args = parser.parse_args()
 
     if not args.api_key:
-        sys.exit("No API key - pass --api-key or set MESH_THINGS_API_KEY")
+        sys.exit("Please pass --api-key or set MESH_THINGS_API_KEY.")
     api = MeshThings(API_URL, args.api_key)
 
     if args.on or args.off:

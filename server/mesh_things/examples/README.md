@@ -1,235 +1,222 @@
 # mesh-things examples
 
-Small, standalone scripts against the running API (`docker compose up`, or point
-`MESH_THINGS_URL` at wherever it is actually deployed). Each script is independent -
-copy-paste whichever one you need. They all go through the
-[mesh-things client](../README.md), so none of them builds a URL or a header by hand,
-and they are shipped with the package's source distribution. For the full endpoint
-reference (every route, status code, and curl equivalent) see
-[../../../docs/api-reference.md](../../../docs/api-reference.md).
+These are small scripts that show how to use the [mesh-things package](../README.md) with the API: from reading your meshes and their readings, to setting up a mesh, sharing data with others and working with the archive. Each script is independent, so you can copy whichever one you need and adapt it to your own project. They are also included in the package's source distribution.
+
+For a description of every operation, its parameters and its responses, you can open the interactive API documentation at `/docs` on your instance, for example `http://localhost/docs`.
+
+## Before you start
+
+You will need Python 3.10 or newer. To install the package with everything the examples use:
 
 ```bash
-pip install "mesh-things[pandas,archive]" duckdb   # or, from this repository:
+pip install "mesh-things[pandas,archive]" duckdb
+# or, from this repository:
 pip install -e "..[pandas,archive]" duckdb
 ```
 
-Env vars:
-- `MESH_THINGS_URL` (default `http://localhost`, the gateway that serves both roles).
-- `MESH_THINGS_API_KEY`, read by every script that needs auth, so you only have to
-  export it once.
-- `SUPERUSER_API_KEY`, for the superuser-only scripts.
+The scripts read their settings from these environment variables, so you only need to set them once:
 
-The MQTT tools some walkthroughs below pair with (a fake gateway, a sink consumer) are
-not API clients, so they live in the repository's
-[server/examples/](../../examples/README.md).
+| Variable | What it is |
+|---|---|
+| `MESH_THINGS_URL` | The address of your instance. Defaults to `http://localhost`, a local stack started with `docker compose`. |
+| `MESH_THINGS_API_KEY` | Your API key. You receive it when you sign up with `registry_create_owner.py`. |
+| `SUPERUSER_API_KEY` | A superuser's key, only needed for the few scripts that manage the instance. |
 
-## Registry role
+Some walkthroughs below also use two tools that are not API clients, a fake gateway and a sink consumer. They live in the repository's [server/examples/](../../examples/README.md) folder.
 
-A Mesh holds the shared channel_id + psk_b64 for a physical Meshtastic network. A
-Device is always exactly one role: a gateway (a specific node registered against
-the mesh that actually relays MQTT traffic - registering one is what starts
-decoding, the rest of that mesh's devices need no registration of their own) or a
-node (auto-discovered on first successful decode, or pre-registerable to set admin
-keys in advance). See
-[../../../docs/architecture.md#registered-gateways-only-gate](../../../docs/architecture.md#registered-gateways-only-gate)
-and
-[../../../docs/architecture.md#device-registration-and-the-is_allowed-gate](../../../docs/architecture.md#device-registration-and-the-is_allowed-gate).
+## Reading data
 
-`psk_b64` and `admin_keys_b64` are "password fields": only the resource's owner and
-superusers see them in a response (see
-[../../../docs/architecture.md#password-fields-psk_b64-admin_keys_b64-and-the-superuser-role](../../../docs/architecture.md#password-fields-psk_b64-admin_keys_b64-and-the-superuser-role)).
+These scripts only read from the API, so they are a safe way to explore. We suggest starting with `get_started.py`, which gives you an overview of your account.
 
 ```bash
-# 1. Create an owner ("sign up") - prints a MESH_THINGS_API_KEY to export
-# On an instance with REGISTRY__TERMS_ENFORCED=false there are no terms: skip
-# --show-terms and --accept-terms.
-python3 registry_create_owner.py --show-terms      # signing up accepts these
-python3 registry_create_owner.py --accept-terms --name "Alice" --email alice@example.com
-export MESH_THINGS_API_KEY=...  # from the output above
+# Your account, your meshes, their devices and what each device reported last
+python3 get_started.py
 
-# 2. Register a mesh under that owner (the shared channel_id + psk_b64) - prints a
-#    MESH_ID to export
-python3 registry_create_mesh.py --show-terms          # a mesh has its own terms
-python3 registry_create_mesh.py --accept-terms --channel-id LongFast
-export MESH_ID=...  # from the output above
+# The latest value of every channel on a mesh, with units, optionally as a DataFrame
+python3 get_latest_readings.py --mesh-id <mesh id>
+python3 get_latest_readings.py --mesh-id <mesh id> --dataframe
 
-# 3. Register a gateway against that mesh ("this node relays traffic for this mesh") -
-#    this is the step that actually authorizes decoding
-python3 registry_create_gateway.py --node-id 111222333 --label "office gateway"
-#    ... or let the mesh find its gateways: any gateway whose packets decode with
-#    its channel and PSK is registered automatically (operator-only on a default or
-#    blank PSK). --wait keeps polling and prints each one as it appears.
-python3 registry_discover_gateways.py $MESH_ID --on --wait 300
-#    ... or promote a node that is already registered (and --node to demote it again)
-python3 registry_device_role.py --device-uuid <device_uuid>
+# How well a device is reporting: completeness, gaps, alarms and radio traffic
+python3 get_device_health.py --device-uuid <device uuid> --start -7d --range 7d
 
-# 4. Edit the mesh (partial update - only what you pass changes; rotating the PSK
-#    republishes every gateway on this mesh with the new key)
-python3 registry_update_mesh.py $MESH_ID --label "home mesh"
+# What the instance knows: telemetry types, measurements and units, detectors, algorithms
+python3 get_catalog.py
 
-# 5. Give the gateway node an admin key too (Meshtastic's Config.SecurityConfig.admin_key,
-#    for remote node control - unrelated to the gateway decode gate).
-#    --admin-key-b64 sets the node's *full* key list, not an addition -
-#    admin_keys_b64 is write-only, so there's nothing to read back and append to.
-#    Repeat the flag for more than one key.
-python3 registry_add_admin_key.py --node-id 111222333 --admin-key-b64 QUFBQQ==
-
-# 6. List owners (public) and this owner's meshes and gateways
-python3 registry_list_owners_meshes_and_gateways.py
-
-# 7. Make this mesh public, then private again. Publishing widens reads only -
-#    anyone, with or without an API key, can read the mesh, its devices and
-#    their latest readings, but never edit them or see psk_b64. Pass
-#    --reader-api-key to watch another owner's write get refused.
-python3 registry_publish_mesh.py --reader-api-key <other owner's key>
+# What anyone can read without an API key
+python3 get_public_meshes.py
 ```
 
-### Sources (remote MQTT brokers)
-
-A source bridges a remote broker's topic into this instance, so a mesh whose
-gateways publish elsewhere is ingested like any other. Every source route needs an
-operator key, and operators only see and attach meshes to the sources they created. See
-[../../../docs/api-reference.md#sources](../../../docs/api-reference.md#sources).
+To look at readings over time, `readings.py` walks through the devices you have registered, the channels they report, their values over a range of time and their latest values. Add `--dataframe` to see the values as a pandas DataFrame:
 
 ```bash
-# 0. Become an operator: file a request, a superuser approves it
-python3 registry_request_operator.py --reason 'I run the regional broker'
-python3 registry_decide_operator_request.py --list            # superuser key
-python3 registry_decide_operator_request.py --approve <request id>
-python3 registry_request_operator.py --status                 # now approved
+python3 readings.py --lookback=-7d
+python3 readings.py --lookback=-7d --dataframe
+python3 readings.py --lookback=-7d --mesh-id <mesh id> --node-id 111222333
+```
 
-# 1. As an operator (--grant-operator promotes an owner first, with a superuser key)
-python3 registry_create_source.py --show-terms          # read the terms first
+> **Note**
+> Please write `--lookback=-7d` with the `=` sign. Without it, `-7d` is read as a separate option instead of as a value.
+
+The last example addresses a device by its mesh and node number rather than by its registration. This reaches devices that report readings but have never been registered.
+
+Computed channels can be read in exactly the same way. These include the outputs of postprocessing (`derived`), data quality (`quality`) and the alarms that were raised (`alarms`):
+
+```python
+from mesh_things.client import MeshThings
+
+api = MeshThings()
+dew_point = api.readings.devices_get(device_uuid, channel="derived.dew_point", start="-7d", window="1h", agg="mean")
+completeness = api.readings.devices_get(device_uuid, channel="quality.completeness_ratio", start="-7d")
+alarms = api.readings.devices_get(device_uuid, channel="alarms.message", start="-7d")
+```
+
+Individual alarms are kept for 30 days. Totals per detector for longer periods come from `get_device_health.py`.
+
+### Mesh traffic and topology
+
+`mesh_stats.py` summarises a mesh's radio traffic: totals, packets by type, the busiest nodes, each gateway's share and signal, and how many hops packets took. `registry_mesh_topology.py` shows who hears whom: the radio links between nodes, longest first, followed by the newest traceroutes. A public mesh can be read without an API key.
+
+```bash
+python3 mesh_stats.py --mesh-id <mesh id> --range 7d
+python3 registry_mesh_topology.py --mesh-id <mesh id> --since 7d
+python3 registry_mesh_topology.py --mesh-id <mesh id> --node-id '!334af480'
+```
+
+## Setting up a mesh
+
+A mesh holds the channel name and key that every device on your Meshtastic network shares. Each device on it is either a gateway, a node that relays traffic to the broker, or a regular node. Registering a gateway is what allows the instance to decode a mesh's traffic. The other nodes appear on their own the first time one of their packets is decoded.
+
+The channel key (`psk_b64`) and the devices' admin keys (`admin_keys_b64`) are only shown to the mesh's owner and to superusers.
+
+```bash
+# 1. Create your account. This prints an API key to export.
+#    If your instance does not ask for terms, you can leave out --show-terms and --accept-terms.
+python3 registry_create_owner.py --show-terms
+python3 registry_create_owner.py --accept-terms --name "Alice" --email alice@example.com
+export MESH_THINGS_API_KEY=...
+
+# 2. Create a mesh with your channel name and key. This prints a mesh id to export.
+python3 registry_create_mesh.py --show-terms
+python3 registry_create_mesh.py --accept-terms --channel-id LongFast
+export MESH_ID=...
+
+# 3. Register the gateway that relays this mesh's traffic. This is what starts decoding.
+python3 registry_create_gateway.py --node-id 111222333 --label "office gateway"
+
+#    Alternatively, let the mesh find its gateways on its own. Any gateway whose packets
+#    decode with the mesh's key is registered automatically. --wait keeps listening and
+#    prints each gateway as it appears.
+python3 registry_discover_gateways.py $MESH_ID --on --wait 300
+
+#    You can also turn a registered node into a gateway, or back into a node with --node.
+python3 registry_device_role.py --device-uuid <device uuid>
+
+# 4. Change the mesh. Only the values you pass are changed. A new key is sent to every
+#    gateway on the mesh.
+python3 registry_update_mesh.py $MESH_ID --label "home mesh"
+
+# 5. Give a node its admin keys, for remote administration in Meshtastic. The keys you
+#    pass replace the node's whole list, so repeat --admin-key-b64 for each key it needs.
+python3 registry_add_admin_key.py --node-id 111222333 --admin-key-b64 QUFBQQ==
+
+# 6. List the owners on the instance, and your own meshes and gateways
+python3 registry_list_owners_meshes_and_gateways.py
+
+# 7. Make the mesh public, then private again. Anyone can then read the mesh, its devices
+#    and their latest readings, but nobody else can change them or see the channel key.
+#    Pass --reader-api-key to see another owner's change being refused.
+python3 registry_publish_mesh.py --reader-api-key <another owner's key>
+```
+
+## Bringing in a remote broker (sources)
+
+A source brings the traffic of a topic on another MQTT broker into this instance. This is useful when a mesh's gateways already publish to a broker of their own. Creating a source needs the operator role, and you can only attach your meshes to the sources you created.
+
+```bash
+# 1. Ask for the operator role. A superuser approves the request.
+python3 registry_request_operator.py --reason "I run the regional broker"
+python3 registry_decide_operator_request.py --list            # with a superuser key
+python3 registry_decide_operator_request.py --approve <request id>
+python3 registry_request_operator.py --status
+
+# 2. Create the source, after reading its terms. A superuser can grant the role in the same step.
+python3 registry_create_source.py --show-terms
 python3 registry_create_source.py --accept-terms --server mqtt.meshtastic.org:1883 --no-ssl \
   --username meshdev --password large4cats --topic 'msh/EU_868/2/e/LongFast/#' \
-  --grant-operator <owner uuid> --superuser-api-key $SUPERUSER_API_KEY
-export SOURCE_ID=...  # from the output above
+  --grant-operator <owner id> --superuser-api-key $SUPERUSER_API_KEY
+export SOURCE_ID=...
 
-# 2. As the mesh owner: point the mesh at it, then register gateways as usual
+# 3. Attach your mesh to the source, then register its gateways as usual
 python3 registry_attach_mesh_to_source.py
 ```
 
-To test a source in development, publish fake readings to its broker as one of the
-mesh's gateways. The packets are real Meshtastic protobufs, encrypted with the mesh's
-key (`AQ==`, Meshtastic's default, unless `--psk-b64` says otherwise), carrying
-`environment_metrics`. Use a test broker, never a public one. The topic must sit under
-the source's topic filter, and the gateway must be registered on a mesh attached to it,
-or the instance drops the packets as it would a stranger's.
+To try a source during development, you can publish fake readings to its broker as one of the mesh's gateways. The packets are real Meshtastic messages, encrypted with the mesh's key. Please use a test broker for this, never a public one.
 
 ```bash
-# Register the fake gateway on the attached mesh (created with --psk-b64 AQ==)
-python3 registry_create_gateway.py --node-id 439041101      # !1a2b3c4d
-
-# Then publish as it: 10 readings, one every 5 seconds, to msh/EU_868/2/e/LongFast/!1a2b3c4d
+python3 registry_create_gateway.py --node-id 439041101      # the gateway !1a2b3c4d
 python3 ../../examples/source_publish_fake.py --broker test-broker.example.org:8883 \
   --username dev --password ... --topic-prefix msh/EU_868/2/e --channel LongFast \
   --gateway-id '!1a2b3c4d' --count 10 --interval 5
-
-# Another node relayed by that gateway, around 30 C; --count 0 runs until Ctrl-C
-python3 ../../examples/source_publish_fake.py --broker localhost:1883 --no-ssl \
-  --gateway-id '!1a2b3c4d' --node-id 123456789 --temperature 30 --count 0
 ```
 
-They show up as any reading does:
-`python3 readings.py --device-uuid <device uuid> --payload-kind telemetry:environment_metrics`.
+The readings then appear like any others, for example with `readings.py`.
 
-### Sinks (third parties subscribing to readings)
+## Sharing data with others (sinks)
 
-A sink lets a service you choose subscribe to the readings of your meshes and devices on
-this instance's broker, as JSON, with credentials only it holds. Every sink route needs
-an operator key, and only meshes owned by an operator can be attached. The credentials
-are shown once, on creation and on rotation. See
-[../../../docs/api-reference.md#sinks](../../../docs/api-reference.md#sinks).
+A sink lets a service of your choice subscribe to the readings of your meshes and devices, as JSON, on this instance's broker. The service receives its own credentials, which are shown only once, when the sink is created or its password is renewed. Creating a sink needs the operator role.
 
 ```bash
-# 1. As an operator: read the terms, then create a sink on a whole mesh
+# 1. Create a sink for a whole mesh, after reading its terms
 python3 registry_create_sink.py --show-terms
 python3 registry_create_sink.py --accept-terms --label "Partner" \
   --stream decoded --stream alarms --mesh-id $MESH_ID
-export SINK_ID=...  # and hand the printed broker, username, password and topic filter over
+export SINK_ID=...   # then share the broker, username, password and topic filter it printed
 
-# Narrow it to one device, or change what it carries (lists replace the current ones)
-python3 registry_create_sink.py --update $SINK_ID --mesh-id "" --device-uuid <device_uuid>
-python3 registry_create_sink.py --rotate $SINK_ID        # new password, consumer disconnected
+# Limit it to one device, or renew its password (which disconnects the current consumer)
+python3 registry_create_sink.py --update $SINK_ID --mesh-id "" --device-uuid <device uuid>
+python3 registry_create_sink.py --rotate $SINK_ID
 
-# 2. As the third party: subscribe with the credentials, no API key needed
+# 2. The service subscribes with those credentials. It needs no API key.
 SINK_BROKER=mqtt.example.org:8883 SINK_USERNAME=... SINK_PASSWORD=... \
 SINK_TOPIC_FILTER='mt-sources-sinks/<sink id>/#' python3 ../../examples/sink_consume.py
 ```
 
-To test a sink, count what it delivers instead. It prints a running total and a summary
-per stream, node and payload kind; `--expect` exits 1 if fewer arrive in `--duration`.
-Give it its own `--client-id`: the broker disconnects any other client using the same one.
+To check a sink, `sink_count.py` counts what it delivers and prints a summary. With `--expect`, it exits with an error when fewer messages arrive than expected.
+
+## The measurement catalog
+
+The catalog describes what devices can report: the kinds of telemetry and the measurements in each, with their units. It is shared by every owner, and the instance fills it in from the Meshtastic definitions when it starts. Superusers can complete it, for example with a telemetry type's usual reporting interval. Owners can set the plausible range of a measurement on each of their devices.
 
 ```bash
-SINK_BROKER=mqtt.example.org:8883 SINK_USERNAME=... SINK_PASSWORD=... \
-SINK_TOPIC_FILTER='mt-sources-sinks/<sink id>/#' python3 ../../examples/sink_count.py --duration 300
-
-# Paired with source_publish_fake.py: 10 readings published, 10 expected within 2 minutes
-python3 ../../examples/sink_count.py --expect 10 --duration 120
-```
-
-`--mesh-id ""` sends an empty list, which detaches every mesh; `--device-uuid ""` does the same for devices.
-
-### Sensor / measurement catalog
-
-`TelemetryVariant`/`MeasurementType` (what a device *can* report) are global,
-shared catalogs pre-seeded from the Meshtastic protobuf schema whenever the
-`registry_api` container starts (not from these scripts - they only edit rows that
-already exist).
-`TelemetryVariant` is keyed by wire-format message type (e.g.
-`telemetry:environment_metrics`), **not** verified physical hardware - one
-variant can be produced by several different chips, so `name`/`model`/
-`datasheet_url` are only an optional curated "commonly this chip" hint. A
-third table, `TelemetryVariantMeasurement`, links the two and carries which
-detectors default on per field. Catalog writes below require a superuser
-key - see
-[../../../docs/architecture.md#device-telemetry-variant--measurement-catalog](../../../docs/architecture.md#device-telemetry-variant--measurement-catalog).
-
-```bash
-# List every field linked to a telemetry variant, and its catalog defaults
+# The measurements of a telemetry type, and their defaults
 python3 registry_curate_telemetry_catalog.py --api-key $SUPERUSER_API_KEY \
   --payload-kind telemetry:environment_metrics --list
 
-# Set the telemetry variant's expected reporting interval (seconds) - a firmware
-# ModuleConfig fact, not derivable from the protobuf schema, so seeding always
-# leaves it null
+# How often devices usually report this kind of telemetry, in seconds (superusers)
 python3 registry_curate_telemetry_catalog.py --api-key $SUPERUSER_API_KEY \
   --payload-kind telemetry:environment_metrics --default-reading-interval-seconds 900
 
-# Set the range bounds for one field on one device. Unlike the two above this is
-# per-device, not catalog-wide, so it's the mesh owner's key rather than a
-# superuser's - one device's plausible range can differ from another's on the
-# same field.
-python3 registry_curate_telemetry_catalog.py --api-key $MESH_THINGS_API_KEY \
+# The plausible range of one measurement on one of your devices
+python3 registry_curate_telemetry_catalog.py \
   --payload-kind telemetry:environment_metrics --device-uuid <device uuid> \
   --field-name temperature --range-min -40 --range-max 85
 ```
 
-These bounds and intervals aren't just documentation: editing them publishes to
-`mesh.quality_config.v1`, which is what tunes the live data-quality checks - see
-[../../../docs/architecture.md#data-quality-checks](../../../docs/architecture.md#data-quality-checks).
+These values are not only descriptive: the data quality checks use them as soon as you save them.
 
-### Postprocessing
+## Postprocessing
 
-A **blueprint** is a reusable recipe: the input slots it reads and ordered steps,
-each running an algorithm from `common/algorithms/`. A step takes its inputs from
-a slot or from an earlier step's output, so `ADC -> ppb -> ug/m3` is two chained
-steps. **Attaching** it to a device binds the slots to that device's channels and
-gives it the device's own **calibration**, because two sensors of the same build
-never share their sensitivity. It then runs on live telemetry in the Flink tier,
-and a **backfill** recomputes stored history. See
-[../../../docs/data-quality.md#postprocessing](../../../docs/data-quality.md#postprocessing).
+A blueprint is a reusable recipe that turns raw readings into new values, for example a sensor's voltage into a gas concentration. It lists the channels it reads and the steps it runs, each step using one of the instance's algorithms. When you attach a blueprint to a device, you also give it that device's own calibration, since no two sensors are exactly alike. The results are computed live, and a backfill can compute them for past readings too.
 
 ```bash
-# What's available, and which parameters are per-device calibration
+# The algorithms available, and which of their parameters are calibration
 python3 registry_manage_blueprint.py --list-algorithms
 
-# Create the built-in NO2 example, or supply your own JSON
+# Create the built-in NO2 example, or your own from a JSON file
 python3 registry_manage_blueprint.py
 python3 registry_manage_blueprint.py --blueprint-file my_blueprint.json
 
-# Attach it, calibrate the ppb step, enable, and recompute history
+# Attach it to a device, calibrate it, switch it on, and compute past values
 python3 registry_device_postprocessing.py attach --device-uuid <device uuid> --blueprint-id <blueprint id>
 python3 registry_device_postprocessing.py calibrate --device-uuid <device uuid> --postprocessing-id <id> \
     --step ppb --params '{"sensitivity": 0.42, "working_zero": 220.0}'
@@ -238,174 +225,65 @@ python3 registry_device_postprocessing.py backfill --device-uuid <device uuid> -
 python3 registry_device_postprocessing.py show --device-uuid <device uuid>
 ```
 
-To add your own algorithm, drop a decorated function into a module under
-`server/common/algorithms/`, declaring its parameters with `Param`
-and marking the per-sensor ones `calibration=True`. Registry imports the same
-registry, so a step naming an unknown function, mis-binding an input or setting
-a calibration parameter is rejected with a `400` when written.
-
-Derived channels are registered on the device when the blueprint is attached,
-under the flat `derived` payload_kind, so they can be given units and range
-bounds exactly like real sensor fields:
-
-```bash
-# Everything this device produces - measured, derived and quality channels,
-# each tagged with an `origin` so you can tell them apart
-curl -s -H "Authorization: Bearer $MESH_THINGS_API_KEY" \
-  http://localhost:8090/devices/<device id>/measurements
-
-# Just the computed ones
-curl -s -H "Authorization: Bearer $MESH_THINGS_API_KEY" \
-  "http://localhost:8090/measurements?kind=computed"
-curl -s -H "Authorization: Bearer $MESH_THINGS_API_KEY" \
-  "http://localhost:8090/measurements?payload_kind=computed:quality"
-```
-
-### Superuser
-
-Not an example script - superuser is granted via a CLI command run inside the
-`registry_api` container, not through the API (there's no route for it,
-deliberately):
-
-```bash
-docker compose exec registry_api python manage.py createsuperuser \
-  --email you@example.com --name "You"
-```
-
-A superuser sees and manages every owner's meshes/devices, `psk_b64` and
-`admin_keys_b64` included - see
-[../../../docs/api-reference.md#superuser](../../../docs/api-reference.md#superuser).
-
-### Browsing GET routes in a browser
-
-A browser address bar can't send an `Authorization` header, so authenticated `GET`
-routes also accept the key as an `?access_token=` query param (checked only when no
-header is present). Paste a URL like this straight into a browser tab:
-
-```
-http://localhost:8090/owners/me?access_token=<your MESH_THINGS_API_KEY>
-http://localhost:8090/meshes?access_token=<your MESH_THINGS_API_KEY>
-http://localhost:8090/devices?access_token=<your MESH_THINGS_API_KEY>
-```
-
-Prefer the `Authorization` header (as every script above does) for anything scripted -
-query-string tokens end up in browser history and server access logs. See
-[../../../docs/api-reference.md#browsing-get-routes-directly-from-a-browser-address-bar](../../../docs/api-reference.md#browsing-get-routes-directly-from-a-browser-address-bar).
-
-## Readings role
-
-Requires `MESH_THINGS_API_KEY` - readings checks the key is valid with registry and scopes
-results to that owner's own devices (a superuser key sees every device); see
-[../../../docs/api-reference.md#authentication](../../../docs/api-reference.md#authentication).
-
-```bash
-# registry: which devices exist -> which channels they report
-#   -> readings: the values (timeseries + latest)
-# Use --lookback=-7d (with the =) - argparse otherwise reads -7d as a flag, not a value.
-python3 readings.py --lookback=-7d
-
-# The same values addressed the store-native way. No registry lookup at all,
-# which is the point: this reaches devices registry has never heard of.
-python3 readings.py --lookback=-7d --mesh-id <mesh_id> --node-id 111222333
-```
-
-Note the split the script demonstrates: **what exists** comes from registry
-(`GET /devices`, `GET /devices/{uuid}/measurements`), **what the values were**
-from readings. readings has no device or channel listing of its own - see
-[../../../docs/api-reference.md#which-address-to-use](../../../docs/api-reference.md#which-address-to-use).
-
-Derived channels and quality metrics are readable through the same routes with no
-special handling - they're ordinary InfluxDB measurements, tagged with the same
-`mesh_id`/`node_id` and so subject to the same per-owner scoping:
-
-```bash
-# A postprocessing's output (measurement "derived", field = the derived field name)
-curl -s -H "Authorization: Bearer $MESH_THINGS_API_KEY" \
-  "http://localhost:8091/readings/devices/<device_uuid>?channel=derived.dew_point&start=-7d&stop=now()&window=1h&agg=mean"
-
-# Completeness over time (measurement "quality"), and fired alarms (measurement "alarms")
-curl -s -H "Authorization: Bearer $MESH_THINGS_API_KEY" \
-  "http://localhost:8091/readings/devices/<device_uuid>?channel=quality.completeness_ratio&start=-7d&stop=now()"
-curl -s -H "Authorization: Bearer $MESH_THINGS_API_KEY" \
-  "http://localhost:8091/readings/devices/<device_uuid>?channel=alarms.message&start=-7d&stop=now()"
-```
-
-Alarms are kept one by one for 30 days (`INFLUX__ALARMS_RETENTION_DAYS`), so `alarms.*`
-returns nothing further back. Longer-term totals per detector come from the device's
-quality figures, `GET /readings/devices/<device_uuid>/quality`.
-
-## Mesh traffic stats
-
-Totals, packets by portnum, the busiest nodes, each gateway's share and SNR, and the
-hop distribution for one mesh over `1h`, `24h`, `7d` or `30d`. Names are joined from the registry's device list.
-A public mesh needs no key.
-
-```bash
-python3 mesh_stats.py --mesh-id <mesh_id> --range 7d
-```
-
-## Mesh topology
-
-Who hears whom: radio links from traceroutes, neighbor reports and direct receptions,
-longest first, then the newest traceroutes with both directions of their route.
-
-```bash
-python3 registry_mesh_topology.py --mesh-id <mesh_id> --since 7d
-python3 registry_mesh_topology.py --mesh-id <mesh_id> --node-id '!334af480'
-```
+The values a blueprint produces appear as `derived` channels on the device. They can be read, given units and checked for quality like any other channel.
 
 ## Exports
 
-A mesh's readings over a range of days as one zip, for its owner (and superusers). CSV
-reads every device from InfluxDB, a file per measurement and day plus `channels.csv` with
-units; `--node-id` narrows it. Parquet holds the archive's hourly files and needs the
-operator role. The zip is built in the background, the owner is emailed when it is ready,
-and the link works for 24 hours. Full profile only. See
-[../../../docs/api-reference.md#exports](../../../docs/api-reference.md#exports).
+An export packs a mesh's readings over a range of days into one zip file. A CSV export contains one file per measurement and day, plus `channels.csv` with the units. A Parquet export contains the archive's hourly files and needs the operator role. The file is prepared in the background, you receive an email when it is ready, and the link works for 24 hours.
 
 ```bash
-python3 export_download.py --mesh-id <mesh_id> --start 2026-09-27 --stop 2026-09-28
-python3 export_download.py --mesh-id <mesh_id> --start 2026-09-27 --stop 2026-09-27 --node-id 431637602
-python3 export_download.py --mesh-id <mesh_id> --start 2026-09-27 --stop 2026-09-28 --format parquet
+python3 export_download.py --mesh-id <mesh id> --start 2026-09-27 --stop 2026-09-28
+python3 export_download.py --mesh-id <mesh id> --start 2026-09-27 --stop 2026-09-27 --node-id 431637602
+python3 export_download.py --mesh-id <mesh id> --start 2026-09-27 --stop 2026-09-28 --format parquet
+python3 export_download.py --mesh-id <mesh id> --start 2026-09-27 --stop 2026-09-28 --dataframe
 ```
 
-## Parquet archive (operators)
+## The Parquet archive
 
-The archive keeps decoded and derived readings as Parquet, for analysis at a scale the
-readings routes are not built for. It is opt-in **per device**, only on meshes owned by
-an operator or a superuser, and only on instances that run it (the full profile). Only
-the mesh's owner, while an operator, and superusers can read it. See
-[../../../docs/api-reference.md#parquet-archive](../../../docs/api-reference.md#parquet-archive).
+The archive keeps decoded and derived readings as Parquet files, for analysis on a larger scale. Each device joins it separately, on meshes owned by an operator, and only on instances that run it. The mesh's owner and superusers can read it, with temporary credentials that the API issues.
 
-Layout is one object per mesh per hour (UTC), holding only the devices that opted in:
+```bash
+# 1. Start archiving a device, or stop (what was stored is kept)
+python3 registry_device_archive.py --device-uuid <device uuid>
+python3 registry_device_archive.py --device-uuid <device uuid> --off
+
+# 2. Query the archive with DuckDB, or load it into pandas
+python3 archive_duckdb.py --mesh-id <mesh id>
+python3 archive_pandas.py --mesh-id <mesh id> --node-id 111222333
+
+# 3. Or download one hour as a file, without any S3 client
+python3 archive_download.py --mesh-id <mesh id>
+python3 archive_download.py --mesh-id <mesh id> --day 2026-09-27 --hour 13
+```
+
+The archive is organised as one file per mesh and hour, in UTC:
 
 ```
 {prefix}/mesh_id={mesh_id}/dt=YYYY-MM-DD/hour=HH/data.parquet
 ```
 
+Each row keeps its decoded content in a `payload_json` column, since that content differs between kinds of payload. `mesh_things.pandas.archive_frame` spreads it into one column per channel for you.
+
+> **Note**
+> The temporary credentials last one hour by default and cannot be withdrawn early. On storage providers that cannot issue them, `archive_download.py` still works.
+
+## Superusers
+
+Superusers manage the whole instance. The role cannot be granted through the API: it is given with a command inside the API's container.
+
 ```bash
-pip install -r requirements.txt      # adds duckdb, pandas, pyarrow
-
-# 1. As the mesh owner (an operator): archive a device from now on
-python3 registry_device_archive.py --device-uuid <device_uuid>
-python3 registry_device_archive.py --device-uuid <device_uuid> --off   # stop; stored rows stay
-
-# 2. Query the mesh with temporary S3 credentials from readings, scoped to its prefix
-python3 archive_duckdb.py --mesh-id <mesh_id>
-python3 archive_duckdb.py --mesh-id <mesh_id> --node-id 111222333
-
-# The same, as a DataFrame
-python3 archive_pandas.py --mesh-id <mesh_id>
-
-# 3. Or fetch one hour as a file, with no S3 client (defaults to the latest hour)
-python3 archive_download.py --mesh-id <mesh_id>
-python3 archive_download.py --mesh-id <mesh_id> --day 2026-09-27 --hour 13
+docker compose exec registry_api python manage.py createsuperuser --email you@example.com --name "You"
 ```
 
-The queries print rows per device and day and the most recent `environment_metrics`,
-pulling values out of the `payload_json` column - the payload shape varies by
-`payload_kind`, so it is stored as JSON rather than exploded into columns.
+A superuser can see and manage every owner's meshes and devices, including their channel and admin keys.
 
-Credentials last `READINGS__ARCHIVE_CREDENTIAL_TTL_S` (an hour by default) and cannot be
-revoked early. On a storage provider without STS the credentials route answers `404`;
-`archive_download.py` still works there.
+## Opening data in a browser
+
+A browser cannot send your API key in a header, so you can also add it to the address as `access_token`. This is handy for a quick look:
+
+```
+http://localhost/owners/me?access_token=<your API key>
+http://localhost/meshes?access_token=<your API key>
+```
+
+For anything else, please use the scripts or the package, which send the key in a header. A key in an address can end up in your browser history and in server logs.

@@ -1,8 +1,8 @@
 #!/usr/bin/env python3
-"""Ask for the operator role, or check on the request.
+"""Ask for the operator role, or check on your request.
 
-Every superuser is emailed the request, and the decision is emailed back. Only one
-request can be pending at a time. See docs/api-reference.md#requesting-the-role.
+Every superuser is emailed your request, and you are emailed the decision. You can
+have one pending request at a time.
 """
 import argparse
 import os
@@ -22,7 +22,7 @@ def main():
     args = parser.parse_args()
 
     if not args.api_key:
-        sys.exit("No API key - pass --api-key or set MESH_THINGS_API_KEY (see registry_create_owner.py)")
+        sys.exit("Please pass --api-key or set MESH_THINGS_API_KEY (see registry_create_owner.py).")
     api = MeshThings(API_URL, args.api_key)
 
     if args.reason:

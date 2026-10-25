@@ -1,16 +1,15 @@
 #!/usr/bin/env python3
-"""Query a mesh's Parquet archive with DuckDB, using credentials from the API.
+"""Query a mesh's Parquet archive with DuckDB, using temporary credentials from the API.
 
-The archive is an operator feature: only devices switched on with
-`archive_enabled` (see registry_device_archive.py) are stored, and only the
-mesh's owner, while an operator, or a superuser can read it. This script asks
-readings for temporary S3 credentials scoped to one mesh, then queries
+Only devices you have switched on for the archive are stored (see
+registry_device_archive.py), and only the mesh's owner and superusers can read it. The
+script asks the API for credentials limited to one mesh, then queries its files as one
+partitioned dataset:
 
   {prefix}/mesh_id={mesh_id}/dt=YYYY-MM-DD/hour=HH/data.parquet
 
-as a partitioned dataset. `mesh_id`, `dt` and `hour` come from the path;
-`node_id` is an ordinary column, so filtering to one device is a predicate.
-See docs/api-reference.md#parquet-archive.
+`mesh_id`, `dt` and `hour` come from the file paths, and `node_id` is a regular
+column, so you can filter on any of them.
 """
 import argparse
 import os
@@ -50,14 +49,14 @@ def main() -> None:
     parser.add_argument("--limit", type=int, default=10)
     args = parser.parse_args()
     if not args.api_key:
-        sys.exit("No API key - pass --api-key or set MESH_THINGS_API_KEY")
+        sys.exit("Please pass --api-key or set MESH_THINGS_API_KEY.")
     if not args.mesh_id:
-        sys.exit("No mesh - pass --mesh-id or set MESH_ID")
+        sys.exit("Please pass --mesh-id or set MESH_ID.")
 
     try:
         creds = MeshThings(API_URL, args.api_key).readings.archive_meshes_credentials_create(args.mesh_id)
     except NotFound:
-        sys.exit("No archive for this mesh: not an operator's mesh you own, or the instance runs no archive.")
+        sys.exit("There is no archive for this mesh. Archives are kept only for meshes their operator owns, on instances that run the archive.")
     print(f"Credentials for {creds['s3_path']}, valid until {creds['expires_at']}")
     con = connect(creds)
     source = f"read_parquet('{creds['s3_path']}dt=*/hour=*/data.parquet', hive_partitioning=true)"

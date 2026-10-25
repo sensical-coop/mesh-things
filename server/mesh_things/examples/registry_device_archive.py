@@ -1,11 +1,10 @@
 #!/usr/bin/env python3
 """Switch the Parquet archive on or off for one device.
 
-Only devices on a mesh owned by an operator (or a superuser) can be archived,
-and only on an instance that runs the archive. From then on the device's decoded
-and derived readings are stored; turning it off keeps what was stored. Read the
-archive with archive_duckdb.py, archive_pandas.py or archive_download.py.
-See docs/api-reference.md#parquet-archive.
+Devices can only be archived on meshes owned by an operator, and only on instances
+that run the archive. From then on, the device's decoded and derived readings are
+stored. Switching it off keeps what was already stored. You can read the archive with
+archive_duckdb.py, archive_pandas.py or archive_download.py.
 """
 import argparse
 import os
@@ -23,7 +22,7 @@ def main():
     parser.add_argument("--off", action="store_true", help="stop archiving instead")
     args = parser.parse_args()
     if not args.api_key:
-        sys.exit("No API key - pass --api-key or set MESH_THINGS_API_KEY")
+        sys.exit("Please pass --api-key or set MESH_THINGS_API_KEY.")
 
     try:
         device = MeshThings(API_URL, args.api_key).devices.update(

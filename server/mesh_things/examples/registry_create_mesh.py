@@ -1,7 +1,10 @@
 #!/usr/bin/env python3
-"""Register a Mesh on the default broker under the authenticated owner, accepting its
-mesh terms (read them first with --show-terms). Needs a Gateway too before decoding
-starts - see docs/architecture.md#registered-gateways-only-gate."""
+"""Create a mesh on this instance's broker, after reading and accepting its terms.
+
+A mesh holds the channel name and key that your Meshtastic devices share. Read the
+terms first with --show-terms. Once the mesh exists, register its gateway with
+registry_create_gateway.py so that its traffic can be decoded.
+"""
 import argparse
 import os
 import sys
@@ -23,7 +26,7 @@ def main():
     args = parser.parse_args()
 
     if not args.api_key:
-        sys.exit("No API key - pass --api-key or set MESH_THINGS_API_KEY (see registry_create_owner.py)")
+        sys.exit("Please pass --api-key or set MESH_THINGS_API_KEY (see registry_create_owner.py).")
 
     api = MeshThings(API_URL, args.api_key)
     terms = api.get_terms("meshes", locale=args.locale)
@@ -37,7 +40,7 @@ def main():
         print(f"\n{terms['footnote']}")
         return
     if terms is not None and not args.accept_terms:
-        sys.exit("Read the terms with --show-terms, then pass --accept-terms to create the mesh")
+        sys.exit("Please read the terms with --show-terms, then pass --accept-terms to create the mesh.")
 
     mesh = api.meshes.create(body={
         "channel_id": args.channel_id, "psk_b64": args.psk_b64, "label": args.label, **terms_fields(terms),

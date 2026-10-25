@@ -1,6 +1,10 @@
 #!/usr/bin/env python3
-"""Set a node's admin keys to an explicit full list (write-only, PUT replaces
-the whole list - not an append). Firmware supports at most 3."""
+"""Set the admin keys of a node, for remote administration in Meshtastic.
+
+The keys you pass replace the node's whole list, so please include every key the node
+should keep. Meshtastic accepts up to three. If the node has not been seen yet, pass
+--mesh-id to register it in advance.
+"""
 import argparse
 import os
 import sys
@@ -39,7 +43,7 @@ def main():
     args = parser.parse_args()
 
     if not args.api_key:
-        sys.exit("No API key - pass --api-key or set MESH_THINGS_API_KEY")
+        sys.exit("Please pass --api-key or set MESH_THINGS_API_KEY.")
 
     api = MeshThings(API_URL, args.api_key)
     node = set_admin_keys(api, args.node_id, args.admin_keys_b64, args.label, args.mesh_id)

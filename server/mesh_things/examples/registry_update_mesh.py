@@ -1,7 +1,9 @@
 #!/usr/bin/env python3
-"""Edit an existing mesh (label, channel_id and/or PSK rotation) - partial
-update, only passed fields change. Changing channel_id or psk_b64 republishes
-every gateway on it."""
+"""Change a mesh's label, channel name or key.
+
+Only the values you pass are changed. A new channel name or key is sent to every
+gateway on the mesh straight away.
+"""
 import argparse
 import os
 import sys
@@ -21,14 +23,14 @@ def main():
     args = parser.parse_args()
 
     if not args.api_key:
-        sys.exit("No API key - pass --api-key or set MESH_THINGS_API_KEY")
+        sys.exit("Please pass --api-key or set MESH_THINGS_API_KEY.")
     changes = {
         key: value
         for key, value in (("label", args.label), ("channel_id", args.channel_id), ("psk_b64", args.psk_b64))
         if value is not None
     }
     if not changes:
-        sys.exit("Nothing to update - pass --label, --channel-id and/or --psk-b64")
+        sys.exit("There is nothing to update. Please pass --label, --channel-id or --psk-b64.")
 
     mesh = MeshThings(API_URL, args.api_key).meshes.update(args.mesh_id, body=changes)
     print(f"Updated mesh {mesh['id']}: label={mesh['label']!r} channel_id={mesh['channel_id']!r}")

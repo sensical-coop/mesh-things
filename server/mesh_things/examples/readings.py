@@ -1,26 +1,18 @@
 #!/usr/bin/env python3
-"""Readings walkthrough, demonstrating the split between the two roles:
+"""A walk through your readings: your devices, the channels they report, and their values.
 
-  registry  GET /devices                          -> which devices are registered
-  registry  GET /devices/{uuid}/measurements      -> which channels they report
-  readings  GET /readings/devices/{uuid}          -> the values over a range
-            GET /readings/devices/{uuid}/latest   -> the most recent of each
+The script first lists the devices you have registered and the channels each one
+reports. It then shows the values of one kind of telemetry over a range of time, and
+the latest value of every channel, with its unit.
 
-The registry owns the catalog; the readings role answers only for the values.
-It deliberately has no device or channel listing of its own - a second copy of
-that catalog only ever drifts from the first.
+A device can be addressed in two ways, and the script shows both:
 
-Each readings query is reachable two ways, and this script exercises both:
+  by its registration    the device's uuid, as listed by the API (the default here)
+  by mesh and node       the mesh id and the node number, with --mesh-id and --node-id,
+                         which also reaches devices that report but were never registered
 
-  /readings/devices/{uuid}            the registration address, the same UUID
-                                      the registry uses - the default here
-  /readings/meshes/{m}/nodes/{n}      the store-native address; InfluxDB is
-                                      tagged by mesh_id/node_id, so it reaches
-                                      devices with telemetry but no
-                                      registration row (--mesh-id/--node-id)
-
-Requires MESH_THINGS_API_KEY. Pass --dataframe to print the readings as a pandas
-DataFrame (needs mesh-things[pandas]). See ../../../docs/api-reference.md.
+It needs your API key in MESH_THINGS_API_KEY. Pass --dataframe to see the values as a
+pandas DataFrame, which needs mesh-things[pandas].
 """
 import argparse
 import os
@@ -31,8 +23,10 @@ API_URL = os.environ.get("MESH_THINGS_URL", "http://localhost")
 
 
 def first_device_with_channels(api: MeshThings, devices: list[dict]) -> tuple[str, list[dict]]:
-    """A registration row doesn't imply telemetry - a device can be registered and
-    never have reported - so walk to the first one that has channels."""
+    """Return the first device that has reported any channels.
+
+    A device can be registered and never have reported, so the first one listed may have no data.
+    """
     for d in devices:
         channels = api.devices.measurements_list(d["uuid"])
         if channels:
@@ -50,11 +44,9 @@ def main():
     parser.add_argument(
         "--stop", default=None, help="end of the range, same forms as --lookback; defaults to now()"
     )
-    parser.add_argument("--device-uuid", default=None, help="registry Device.id; if omitted, the first device found")
+    parser.add_argument("--device-uuid", default=None, help="the device to read; defaults to the first one that has reported")
     parser.add_argument("--payload-kind", default=None, help="if omitted, the family of the first channel the device reports")
-    # The store-native address. node_id alone is only unique among registry's
-    # currently-allowed Device rows, not globally or over time - hence the
-    # mesh_id nesting. See ../../../docs/architecture.md#readings-authentication.
+    # A node number is only unique within a mesh, so it is always given together with the mesh.
     parser.add_argument("--node-id", default=None, help="query by mesh+node instead of by UUID, as a number or !aabbccdd")
     parser.add_argument("--mesh-id", default=None, help="required alongside --node-id")
     parser.add_argument("--window", default=None, help="e.g. 6h, for downsampled timeseries")
@@ -66,8 +58,7 @@ def main():
     api = MeshThings(API_URL)
 
     if args.node_id is not None:
-        # Explicit store-native address: no registry lookup at all, which is
-        # the point - this path works for devices registry has never heard of.
+        # Addressing by mesh and node also reaches devices that were never registered.
         address = (args.mesh_id, args.node_id)
         timeseries, latest = api.readings.meshes_nodes_get, api.readings.meshes_nodes_latest_get
         channels = []
@@ -75,7 +66,7 @@ def main():
     else:
         # Registration rows, not an InfluxDB scan: a device is listed whether or not it has reported.
         devices = api.devices.list()
-        print(f"{len(devices)} device(s) registered in registry:")
+        print(f"{len(devices)} device(s) registered:")
         for d in devices:
             described = d.get("label") or d.get("name") or "(unnamed)"
             hardware = f"  hw={d['hardware_type']}" if d.get("hardware_type") else ""
@@ -119,8 +110,7 @@ def main():
             latest_point = s["points"][-1] if s["points"] else None
             print(f"  {s['channel']:<42} {len(s['points'])} point(s), latest={latest_point}")
 
-    # No payload_kind: the latest value of every channel at once, decorated with
-    # unit/quantity_kind/origin from the registry's catalog.
+    # Without a payload_kind, the API returns the latest value of every channel, with its unit and origin.
     print("\nLatest value of every channel:")
     for r in latest(*address)["readings"]:
         unit = f" {r['unit']}" if r.get("unit") else ""

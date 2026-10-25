@@ -1,10 +1,9 @@
 #!/usr/bin/env python3
-"""Query a mesh's Parquet archive with pandas and pyarrow, using credentials from the API.
+"""Query a mesh's Parquet archive with pandas and pyarrow, using temporary credentials from the API.
 
-Same archive and credentials as archive_duckdb.py. Partition keys live only in
-the path, so a plain Hive read works: `dt` and `hour` come back as columns, and
-filters on them prune whole files, while `node_id` filters use row-group
-statistics. Needs mesh-things[archive]. See docs/api-reference.md#parquet-archive.
+This reads the same archive as archive_duckdb.py. Filters on `dt` and `hour` skip
+whole files, and filters on `node_id` read less of each file, so narrowing your query
+keeps it fast. It needs mesh-things[archive].
 """
 import argparse
 import os
@@ -27,14 +26,14 @@ def main() -> None:
     parser.add_argument("--limit", type=int, default=10)
     args = parser.parse_args()
     if not args.api_key:
-        sys.exit("No API key - pass --api-key or set MESH_THINGS_API_KEY")
+        sys.exit("Please pass --api-key or set MESH_THINGS_API_KEY.")
     if not args.mesh_id:
-        sys.exit("No mesh - pass --mesh-id or set MESH_ID")
+        sys.exit("Please pass --mesh-id or set MESH_ID.")
 
     try:
         dataset = archive.open_dataset(MeshThings(API_URL, args.api_key), args.mesh_id)
     except NotFound:
-        sys.exit("No archive for this mesh: not an operator's mesh you own, or the instance runs no archive.")
+        sys.exit("There is no archive for this mesh. Archives are kept only for meshes their operator owns, on instances that run the archive.")
     expr = ds.field("node_id") == args.node_id if args.node_id else None
     # The summary below needs every row, so the whole (filtered) archive is loaded;
     # narrow it with --node-id, or filter on dt, for a large mesh.

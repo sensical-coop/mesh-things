@@ -1,17 +1,15 @@
 #!/usr/bin/env python3
-"""List postprocessing algorithms, create a blueprint, or add a version to one.
+"""List the postprocessing algorithms, create a blueprint, or add a version to one.
 
-A blueprint is a reusable recipe: it declares the input slots it reads and an
-ordered list of steps, each running a postprocessing algorithm (list them with --list-algorithms). A
-step takes its inputs from a slot ("slot:<name>") or from an earlier step's
-output ("step:<key>.<output>"), so chains like ADC -> ppb -> ug/m3 are two
-steps. Calibration is not part of the recipe: each device supplies its own
-when the blueprint is attached, see registry_device_postprocessing.py.
+A blueprint is a reusable recipe. It lists the inputs it reads and the steps it runs,
+each step using one of the instance's algorithms (see them with --list-algorithms). A
+step takes its inputs from the blueprint's inputs ("slot:<name>") or from an earlier
+step ("step:<key>.<output>"), so turning a voltage into ppb and then into ug/m3 takes
+two steps. Calibration is not part of the recipe: each device brings its own when the
+blueprint is attached (see registry_device_postprocessing.py).
 
-Versions are immutable. Changing the steps means adding a version; devices keep
-running theirs until moved.
-
-See ../../../docs/architecture.md#postprocessing.
+A version cannot be changed once created. To change the steps, add a new version;
+devices keep using theirs until you move them.
 """
 import argparse
 import json
@@ -90,7 +88,7 @@ def main():
     args = parser.parse_args()
 
     if not args.api_key:
-        sys.exit("No API key - pass --api-key or set MESH_THINGS_API_KEY")
+        sys.exit("Please pass --api-key or set MESH_THINGS_API_KEY.")
     api = MeshThings(API_URL, args.api_key)
 
     if args.list_algorithms:

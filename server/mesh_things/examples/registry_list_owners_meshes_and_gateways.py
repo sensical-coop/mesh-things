@@ -1,6 +1,9 @@
 #!/usr/bin/env python3
-"""List owners (public, no auth needed) and, if an API key is given, that
-owner's own meshes and gateway devices."""
+"""List the owners on the instance and, with an API key, your own meshes and gateways.
+
+The list of owners is public. With a superuser key, it also includes each owner's
+email address and whether it has been verified.
+"""
 import argparse
 import os
 
