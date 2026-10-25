@@ -148,8 +148,10 @@ class HealthView(APIView):
 class ReadingsView(ReadingsAPIView):
     """Return a device's readings for one measurement over a time range.
 
-    Downsampling covers numeric fields only, so text fields such as
-    `timestamp_quality` are left out whenever `window` is set.
+    Each point's bookkeeping fields, `packet_id` and `timestamp_quality`, are not
+    readings and are left out unless one is asked for with `channel`.
+    Downsampling covers numeric fields only, so text fields are also left out
+    whenever `window` is set.
 
     Args:
         payload_kind: Family to read, for example `telemetry:environment_metrics`.
