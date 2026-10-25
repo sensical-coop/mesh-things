@@ -256,9 +256,9 @@ def main():
         kafka_bootstrap = os.environ["KAFKA_BOOTSTRAP_LOCAL"]
         src_dir = os.path.dirname(os.path.realpath(__file__))
         jar_files = [
-            "flink-connector-kafka-3.3.0-1.19.jar",
-            "flink-sql-connector-kafka-3.3.0-1.19.jar",
-            "kafka-clients-3.2.3.jar",
+            "flink-connector-kafka-4.0.1-2.0.jar",
+            "flink-sql-connector-kafka-4.0.1-2.0.jar",
+            "kafka-clients-3.9.1.jar",
         ]
         jar_paths = tuple(f"file://{os.path.join(src_dir, 'jars', name)}" for name in jar_files)
         env.add_jars(*jar_paths)
