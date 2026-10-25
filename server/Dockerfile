@@ -4,6 +4,6 @@ WORKDIR /app
 
 RUN apt-get update && apt-get install -y curl
 COPY . .
-RUN pip install "./mesh_things[codec]" .
+RUN pip install --require-hashes -r requirements.lock && pip install --no-deps ./mesh_things .
 
 ENV PYTHONUNBUFFERED=1

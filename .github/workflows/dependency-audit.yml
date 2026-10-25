@@ -1,0 +1,35 @@
+name: Dependency audit
+
+# Weekly as well as on pull requests, so an advisory published against a pin that has
+# not changed still fails a run.
+on:
+  pull_request:
+    branches: [main]
+  schedule:
+    - cron: "0 6 * * 1"
+  workflow_dispatch:
+
+jobs:
+  pip-audit:
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - lock: server/requirements.lock
+          - lock: server/api/requirements.lock
+          - lock: server/monitor/requirements.lock
+          - lock: server/quality_worker/requirements.lock
+          # apache-beam, which apache-flink 2.2 requires, caps httplib2 below 0.23 and
+          # pyarrow below 17 (issue #70).
+          - lock: server/flink/requirements.lock
+            ignore: >-
+              --ignore-vuln PYSEC-2026-3444
+              --ignore-vuln PYSEC-2024-161
+              --ignore-vuln PYSEC-2026-113
+    steps:
+      - uses: actions/checkout@v4
+      - uses: astral-sh/setup-uv@v7
+      - run: >
+          uvx pip-audit==2.10.1 -r "${{ matrix.lock }}" --require-hashes --disable-pip
+          --progress-spinner off ${{ matrix.ignore }}

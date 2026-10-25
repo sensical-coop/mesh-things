@@ -20,12 +20,10 @@ RUN wget -P /opt/flink/lib/ https://repo.maven.apache.org/maven2/org/apache/flin
 # Dependencies are installed before the source is copied, so a code change
 # does not reinstall PyFlink.
 WORKDIR /build
-COPY flink/requirements-flink.txt flink/
-RUN pip install --no-cache-dir -r flink/requirements-flink.txt
-COPY requirements.txt .
-RUN pip install --no-cache-dir -r requirements.txt
+COPY flink/requirements.lock flink/
+RUN pip install --no-cache-dir --require-hashes -r flink/requirements.lock
 COPY mesh_things/ mesh_things/
-RUN pip install --no-cache-dir "./mesh_things[codec]"
+RUN pip install --no-cache-dir --no-deps ./mesh_things
 COPY . .
 RUN pip install --no-cache-dir --no-deps .
 
