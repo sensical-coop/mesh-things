@@ -1446,6 +1446,10 @@ class DeviceListCreateView(APIView):
         )
 
 
+class DecoderRestoreFailed(Exception):
+    """Publishing a device's new decoder state failed, and so did putting the previous one back."""
+
+
 def _publish_decoder_role(publisher, device, was_gateway: bool, was_allowed: bool) -> None:
     """Tell the decoder that a device changed role or allowed state.
 
@@ -1465,12 +1469,13 @@ def _publish_decoder_role(publisher, device, was_gateway: bool, was_allowed: boo
             publish_gateway_state(publisher, device, device.mesh)
         elif not device.is_gateway and not device.is_allowed:
             publisher.publish_node_reject(device)
-    except Exception:
+    except Exception as publish_error:
         if retracted is not None:
             try:
                 retracted()
             except Exception as e:
                 log.error("device_decoder_restore_failed", device_id=str(device.id), error=str(e))
+                raise DecoderRestoreFailed(f"{publish_error}; restoring its previous state also failed: {e}") from publish_error
         raise
 
 
@@ -1552,6 +1557,12 @@ class DeviceDetailView(APIView):
                 if allowed_changed or updated.is_gateway != previous_gateway:
                     try:
                         _publish_decoder_role(get_publisher(), updated, previous_gateway, previous_allowed)
+                    except DecoderRestoreFailed as e:
+                        # The registry rolls back, but the decoder may have kept only half the change.
+                        raise BadGateway(
+                            f"Failed to tell the decoder about the device, and it may no longer match the registry: "
+                            f"{e}. The change was rolled back; send it again once the decoder is reachable."
+                        )
                     except Exception as e:
                         raise BadGateway(f"Failed to tell the decoder about the device, nothing changed: {e}")
         except IntegrityError:

@@ -1139,3 +1139,20 @@ class DeviceRoleChangeTests(RegistryTestCase):
         self.assertTrue(device.is_allowed)
         # The key removed first is registered again.
         self.assertEqual(self.fake_publisher.publish_gateway_upsert.call_count, 1)
+
+    def test_a_failed_restore_says_the_decoder_may_not_match(self):
+        owner = self.create_owner()
+        mesh = self.create_mesh(owner)
+        gateway = self.create_gateway(owner, mesh, device_id=7)
+        self.fake_publisher.publish_node_reject.side_effect = RuntimeError("kafka down")
+        self.fake_publisher.publish_gateway_upsert.side_effect = RuntimeError("kafka still down")
+
+        resp = self._put(owner, gateway, {"is_gateway": False, "is_allowed": False})
+
+        self.fake_publisher.publish_node_reject.side_effect = None
+        self.fake_publisher.publish_gateway_upsert.side_effect = None
+        self.assertEqual(resp.status_code, 502, resp.content)
+        self.assertIn("may no longer match", resp.json()["detail"])
+        self.assertNotIn("nothing changed", resp.json()["detail"])
+        device = Device.objects.get(pk=uuid.UUID(gateway["uuid"]))
+        self.assertTrue(device.is_gateway)
