@@ -1,4 +1,4 @@
-# mesh-things examples
+# Mesh things package examples
 
 These are small scripts that show how to use the [mesh-things package](../README.md) with the API: from reading your meshes and their readings, to setting up a mesh, sharing data with others and working with the archive. Each script is independent, so you can copy whichever one you need and adapt it to your own project. They are also included in the package's source distribution.
 
@@ -37,7 +37,7 @@ python3 get_latest_readings.py --mesh-id <mesh id>
 python3 get_latest_readings.py --mesh-id <mesh id> --dataframe
 
 # How well a device is reporting: completeness, gaps, alarms and radio traffic
-python3 get_device_health.py --device-uuid <device uuid> --start -7d --range 7d
+python3 get_device_health.py --device-uuid <device uuid> --start=-7d --range 7d
 
 # What the instance knows: telemetry types, measurements and units, detectors, algorithms
 python3 get_catalog.py
@@ -141,6 +141,7 @@ python3 registry_request_operator.py --status
 
 # 2. Create the source, after reading its terms. A superuser can grant the role in the same step.
 python3 registry_create_source.py --show-terms
+# The public Meshtastic broker shares these credentials openly. For your own broker, please keep TLS on.
 python3 registry_create_source.py --accept-terms --server mqtt.meshtastic.org:1883 --no-ssl \
   --username meshdev --password large4cats --topic 'msh/EU_868/2/e/LongFast/#' \
   --grant-operator <owner id> --superuser-api-key $SUPERUSER_API_KEY
@@ -240,7 +241,7 @@ python3 export_download.py --mesh-id <mesh id> --start 2026-09-27 --stop 2026-09
 
 ## The Parquet archive
 
-The archive keeps decoded and derived readings as Parquet files, for analysis on a larger scale. Each device joins it separately, on meshes owned by an operator, and only on instances that run it. The mesh's owner and superusers can read it, with temporary credentials that the API issues.
+The archive keeps decoded and derived readings as Parquet files, for analysis on a larger scale. Each device joins it separately, on meshes owned by an operator, and only on instances that run it. Superusers and the mesh's owner, while an operator, can read it, with temporary credentials that the API issues.
 
 ```bash
 # 1. Start archiving a device, or stop (what was stored is kept)

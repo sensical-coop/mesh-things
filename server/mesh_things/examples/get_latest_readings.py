@@ -33,7 +33,7 @@ def main():
     for device in api.meshes.devices_list(args.mesh_id):
         name = device["label"] or device["name"] or node_ids.to_hex(device["node_id"])
         for reading in api.readings.devices_latest_get(device["uuid"])["readings"]:
-            rows.append({"device": name, **reading})
+            rows.append({"device": name, "device_uuid": device["uuid"], **reading})
 
     if not rows:
         print("No readings yet for this mesh.")
@@ -41,12 +41,12 @@ def main():
     if args.dataframe:
         import pandas as pd
 
-        frame = pd.DataFrame(rows).set_index(["device", "channel"])[["value", "unit", "origin", "time"]]
+        frame = pd.DataFrame(rows).set_index(["device_uuid", "channel"])[["device", "value", "unit", "origin", "time"]]
         print(frame.to_string())
         return
     for row in rows:
         unit = f" {row['unit']}" if row.get("unit") else ""
-        print(f"{row['device']:<20} {row['channel']:<40} {row['value']}{unit}  ({row['origin']}, {row['time']})")
+        print(f"{row['device']:<20} {row['device_uuid'][:8]}  {row['channel']:<40} {row['value']}{unit}  ({row['origin']}, {row['time']})")
 
 
 if __name__ == "__main__":

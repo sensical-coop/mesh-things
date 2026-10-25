@@ -1,8 +1,8 @@
 #!/usr/bin/env python3
 """Create a source: a remote MQTT broker whose traffic this instance brings in.
 
-Creating one accepts the current source terms on your behalf, so please read them
-first with --show-terms. It needs the operator role. A superuser can grant the role in
+Please read the source terms with --show-terms, then pass --accept-terms when you
+create the source. It needs the operator role. A superuser can grant the role in
 the same step with --grant-operator. The script prints a SOURCE_ID to use with
 registry_attach_mesh_to_source.py.
 """

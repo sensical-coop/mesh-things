@@ -1,4 +1,4 @@
-# mesh-things
+# Mesh things python package
 
 `mesh-things` is the Python package for the [mesh-things](https://github.com/sensical-coop/mesh-things) API. It lets you read your Meshtastic meshes, their devices and their readings, and manage them, without writing any HTTP code. It also contains the vocabulary and Meshtastic protocol helpers that the API itself is built on, so your scripts and the server always speak the same language.
 

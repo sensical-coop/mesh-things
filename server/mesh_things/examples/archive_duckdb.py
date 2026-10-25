@@ -2,7 +2,7 @@
 """Query a mesh's Parquet archive with DuckDB, using temporary credentials from the API.
 
 Only devices you have switched on for the archive are stored (see
-registry_device_archive.py), and only the mesh's owner and superusers can read it. The
+registry_device_archive.py), and only superusers and the mesh's owner, while an operator, can read it. The
 script asks the API for credentials limited to one mesh, then queries its files as one
 partitioned dataset:
 

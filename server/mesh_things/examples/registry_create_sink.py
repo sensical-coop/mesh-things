@@ -2,8 +2,8 @@
 """Create an MQTT sink, change what it delivers, or renew its password.
 
 A sink lets a service of your choice subscribe to the readings of the meshes and
-devices you attach to it, on this instance's broker. Creating one accepts the current
-sink terms on your behalf (read them first with --show-terms) and prints the
+devices you attach to it, on this instance's broker. Please read the sink terms with
+--show-terms, then pass --accept-terms when you create the sink. The script prints the
 credentials, which are shown only once. It needs the operator role.
 """
 import argparse

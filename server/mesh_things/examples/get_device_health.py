@@ -7,7 +7,7 @@ and of which kinds. Both help you spot a device that is struggling before its da
 missing.
 
   python3 get_device_health.py --device-uuid <uuid>
-  python3 get_device_health.py --device-uuid <uuid> --start -7d --range 7d
+  python3 get_device_health.py --device-uuid <uuid> --start=-7d --range 7d
 """
 import argparse
 import os
