@@ -1,8 +1,8 @@
 x-pipeline-image: &pipeline-image
-  image: meshtastic-things/pipeline:latest
+  image: mesh-things/pipeline:latest
   # Prebuilt alternative, disabled. See compose/api.yml.
-  # image: ghcr.io/sensical-coop/meshtastic-kafka/pipeline:${TAG:-latest}
-  build: ../meshtastic_things
+  # image: ghcr.io/sensical-coop/mesh-things/pipeline:${TAG:-latest}
+  build: ../server
 
 x-bridge-member: &bridge-member
   <<: *pipeline-image

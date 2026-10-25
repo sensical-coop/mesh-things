@@ -1,9 +1,9 @@
 x-flink-image: &flink-image
-  image: meshtastic-things/flink:latest
+  image: mesh-things/flink:latest
   # Prebuilt alternative, disabled. See compose/api.yml.
-  # image: ghcr.io/sensical-coop/meshtastic-kafka/flink:${TAG:-latest}
+  # image: ghcr.io/sensical-coop/mesh-things/flink:${TAG:-latest}
   build:
-    context: ../meshtastic_things
+    context: ../server
     dockerfile: flink/Dockerfile
 
 # jobmanager deletes expired checkpoints that taskmanager wrote, and submitters

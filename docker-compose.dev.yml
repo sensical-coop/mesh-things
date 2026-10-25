@@ -114,6 +114,11 @@ services:
   registry_data_lifecycle:
     <<: *registry-dev
 
+  # Locally the monitor reaches the API through the gateway over plain HTTP (http://caddy).
+  server_monitor:
+    environment:
+      MESH_THINGS_ALLOW_HTTP: "1"
+
   # Local dev SMTP
   mailhog:
     mem_limit: 128m
