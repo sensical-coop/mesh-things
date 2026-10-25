@@ -2,7 +2,7 @@
   "openapi": "3.0.3",
   "info": {
     "title": "Mesh Things API",
-    "version": "0.1.1"
+    "version": "0.1.2"
   },
   "paths": {
     "/algorithms": {
@@ -6415,11 +6415,13 @@
           },
           "is_gateway": {
             "type": "boolean",
-            "readOnly": true
+            "readOnly": true,
+            "default": false
           },
           "is_allowed": {
             "type": "boolean",
-            "readOnly": true
+            "readOnly": true,
+            "default": true
           },
           "admin_keys_b64": {
             "type": "array",

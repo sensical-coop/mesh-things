@@ -1,5 +1,5 @@
 celery==5.4.0
 redis==5.2.1
 influxdb-client==1.50.0
-kafka-python==2.2.20
+kafka-python==2.3.2
 structlog==24.4.0
