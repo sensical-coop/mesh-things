@@ -3,7 +3,7 @@
 
 Devices can only be archived on meshes owned by an operator, and only on instances
 that run the archive. From then on, the device's decoded and derived readings are
-stored. Switching it off keeps what was already stored. You can read the archive with
+stored. Switching it off keeps the data already stored. You can read the archive with
 archive_duckdb.py, archive_pandas.py or archive_download.py.
 """
 import argparse

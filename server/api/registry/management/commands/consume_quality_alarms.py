@@ -52,8 +52,8 @@ WINDOWS_KEY = "registry:alarm-windows"
 HELD_KEY_PREFIX = "registry:alarm-held:"
 ABSENCE_EMAILED_KEY_PREFIX = "registry:absence-emailed:"
 ABSENCE_EMAIL_INTERVAL_SECONDS = 24 * 3600
-# When each ongoing condition ("<window>|<detector>|<channel>") was last emailed, and
-# since when it holds. Refreshed by its hourly re-raises, so it lapses once they stop.
+# The last email time of each ongoing condition ("<window>|<detector>|<channel>"), and
+# the time it started. Refreshed by its hourly re-raises, so it lapses once they stop.
 CONDITION_KEY_PREFIX = "registry:alarm-condition:"
 CONDITION_TTL_SECONDS = 2 * 24 * 3600
 ALARM_REMINDER_SECONDS = int(float(os.environ.get("REGISTRY__ALARM_REMINDER_HOURS", "24")) * 3600)

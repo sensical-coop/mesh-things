@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""A first look at your data: your account, your meshes, their devices and what each device reported last.
+"""A first look at your data: your account, your meshes, their devices and the latest reading of each one.
 
 This is a good place to start. It only reads from the API, so you can run it as often as
 you like. You need an API key (see registry_create_owner.py) in MESH_THINGS_API_KEY.

@@ -1,4 +1,4 @@
-"""When to email, and sending it with the monitor's own SMTP settings."""
+"""Email alerts: the conditions for sending them, and delivery through the monitor's own SMTP settings."""
 import asyncio
 import smtplib
 from dataclasses import dataclass

@@ -63,7 +63,7 @@ class OwnerPublicSerializer(serializers.ModelSerializer):
 class EmailStatusSerializer(serializers.Serializer):
     ok = serializers.BooleanField(help_text="False while the most recent email failed to send.")
     last_sent_at = serializers.DateTimeField(allow_null=True)
-    last_sent_template = serializers.CharField(allow_null=True, help_text="Which email, such as `quality_alarm`.")
+    last_sent_template = serializers.CharField(allow_null=True, help_text="Template of the email, such as `quality_alarm`.")
     last_failed_at = serializers.DateTimeField(allow_null=True)
     last_failed_template = serializers.CharField(allow_null=True)
     last_error = serializers.CharField(allow_null=True)
@@ -237,7 +237,7 @@ class OperatorRequestCreateSerializer(serializers.ModelSerializer):
     class Meta:
         model = OperatorRequest
         fields = ["reason"]
-        extra_kwargs = {"reason": {"help_text": "Why the operator role is needed. Shown to superusers."}}
+        extra_kwargs = {"reason": {"help_text": "Reason the operator role is needed. Shown to superusers."}}
 
 
 class OperatorRequestSerializer(serializers.ModelSerializer):
@@ -400,7 +400,7 @@ class _MeshTermsMixin(serializers.Serializer):
         return acceptance.terms_version if acceptance else None
 
     def get_terms_expires_at(self, instance) -> datetime | None:
-        """When the mesh terms acceptance lapses. Null for no time limit, or on a source."""
+        """Time at which the mesh terms acceptance lapses. Null for no time limit, or on a source."""
         if instance.source_id is not None:
             return None
         acceptance = instance.current_terms_acceptance
@@ -663,7 +663,7 @@ class SourceReadSerializer(SourceSerializer):
         read_only=True, help_text="The bridge's connection status, `paused`, or unknown when it cannot be checked."
     )
     paused_at = serializers.DateTimeField(
-        read_only=True, allow_null=True, help_text="When the source was paused because its terms lapsed."
+        read_only=True, allow_null=True, help_text="Time at which the source was paused because its terms lapsed."
     )
     terms_accepted_version = serializers.SerializerMethodField()
     terms_expires_at = serializers.SerializerMethodField()
@@ -676,7 +676,7 @@ class SourceReadSerializer(SourceSerializer):
         return acceptance.terms_version if acceptance else None
 
     def get_terms_expires_at(self, instance) -> datetime | None:
-        """When the terms acceptance lapses. Null when data is kept without a time limit."""
+        """Time at which the terms acceptance lapses. Null when data is kept without a time limit."""
         acceptance = instance.current_terms_acceptance
         return acceptance.expires_at if acceptance else None
 
@@ -695,7 +695,7 @@ class SinkWriteSerializer(serializers.Serializer):
         child=serializers.ChoiceField(choices=sink_streams.STREAMS),
         allow_empty=False,
         required=False,
-        help_text="Which readings are sent: `decoded`, `derived`, `alarms`. Defaults to `decoded`.",
+        help_text="Readings to send: `decoded`, `derived`, `alarms`. Defaults to `decoded`.",
     )
     mesh_ids = serializers.ListField(
         child=serializers.UUIDField(),
@@ -748,11 +748,11 @@ class SinkReadSerializer(serializers.ModelSerializer):
     streams = serializers.ListField(
         child=serializers.ChoiceField(choices=sink_streams.STREAMS),
         read_only=True,
-        help_text="Which readings are sent: `decoded`, `derived`, `alarms`.",
+        help_text="Readings to send: `decoded`, `derived`, `alarms`.",
     )
     created_by_id = serializers.UUIDField(read_only=True, allow_null=True)
     paused_at = serializers.DateTimeField(
-        read_only=True, allow_null=True, help_text="When the sink was paused because its terms lapsed."
+        read_only=True, allow_null=True, help_text="Time at which the sink was paused because its terms lapsed."
     )
     terms_accepted_version = serializers.SerializerMethodField()
     terms_expires_at = serializers.SerializerMethodField()
@@ -791,7 +791,7 @@ class SinkReadSerializer(serializers.ModelSerializer):
         return acceptance.terms_version if acceptance else None
 
     def get_terms_expires_at(self, instance) -> datetime | None:
-        """When the terms acceptance lapses. Null for no time limit."""
+        """Time at which the terms acceptance lapses. Null for no time limit."""
         acceptance = instance.current_terms_acceptance
         return acceptance.expires_at if acceptance else None
 
@@ -1490,7 +1490,7 @@ class PostprocessingBackfillSerializer(serializers.ModelSerializer):
 
 
 class BackfillClaimSerializer(PostprocessingBackfillSerializer):
-    """What the quality worker needs to run a claimed backfill."""
+    """Details the quality worker needs to run a claimed backfill."""
 
     mesh_id = serializers.UUIDField(source="device_postprocessing.device.mesh_id", read_only=True)
     node_id = serializers.IntegerField(source="device_postprocessing.device.device_id", read_only=True)

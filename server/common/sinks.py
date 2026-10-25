@@ -12,7 +12,7 @@ SCHEMA_VERSION = 1
 
 
 def ref(sink_id) -> str:
-    """How a sink is listed on mesh.sink_config.v1, beside `archive`."""
+    """Return the name a sink is listed under on mesh.sink_config.v1, beside `archive`."""
     return f"sink:{sink_id}"
 
 

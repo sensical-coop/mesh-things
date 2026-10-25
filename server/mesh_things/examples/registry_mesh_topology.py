@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Who hears whom on a mesh: its radio links, longest first, and its newest traceroutes.
+"""Show a mesh's radio links, longest first, and its newest traceroutes.
 
 Device names come from the mesh's device list. A public mesh can be read without an
 API key.
@@ -19,7 +19,7 @@ def main() -> None:
     parser.add_argument("--mesh-id", required=True)
     parser.add_argument("--since", default="7d", choices=["24h", "7d", "30d"])
     parser.add_argument("--node-id", help="Only links and traceroutes of this node, as a number or !aabbccdd.")
-    parser.add_argument("--traceroutes", type=int, default=10, help="How many traceroutes to show.")
+    parser.add_argument("--traceroutes", type=int, default=10, help="Number of traceroutes to show.")
     args = parser.parse_args()
     api = MeshThings(API_URL)
 

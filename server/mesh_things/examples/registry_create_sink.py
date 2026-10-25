@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Create an MQTT sink, change what it delivers, or renew its password.
+"""Create an MQTT sink, change its meshes and devices, or renew its password.
 
 A sink lets a service of your choice subscribe to the readings of the meshes and
 devices you attach to it, on this instance's broker. Please read the sink terms with

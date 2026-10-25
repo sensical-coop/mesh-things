@@ -1,10 +1,9 @@
 #!/usr/bin/env python3
-"""How well one device is reporting: data quality and radio traffic.
+"""Show the data quality and radio traffic of one device.
 
-Quality tells you, for each channel, how many readings arrived compared with how many
-were expected, and the longest gap. Traffic tells you how many packets the device sent,
-and of which kinds. Both help you spot a device that is struggling before its data goes
-missing.
+Quality compares, for each channel, the readings received with the readings expected,
+and reports the longest gap. Traffic counts the packets the device sent, by kind. Both
+help you spot a struggling device before its data goes missing.
 
   python3 get_device_health.py --device-uuid <uuid>
   python3 get_device_health.py --device-uuid <uuid> --start=-7d --range 7d

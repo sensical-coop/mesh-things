@@ -3,7 +3,7 @@
 
 You can set two kinds of values:
 
-  for a kind of telemetry   how often devices usually report it, shared by every
+  for a kind of telemetry   its usual reporting interval, shared by every
                             device (superusers only)
   for one of your devices   the plausible range of one of its measurements, for the
                             range check (the mesh's owner)
@@ -58,7 +58,7 @@ def main():
         "--default-reading-interval-seconds",
         type=int,
         default=None,
-        help="catalog default for how often devices sample this telemetry type, used "
+        help="catalog default for the sampling interval of this telemetry type, used "
         "when a device hasn't set its own reading_interval_seconds",
     )
     parser.add_argument("--device-uuid", default=None, help="required with --range-min/--range-max")

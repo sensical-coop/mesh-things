@@ -1,4 +1,4 @@
-"""How alarms are kept: each one for a limited time, and daily counts for good.
+"""Alarm storage: each alarm for a limited time, and daily counts for good.
 
 Counts are one point per UTC day per device, channel and detector:
   - hours_active: hours of the day the condition held. flat_value and range

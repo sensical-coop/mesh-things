@@ -134,7 +134,7 @@ class Devices:
         Args:
             step_key: Step being calibrated.
             params: Calibration parameters of the step's algorithm.
-            valid_from: When this calibration takes effect. Defaults to now.
+            valid_from: Time at which this calibration takes effect. Defaults to now.
         """
 
     def postprocessings_calibrations_delete(self, device_uuid: str, postprocessing_id: str, calibration_id: str) -> Any:
@@ -323,7 +323,7 @@ class Meshes:
         deleted. A public mesh's links are readable without credentials.
 
         Args:
-            since: How far back a link must have been heard, one of `24h`, `7d`
+            since: Maximum time since a link was last heard, one of `24h`, `7d`
                 or `30d`. Defaults to `7d`.
             node_id: Only links to or from this node.
         """
@@ -381,7 +381,7 @@ class Meshes:
         public mesh's traceroutes are readable without credentials.
 
         Args:
-            limit: How many to return, up to 500. Defaults to 50.
+            limit: Number of traceroutes to return, up to 500. Defaults to 50.
             before: Only traceroutes heard before this time, as an ISO 8601
                 timestamp. Pass the `heard_at` of the last one received to read
                 the next page.
@@ -530,7 +530,7 @@ class Owners:
         is already an operator cannot file one. Limited to 3 requests a day.
 
         Args:
-            reason: Why the role is needed. Shown to superusers. Required.
+            reason: Reason the role is needed. Shown to superusers. Required.
         """
 
     def me_operator_request_get(self) -> Any:
@@ -639,7 +639,7 @@ class PostprocessingBackfills:
         Args:
             status: `done` or `failed`.
             points_published: Derived values published.
-            error: Why it failed.
+            error: Reason for the failure.
         """
 
 class PostprocessingBlueprints:
@@ -828,7 +828,7 @@ class Readings:
         Args:
             payload_kind: Restrict to one family, for example
                 `telemetry:environment_metrics`. Defaults to every one.
-            lookback: How far back to search for a value, as a relative duration, a
+            lookback: Earliest time to search for a value, as a relative duration, a
                 date or a timestamp. Defaults to `-30d`.
         """
 
@@ -907,7 +907,7 @@ class Sinks:
 
         Args:
             label: Name for the sink.
-            streams: Which readings are sent: `decoded`, `derived` and `alarms`.
+            streams: Readings to send: `decoded`, `derived` and `alarms`.
                 Defaults to `decoded`. Derived readings are sent only by
                 instances that run postprocessing, and alarms only by those that
                 run quality checks.
@@ -1265,7 +1265,7 @@ class AsyncDevices:
         Args:
             step_key: Step being calibrated.
             params: Calibration parameters of the step's algorithm.
-            valid_from: When this calibration takes effect. Defaults to now.
+            valid_from: Time at which this calibration takes effect. Defaults to now.
         """
 
     async def postprocessings_calibrations_delete(self, device_uuid: str, postprocessing_id: str, calibration_id: str) -> Any:
@@ -1454,7 +1454,7 @@ class AsyncMeshes:
         deleted. A public mesh's links are readable without credentials.
 
         Args:
-            since: How far back a link must have been heard, one of `24h`, `7d`
+            since: Maximum time since a link was last heard, one of `24h`, `7d`
                 or `30d`. Defaults to `7d`.
             node_id: Only links to or from this node.
         """
@@ -1512,7 +1512,7 @@ class AsyncMeshes:
         public mesh's traceroutes are readable without credentials.
 
         Args:
-            limit: How many to return, up to 500. Defaults to 50.
+            limit: Number of traceroutes to return, up to 500. Defaults to 50.
             before: Only traceroutes heard before this time, as an ISO 8601
                 timestamp. Pass the `heard_at` of the last one received to read
                 the next page.
@@ -1661,7 +1661,7 @@ class AsyncOwners:
         is already an operator cannot file one. Limited to 3 requests a day.
 
         Args:
-            reason: Why the role is needed. Shown to superusers. Required.
+            reason: Reason the role is needed. Shown to superusers. Required.
         """
 
     async def me_operator_request_get(self) -> Any:
@@ -1770,7 +1770,7 @@ class AsyncPostprocessingBackfills:
         Args:
             status: `done` or `failed`.
             points_published: Derived values published.
-            error: Why it failed.
+            error: Reason for the failure.
         """
 
 class AsyncPostprocessingBlueprints:
@@ -1959,7 +1959,7 @@ class AsyncReadings:
         Args:
             payload_kind: Restrict to one family, for example
                 `telemetry:environment_metrics`. Defaults to every one.
-            lookback: How far back to search for a value, as a relative duration, a
+            lookback: Earliest time to search for a value, as a relative duration, a
                 date or a timestamp. Defaults to `-30d`.
         """
 
@@ -2038,7 +2038,7 @@ class AsyncSinks:
 
         Args:
             label: Name for the sink.
-            streams: Which readings are sent: `decoded`, `derived` and `alarms`.
+            streams: Readings to send: `decoded`, `derived` and `alarms`.
                 Defaults to `decoded`. Derived readings are sent only by
                 instances that run postprocessing, and alarms only by those that
                 run quality checks.

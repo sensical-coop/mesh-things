@@ -34,7 +34,7 @@ def _udf_log_exception(message: str) -> None:
 
 QUALITY_CONFIG_STATE = MapStateDescriptor("quality-config", Types.STRING(), Types.STRING())
 
-# How many publish intervals of silence before alarming.
+# Number of publish intervals of silence before alarming.
 MISSED_INTERVALS = float(os.environ.get("ABSENCE_DETECTION__MISSED_INTERVALS", "3"))
 MIN_TIMER_SECONDS = 60
 # A device that published after an alarm alarms again only this many silence

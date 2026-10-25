@@ -198,7 +198,7 @@ def build_plan(dp: DevicePostprocessing) -> ResolvedPlan:
 
 
 def problems(dp: DevicePostprocessing) -> list[str]:
-    """What keeps this postprocessing from being enabled."""
+    """Return the reasons this postprocessing cannot be enabled."""
     found = []
     bindings = list(dp.input_bindings.all())
     bound = {b.slot for b in bindings}

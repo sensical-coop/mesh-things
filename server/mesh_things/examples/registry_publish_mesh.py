@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Make a mesh public, then show what that does and does not allow.
+"""Make a mesh public, then read it without a key and as another owner.
 
 The script publishes the mesh and reads it, its devices and their latest readings
 without any key. With --reader-api-key, it also reads the mesh as another owner and

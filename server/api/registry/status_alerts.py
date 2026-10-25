@@ -34,7 +34,7 @@ def _keys(kind: str, obj_id) -> tuple[str, str]:
 
 
 def _outage_due(kind: str, obj_id, down: bool, now: datetime, hours: int) -> datetime | None:
-    """When the outage started, if it has lasted `hours` and is not reported yet."""
+    """Return the start of the outage, if it has lasted `hours` and is not reported yet."""
     down_key, alerted_key = _keys(kind, obj_id)
     if not down:
         cache.delete_many([down_key, alerted_key])

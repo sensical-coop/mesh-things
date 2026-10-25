@@ -1,4 +1,4 @@
-"""When a decoded reading was taken, as every consumer of it must agree."""
+"""The time a decoded reading was taken, shared so that every consumer agrees on it."""
 
 MIN_FEASIBLE_TIME = 1577836800  # 2020-01-01 in epoch (s)
 

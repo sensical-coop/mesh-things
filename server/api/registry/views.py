@@ -425,7 +425,7 @@ class OwnerOperatorRequestView(APIView):
         is already an operator cannot file one. Limited to 3 requests a day.
 
         Args:
-            reason: Why the role is needed. Shown to superusers. Required.
+            reason: Reason the role is needed. Shown to superusers. Required.
         """
         if request.user.is_operator:
             raise Conflict("You are already an operator")
@@ -1235,7 +1235,7 @@ class MeshLinksView(APIView):
 
     @extend_schema(
         parameters=[
-            _query("since", "How far back a link must have been heard.", enum=list(LINK_WINDOWS), default="7d"),
+            _query("since", "Maximum time since a link was last heard.", enum=list(LINK_WINDOWS), default="7d"),
             _query("node_id", "Only links to or from this node, as a number or in its `!aabbccdd` form."),
         ],
         responses=RfLinkSerializer(many=True),
@@ -1251,7 +1251,7 @@ class MeshLinksView(APIView):
         deleted. A public mesh's links are readable without credentials.
 
         Args:
-            since: How far back a link must have been heard, one of `24h`, `7d`
+            since: Maximum time since a link was last heard, one of `24h`, `7d`
                 or `30d`. Defaults to `7d`.
             node_id: Only links to or from this node.
         """
@@ -1292,7 +1292,7 @@ class MeshTraceroutesView(APIView):
 
     @extend_schema(
         parameters=[
-            _query("limit", "How many to return.", OpenApiTypes.INT, default=TRACEROUTE_PAGE),
+            _query("limit", "Number of traceroutes to return.", OpenApiTypes.INT, default=TRACEROUTE_PAGE),
             _query("before", "Only traceroutes heard before this time, for the next page."),
             _query("node_id", "Only traceroutes through, from or to this node."),
         ],
@@ -1309,7 +1309,7 @@ class MeshTraceroutesView(APIView):
         public mesh's traceroutes are readable without credentials.
 
         Args:
-            limit: How many to return, up to 500. Defaults to 50.
+            limit: Number of traceroutes to return, up to 500. Defaults to 50.
             before: Only traceroutes heard before this time, as an ISO 8601
                 timestamp. Pass the `heard_at` of the last one received to read
                 the next page.
@@ -2344,7 +2344,7 @@ class DevicePostprocessingCalibrationsView(APIView):
         Args:
             step_key: Step being calibrated.
             params: Calibration parameters of the step's algorithm.
-            valid_from: When this calibration takes effect. Defaults to now.
+            valid_from: Time at which this calibration takes effect. Defaults to now.
         """
         device = _get_device_or_404(device_uuid)
         _require_mesh_ownership(device.mesh, request.user)
@@ -2487,7 +2487,7 @@ class PostprocessingBackfillDetailView(APIView):
         Args:
             status: `done` or `failed`.
             points_published: Derived values published.
-            error: Why it failed.
+            error: Reason for the failure.
         """
         serializer = BackfillResultSerializer(data=request.data)
         serializer.is_valid(raise_exception=True)
@@ -3002,7 +3002,7 @@ class SinkListCreateView(APIView):
 
         Args:
             label: Name for the sink.
-            streams: Which readings are sent: `decoded`, `derived` and `alarms`.
+            streams: Readings to send: `decoded`, `derived` and `alarms`.
                 Defaults to `decoded`. Derived readings are sent only by
                 instances that run postprocessing, and alarms only by those that
                 run quality checks.

@@ -122,7 +122,7 @@ class OptInTests(ArchiveSinkTestCase):
 
 
 class InstructionRecordTests(ArchiveSinkTestCase):
-    """Who told the processor to archive a device, and when (GDPR Art. 5(2))."""
+    """Record who told the processor to archive a device, and when (GDPR Art. 5(2))."""
 
     def test_switching_on_records_who_and_when(self):
         body = self.archive().json()

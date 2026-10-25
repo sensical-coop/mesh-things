@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""What anyone can read, without an API key: public meshes, their devices and their latest readings.
+"""Read the public meshes, their devices and their latest readings, without an API key.
 
 An owner can make a mesh public (see registry_publish_mesh.py) to share it openly. Public
 meshes never reveal their channel key, and only their latest readings are open; the full

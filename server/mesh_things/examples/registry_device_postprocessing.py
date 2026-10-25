@@ -54,7 +54,7 @@ def main():
     parser.add_argument("--valid-from", help="calibrate: when it takes effect, defaults to now")
     parser.add_argument("--start", help="backfill: start of the range, e.g. 2026-09-01")
     parser.add_argument("--stop", help="backfill: end of the range, defaults to now")
-    parser.add_argument("--include-dependants", action="store_true", help="backfill: also recompute what reads it")
+    parser.add_argument("--include-dependants", action="store_true", help="backfill: also recompute the postprocessings that read its outputs")
     args = parser.parse_args()
 
     if not args.api_key:

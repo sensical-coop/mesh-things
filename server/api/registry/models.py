@@ -457,7 +457,7 @@ class Device(models.Model):
     absence_detection_enabled = models.BooleanField(default=False)
     # Opt-in to the Parquet archive, effective only while the mesh owner is an operator.
     archive_enabled = models.BooleanField(default=False)
-    # Who switched it on and when, cleared when switched off. The history is in SinkInstruction.
+    # The owner who switched it on, and the time, cleared when switched off. The history is in SinkInstruction.
     archive_enabled_at = models.DateTimeField(null=True, blank=True)
     archive_enabled_by = models.ForeignKey(
         Owner, on_delete=models.SET_NULL, null=True, blank=True, related_name="+"

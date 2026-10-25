@@ -270,7 +270,7 @@ ARCHIVE_BUCKET = env_str("READINGS__ARCHIVE_BUCKET")
 ARCHIVE_PREFIX = env_str("READINGS__ARCHIVE_PREFIX", "telemetry").strip("/")
 # Blank for AWS, where boto3 picks the regional endpoint.
 ARCHIVE_ENDPOINT_URL = env_str("READINGS__ARCHIVE_ENDPOINT_URL")
-# What callers reach, and what presigned links are signed for.
+# The endpoint callers reach, and the one presigned links are signed for.
 ARCHIVE_PUBLIC_ENDPOINT_URL = env_str("READINGS__ARCHIVE_PUBLIC_ENDPOINT_URL") or ARCHIVE_ENDPOINT_URL
 ARCHIVE_REGION = env_str("READINGS__ARCHIVE_REGION")
 ARCHIVE_ACCESS_KEY = env_str("READINGS__ARCHIVE_ACCESS_KEY")

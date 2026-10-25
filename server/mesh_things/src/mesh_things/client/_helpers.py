@@ -1,4 +1,4 @@
-"""What the hand-written helpers share between the sync and async clients."""
+"""Code the hand-written helpers share between the sync and async clients."""
 import time
 
 from mesh_things import exports

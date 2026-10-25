@@ -258,6 +258,6 @@ class ExportSerializer(serializers.Serializer):
     error = serializers.CharField(allow_null=True)
     created_at = serializers.DateTimeField()
     finished_at = serializers.DateTimeField(allow_null=True)
-    expires_at = serializers.DateTimeField(help_text="When the file is deleted and the export becomes `expired`.")
+    expires_at = serializers.DateTimeField(help_text="Time at which the file is deleted and the export becomes `expired`.")
     filename = serializers.CharField()
     url = serializers.CharField(allow_null=True, help_text="Download link while ready, valid until `expires_at`.")

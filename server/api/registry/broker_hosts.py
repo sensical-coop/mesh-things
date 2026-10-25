@@ -1,4 +1,4 @@
-"""Which remote broker hosts a source may connect to.
+"""The remote broker hosts a source may connect to.
 
 EMQX makes the connection from inside this deployment, so a source pointing at
 loopback, link-local or an internal service name would reach infrastructure that is
@@ -51,7 +51,7 @@ def resolve(host: str) -> list[str]:
 
 
 def refusal(host: str) -> str | None:
-    """Why a source may not connect to `host`, or None if it may."""
+    """Return the reason a source may not connect to `host`, or None if it may."""
     name = host.strip("[]").rstrip(".").lower()
     address = parse_ip(name)
     if address is not None:

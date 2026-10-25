@@ -75,7 +75,7 @@ class Param:
 
 @dataclass(frozen=True)
 class AlgorithmSpec:
-    """What a step needs to know to call an algorithm without importing it."""
+    """The details a step needs to call an algorithm without importing it."""
 
     name: str
     func: Callable

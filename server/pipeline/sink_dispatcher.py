@@ -26,7 +26,7 @@ log = structlog.get_logger()
 
 
 class SinkRouting:
-    """What mesh.sink_config.v1 says: each sink's streams, and the sinks of each mesh and device."""
+    """The state of mesh.sink_config.v1: each sink's streams, and the sinks of each mesh and device."""
 
     def __init__(self):
         self.sink_streams: dict[str, set[str]] = {}
@@ -55,7 +55,7 @@ class SinkRouting:
             table.pop(key, None)
 
     def topics(self, stream: str, event: dict) -> list[str]:
-        """Where one event goes; none for a backfill, which a consumer would read as new."""
+        """Return the destinations of one event, none for a backfill, which a consumer would read as new."""
         mesh_id = event.get("mesh_id")
         node_id = event.get("node_id", event.get("device_id"))
         if not mesh_id or node_id is None or event.get("backfill"):

@@ -1,8 +1,8 @@
 #!/usr/bin/env python3
-"""What this instance knows about: telemetry types, measurements, alarm detectors and algorithms.
+"""List the instance's catalog: telemetry types, measurements, alarm detectors and algorithms.
 
-The catalog is shared by every owner. It explains what each channel measures and in which
-unit, which alarms you can switch on, and which postprocessing algorithms you can use in a
+The catalog is shared by every owner. It gives the measurement and unit of each channel,
+the alarms you can switch on, and the postprocessing algorithms available for a
 blueprint. The instance's overall figures come first.
 
   python3 get_catalog.py

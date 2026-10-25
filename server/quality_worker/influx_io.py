@@ -113,7 +113,7 @@ from(bucket: "{bucket}")
         ]
 
     def first_reading_after(self, mesh_id: str, node_id: str, start: datetime, stop: datetime) -> datetime | None:
-        """When a device next reported anything between two instants, if it did."""
+        """Return the next time a device reported anything between two instants, if it did."""
         mesh_id = validate_mesh_id(mesh_id)
         flux = f'''
 from(bucket: "{self.bucket}")

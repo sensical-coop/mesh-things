@@ -83,7 +83,7 @@ SLOW_READING_INTERVAL_SECONDS = 1800
 
 
 def range_readings_for(interval_seconds: float | None) -> int:
-    """How many readings in a row must fall outside the range before it alarms."""
+    """Return the number of readings in a row that must fall outside the range before it alarms."""
     if interval_seconds and interval_seconds >= SLOW_READING_INTERVAL_SECONDS:
         return RANGE_READINGS_SLOW
     return RANGE_READINGS
@@ -102,7 +102,7 @@ def range_check_triggered(value: float, min_value: float | None, max_value: floa
 # does. Duplicates of one packet heard by several gateways stay well below it.
 REPLAY_BURST_READINGS = 10
 REPLAY_BURST_SECONDS = 10.0
-# How long an alarm waits for its channel to show a burst before it is sent.
+# Time an alarm waits for its channel to show a burst before it is sent.
 REPLAY_HOLD_SECONDS = 5.0
 
 
@@ -159,7 +159,7 @@ def track_condition(state: dict | None, holds: bool, reading_time: float, repeat
 
 
 def absence_on_timer(last_alarm_at: float | None, now: float, repeat_seconds: float) -> float | None:
-    """What a device's silence timer firing at `now` does.
+    """Decide the outcome of a device's silence timer firing at `now`.
 
     Returns None to alarm now, or the time to check again: a silence within
     `repeat_seconds` of the previous alarm is held until that much has passed.

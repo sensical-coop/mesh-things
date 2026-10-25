@@ -70,7 +70,7 @@ LATEST_PARAMS = [
         "Restrict to one family, for example `telemetry:environment_metrics`. "
         "Defaults to every one.",
     ),
-    _query("lookback", f"How far back to search for a value, as {_TIME_FORMS}.", default="-30d"),
+    _query("lookback", f"Earliest time to search for a value, as {_TIME_FORMS}.", default="-30d"),
 ]
 
 # latest_all returns a different body from the single-family case, so the schema
@@ -210,7 +210,7 @@ class LatestView(ReadingsAPIView):
     Args:
         payload_kind: Restrict to one family, for example
             `telemetry:environment_metrics`. Defaults to every one.
-        lookback: How far back to search for a value, as a relative duration, a
+        lookback: Earliest time to search for a value, as a relative duration, a
             date or a timestamp. Defaults to `-30d`.
     """
 

@@ -38,7 +38,7 @@ def shared_group() -> str:
 
 
 def session_expiry_seconds() -> int:
-    """How long the broker keeps a member's session after it disconnects.
+    """Return the time the broker keeps a member's session after it disconnects.
 
     A single-member deployment wants this generous.
     """

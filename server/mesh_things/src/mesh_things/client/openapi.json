@@ -955,7 +955,7 @@
       },
       "post": {
         "operationId": "devices_postprocessings_calibrations_create",
-        "description": "Record a calibration for one step, in force from `valid_from` onwards.\n\nHistory is kept: readings are processed with the calibration in force\nwhen they were taken, so recalibrating a sensor never rewrites the\npast. Every required calibration parameter of the step's algorithm\nmust be given. Rolled back if the stream tier cannot be notified.\n\nArgs:\n    step_key: Step being calibrated.\n    params: Calibration parameters of the step's algorithm.\n    valid_from: When this calibration takes effect. Defaults to now.",
+        "description": "Record a calibration for one step, in force from `valid_from` onwards.\n\nHistory is kept: readings are processed with the calibration in force\nwhen they were taken, so recalibrating a sensor never rewrites the\npast. Every required calibration parameter of the step's algorithm\nmust be given. Rolled back if the stream tier cannot be notified.\n\nArgs:\n    step_key: Step being calibrated.\n    params: Calibration parameters of the step's algorithm.\n    valid_from: Time at which this calibration takes effect. Defaults to now.",
         "parameters": [
           {
             "in": "path",
@@ -1654,7 +1654,7 @@
     "/meshes/{mesh_id}/links": {
       "get": {
         "operationId": "meshes_links_list",
-        "description": "List the radio links heard on this mesh, longest first.\n\nA link is one node heard by another, as one source reports it:\n`traceroute` hops, `neighborinfo` reports, or `direct` receptions by a\ngateway with no hop in between. Each is directional, since the SNR is\nmeasured by the receiving node, so a pair heard both ways has two links.\nDirect links are added once an hour. Links not heard for 30 days are\ndeleted. A public mesh's links are readable without credentials.\n\nArgs:\n    since: How far back a link must have been heard, one of `24h`, `7d`\n        or `30d`. Defaults to `7d`.\n    node_id: Only links to or from this node.",
+        "description": "List the radio links heard on this mesh, longest first.\n\nA link is one node heard by another, as one source reports it:\n`traceroute` hops, `neighborinfo` reports, or `direct` receptions by a\ngateway with no hop in between. Each is directional, since the SNR is\nmeasured by the receiving node, so a pair heard both ways has two links.\nDirect links are added once an hour. Links not heard for 30 days are\ndeleted. A public mesh's links are readable without credentials.\n\nArgs:\n    since: Maximum time since a link was last heard, one of `24h`, `7d`\n        or `30d`. Defaults to `7d`.\n    node_id: Only links to or from this node.",
         "parameters": [
           {
             "in": "path",
@@ -1685,7 +1685,7 @@
               ],
               "default": "7d"
             },
-            "description": "How far back a link must have been heard."
+            "description": "Maximum time since a link was last heard."
           }
         ],
         "tags": [
@@ -1779,7 +1779,7 @@
     "/meshes/{mesh_id}/traceroutes": {
       "get": {
         "operationId": "meshes_traceroutes_list",
-        "description": "List the traceroutes heard on this mesh, newest first.\n\nA traceroute heard by several gateways is listed once, with the most\ncomplete route any of them saw. `towards` runs from the node that started\nthe traceroute to its target and `back` returns; each SNR is the one\nmeasured on arriving at the next node. A reply carries both directions,\na request only the hops taken so far. Traceroutes are kept 30 days. A\npublic mesh's traceroutes are readable without credentials.\n\nArgs:\n    limit: How many to return, up to 500. Defaults to 50.\n    before: Only traceroutes heard before this time, as an ISO 8601\n        timestamp. Pass the `heard_at` of the last one received to read\n        the next page.\n    node_id: Only traceroutes from, to or through this node.",
+        "description": "List the traceroutes heard on this mesh, newest first.\n\nA traceroute heard by several gateways is listed once, with the most\ncomplete route any of them saw. `towards` runs from the node that started\nthe traceroute to its target and `back` returns; each SNR is the one\nmeasured on arriving at the next node. A reply carries both directions,\na request only the hops taken so far. Traceroutes are kept 30 days. A\npublic mesh's traceroutes are readable without credentials.\n\nArgs:\n    limit: Number of traceroutes to return, up to 500. Defaults to 50.\n    before: Only traceroutes heard before this time, as an ISO 8601\n        timestamp. Pass the `heard_at` of the last one received to read\n        the next page.\n    node_id: Only traceroutes from, to or through this node.",
         "parameters": [
           {
             "in": "query",
@@ -1796,7 +1796,7 @@
               "type": "integer",
               "default": 50
             },
-            "description": "How many to return."
+            "description": "Number of traceroutes to return."
           },
           {
             "in": "path",
@@ -2568,7 +2568,7 @@
       },
       "post": {
         "operationId": "owners_me_operator_request_create",
-        "description": "Ask for the operator role, which lets an owner create sources.\n\nEvery superuser is emailed and one of them approves or rejects the\nrequest. Only one request can be pending at a time, and an owner who\nis already an operator cannot file one. Limited to 3 requests a day.\n\nArgs:\n    reason: Why the role is needed. Shown to superusers. Required.",
+        "description": "Ask for the operator role, which lets an owner create sources.\n\nEvery superuser is emailed and one of them approves or rejects the\nrequest. Only one request can be pending at a time, and an owner who\nis already an operator cannot file one. Limited to 3 requests a day.\n\nArgs:\n    reason: Reason the role is needed. Shown to superusers. Required.",
         "tags": [
           "owners"
         ],
@@ -2913,7 +2913,7 @@
     "/postprocessing-backfills/{backfill_id}": {
       "put": {
         "operationId": "postprocessing_backfills_update",
-        "description": "Record how a claimed backfill finished. Superusers only.\n\nArgs:\n    status: `done` or `failed`.\n    points_published: Derived values published.\n    error: Why it failed.",
+        "description": "Record how a claimed backfill finished. Superusers only.\n\nArgs:\n    status: `done` or `failed`.\n    points_published: Derived values published.\n    error: Reason for the failure.",
         "parameters": [
           {
             "in": "path",
@@ -3647,7 +3647,7 @@
               "type": "string",
               "default": "-30d"
             },
-            "description": "How far back to search for a value, as a relative duration such as `-24h`, a date such as `2026-09-01`, or a timestamp such as `2026-09-01T13:45:00Z`."
+            "description": "Earliest time to search for a value, as a relative duration such as `-24h`, a date such as `2026-09-01`, or a timestamp such as `2026-09-01T13:45:00Z`."
           },
           {
             "in": "query",
@@ -4110,7 +4110,7 @@
     "/readings/meshes/{mesh_id}/nodes/{node_id}/latest": {
       "get": {
         "operationId": "readings_meshes_nodes_latest_retrieve",
-        "description": "Return a device's most recent readings.\n\nWithout `payload_kind`, every channel the device has reported comes back in\none call, each annotated with its unit from the measurement catalog. A\ndevice on a public mesh is readable without credentials.\n\nArgs:\n    payload_kind: Restrict to one family, for example\n        `telemetry:environment_metrics`. Defaults to every one.\n    lookback: How far back to search for a value, as a relative duration, a\n        date or a timestamp. Defaults to `-30d`.",
+        "description": "Return a device's most recent readings.\n\nWithout `payload_kind`, every channel the device has reported comes back in\none call, each annotated with its unit from the measurement catalog. A\ndevice on a public mesh is readable without credentials.\n\nArgs:\n    payload_kind: Restrict to one family, for example\n        `telemetry:environment_metrics`. Defaults to every one.\n    lookback: Earliest time to search for a value, as a relative duration, a\n        date or a timestamp. Defaults to `-30d`.",
         "parameters": [
           {
             "in": "query",
@@ -4119,7 +4119,7 @@
               "type": "string",
               "default": "-30d"
             },
-            "description": "How far back to search for a value, as a relative duration such as `-24h`, a date such as `2026-09-01`, or a timestamp such as `2026-09-01T13:45:00Z`."
+            "description": "Earliest time to search for a value, as a relative duration such as `-24h`, a date such as `2026-09-01`, or a timestamp such as `2026-09-01T13:45:00Z`."
           },
           {
             "in": "path",
@@ -4392,7 +4392,7 @@
       },
       "post": {
         "operationId": "sinks_create",
-        "description": "Create a sink and return the credentials its consumer subscribes with. Operators only.\n\nThe consumer connects to `broker` over TLS as `username` with the returned\npassword and subscribes under `topic_filter`, where each message is one\nreading or alarm as JSON. The password is shown in this response only.\nThe caller must first accept the current sink terms. Nothing is kept if\nthe broker or the pipeline cannot be set up, or if the broker does not\nyet keep sink topics private.\n\nArgs:\n    label: Name for the sink.\n    streams: Which readings are sent: `decoded`, `derived` and `alarms`.\n        Defaults to `decoded`. Derived readings are sent only by\n        instances that run postprocessing, and alarms only by those that\n        run quality checks.\n    mesh_ids: Meshes whose every node is sent, including nodes that\n        appear later. Each must be one the caller may edit, owned by an\n        operator.\n    device_ids: Registrations of single devices to send, under the same\n        conditions.\n    terms_version: The `version` of the sink terms the caller accepted.\n        Required unless the instance does not enforce terms.\n    terms_locale: Locale the terms were shown in, `en` or `es`. Defaults\n        to `en`.",
+        "description": "Create a sink and return the credentials its consumer subscribes with. Operators only.\n\nThe consumer connects to `broker` over TLS as `username` with the returned\npassword and subscribes under `topic_filter`, where each message is one\nreading or alarm as JSON. The password is shown in this response only.\nThe caller must first accept the current sink terms. Nothing is kept if\nthe broker or the pipeline cannot be set up, or if the broker does not\nyet keep sink topics private.\n\nArgs:\n    label: Name for the sink.\n    streams: Readings to send: `decoded`, `derived` and `alarms`.\n        Defaults to `decoded`. Derived readings are sent only by\n        instances that run postprocessing, and alarms only by those that\n        run quality checks.\n    mesh_ids: Meshes whose every node is sent, including nodes that\n        appear later. Each must be one the caller may edit, owned by an\n        operator.\n    device_ids: Registrations of single devices to send, under the same\n        conditions.\n    terms_version: The `version` of the sink terms the caller accepted.\n        Required unless the instance does not enforce terms.\n    terms_locale: Locale the terms were shown in, `en` or `es`. Defaults\n        to `en`.",
         "tags": [
           "sinks"
         ],
@@ -5642,7 +5642,7 @@
       },
       "BackfillClaim": {
         "type": "object",
-        "description": "What the quality worker needs to run a claimed backfill.",
+        "description": "Details the quality worker needs to run a claimed backfill.",
         "properties": {
           "id": {
             "type": "string",
@@ -6681,7 +6681,7 @@
           "last_sent_template": {
             "type": "string",
             "nullable": true,
-            "description": "Which email, such as `quality_alarm`."
+            "description": "Template of the email, such as `quality_alarm`."
           },
           "last_failed_at": {
             "type": "string",
@@ -6773,7 +6773,7 @@
           "expires_at": {
             "type": "string",
             "format": "date-time",
-            "description": "When the file is deleted and the export becomes `expired`."
+            "description": "Time at which the file is deleted and the export becomes `expired`."
           },
           "filename": {
             "type": "string"
@@ -7159,7 +7159,7 @@
             "type": "string",
             "format": "date-time",
             "nullable": true,
-            "description": "When the mesh terms acceptance lapses. Null for no time limit, or on a source.",
+            "description": "Time at which the mesh terms acceptance lapses. Null for no time limit, or on a source.",
             "readOnly": true
           },
           "paused_at": {
@@ -7306,7 +7306,7 @@
             "type": "string",
             "format": "date-time",
             "nullable": true,
-            "description": "When the mesh terms acceptance lapses. Null for no time limit, or on a source.",
+            "description": "Time at which the mesh terms acceptance lapses. Null for no time limit, or on a source.",
             "readOnly": true
           },
           "paused_at": {
@@ -8043,7 +8043,7 @@
         "properties": {
           "reason": {
             "type": "string",
-            "description": "Why the operator role is needed. Shown to superusers.",
+            "description": "Reason the operator role is needed. Shown to superusers.",
             "maxLength": 2000
           }
         },
@@ -9008,7 +9008,7 @@
             "items": {
               "$ref": "#/components/schemas/StreamsEnum"
             },
-            "description": "Which readings are sent: `decoded`, `derived`, `alarms`. Defaults to `decoded`."
+            "description": "Readings to send: `decoded`, `derived`, `alarms`. Defaults to `decoded`."
           },
           "mesh_ids": {
             "type": "array",
@@ -9047,7 +9047,7 @@
               "$ref": "#/components/schemas/StreamsEnum"
             },
             "readOnly": true,
-            "description": "Which readings are sent: `decoded`, `derived`, `alarms`."
+            "description": "Readings to send: `decoded`, `derived`, `alarms`."
           },
           "mesh_ids": {
             "type": "array",
@@ -9088,7 +9088,7 @@
             "format": "date-time",
             "readOnly": true,
             "nullable": true,
-            "description": "When the sink was paused because its terms lapsed."
+            "description": "Time at which the sink was paused because its terms lapsed."
           },
           "terms_accepted_version": {
             "type": "string",
@@ -9099,7 +9099,7 @@
             "type": "string",
             "format": "date-time",
             "nullable": true,
-            "description": "When the terms acceptance lapses. Null for no time limit.",
+            "description": "Time at which the terms acceptance lapses. Null for no time limit.",
             "readOnly": true
           },
           "created_by_id": {
@@ -9162,7 +9162,7 @@
               "$ref": "#/components/schemas/StreamsEnum"
             },
             "readOnly": true,
-            "description": "Which readings are sent: `decoded`, `derived`, `alarms`."
+            "description": "Readings to send: `decoded`, `derived`, `alarms`."
           },
           "mesh_ids": {
             "type": "array",
@@ -9203,7 +9203,7 @@
             "format": "date-time",
             "readOnly": true,
             "nullable": true,
-            "description": "When the sink was paused because its terms lapsed."
+            "description": "Time at which the sink was paused because its terms lapsed."
           },
           "terms_accepted_version": {
             "type": "string",
@@ -9214,7 +9214,7 @@
             "type": "string",
             "format": "date-time",
             "nullable": true,
-            "description": "When the terms acceptance lapses. Null for no time limit.",
+            "description": "Time at which the terms acceptance lapses. Null for no time limit.",
             "readOnly": true
           },
           "created_by_id": {
@@ -9287,7 +9287,7 @@
             "items": {
               "$ref": "#/components/schemas/StreamsEnum"
             },
-            "description": "Which readings are sent: `decoded`, `derived`, `alarms`. Defaults to `decoded`."
+            "description": "Readings to send: `decoded`, `derived`, `alarms`. Defaults to `decoded`."
           },
           "mesh_ids": {
             "type": "array",
@@ -9466,7 +9466,7 @@
             "format": "date-time",
             "readOnly": true,
             "nullable": true,
-            "description": "When the source was paused because its terms lapsed."
+            "description": "Time at which the source was paused because its terms lapsed."
           },
           "terms_accepted_version": {
             "type": "string",
@@ -9477,7 +9477,7 @@
             "type": "string",
             "format": "date-time",
             "nullable": true,
-            "description": "When the terms acceptance lapses. Null when data is kept without a time limit.",
+            "description": "Time at which the terms acceptance lapses. Null when data is kept without a time limit.",
             "readOnly": true
           }
         },

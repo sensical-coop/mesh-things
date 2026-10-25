@@ -1,4 +1,4 @@
-"""Which sinks each device's readings are sent to, published to mesh.sink_config.v1.
+"""The sinks that receive each device's readings, published to mesh.sink_config.v1.
 
 The published lists are the effective ones, so consumers apply them as is. A device's
 list holds the archive while an allowed registration of the node opts in, and the MQTT

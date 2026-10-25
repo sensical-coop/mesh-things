@@ -1,6 +1,6 @@
 # Mesh things package examples
 
-These are small scripts that show how to use the [mesh-things package](../README.md) with the API: from reading your meshes and their readings, to setting up a mesh, sharing data with others and working with the archive. Each script is independent, so you can copy whichever one you need and adapt it to your own project. They are also included in the package's source distribution.
+These are small scripts that show the [mesh-things package](../README.md) at work with the API: from reading your meshes and their readings, to setting up a mesh, sharing data with others and working with the archive. Each script is independent, so you can copy whichever one you need and adapt it to your own project. They are also included in the package's source distribution.
 
 For a description of every operation, its parameters and its responses, you can open the interactive API documentation at `/docs` on your instance, for example `http://localhost/docs`.
 
@@ -16,7 +16,7 @@ pip install -e "..[pandas,archive]" duckdb
 
 The scripts read their settings from these environment variables, so you only need to set them once:
 
-| Variable | What it is |
+| Variable | Description |
 |---|---|
 | `MESH_THINGS_URL` | The address of your instance. Defaults to `http://localhost`, a local stack started with `docker compose`. |
 | `MESH_THINGS_API_KEY` | Your API key. You receive it when you sign up with `registry_create_owner.py`. |
@@ -29,20 +29,20 @@ Some walkthroughs below also use two tools that are not API clients, a fake gate
 These scripts only read from the API, so they are a safe way to explore. We suggest starting with `get_started.py`, which gives you an overview of your account.
 
 ```bash
-# Your account, your meshes, their devices and what each device reported last
+# Your account, your meshes, their devices and the latest reading of each device
 python3 get_started.py
 
 # The latest value of every channel on a mesh, with units, optionally as a DataFrame
 python3 get_latest_readings.py --mesh-id <mesh id>
 python3 get_latest_readings.py --mesh-id <mesh id> --dataframe
 
-# How well a device is reporting: completeness, gaps, alarms and radio traffic
+# Data quality of one device: completeness, gaps, alarms and radio traffic
 python3 get_device_health.py --device-uuid <device uuid> --start=-7d --range 7d
 
-# What the instance knows: telemetry types, measurements and units, detectors, algorithms
+# The instance's catalog: telemetry types, measurements and units, detectors, algorithms
 python3 get_catalog.py
 
-# What anyone can read without an API key
+# Public meshes, read without an API key
 python3 get_public_meshes.py
 ```
 
@@ -74,7 +74,7 @@ Individual alarms are kept for 30 days. Totals per detector for longer periods c
 
 ### Mesh traffic and topology
 
-`mesh_stats.py` summarises a mesh's radio traffic: totals, packets by type, the busiest nodes, each gateway's share and signal, and how many hops packets took. `registry_mesh_topology.py` shows who hears whom: the radio links between nodes, longest first, followed by the newest traceroutes. A public mesh can be read without an API key.
+`mesh_stats.py` summarises a mesh's radio traffic: totals, packets by type, the busiest nodes, each gateway's share and signal, and how many hops packets took. `registry_mesh_topology.py` shows the radio links between nodes, longest first, followed by the newest traceroutes. A public mesh can be read without an API key.
 
 ```bash
 python3 mesh_stats.py --mesh-id <mesh id> --range 7d
@@ -84,7 +84,7 @@ python3 registry_mesh_topology.py --mesh-id <mesh id> --node-id '!334af480'
 
 ## Setting up a mesh
 
-A mesh holds the channel name and key that every device on your Meshtastic network shares. Each device on it is either a gateway, a node that relays traffic to the broker, or a regular node. Registering a gateway is what allows the instance to decode a mesh's traffic. The other nodes appear on their own the first time one of their packets is decoded.
+A mesh holds the channel name and key that every device on your Meshtastic network shares. Each device on it is either a gateway, a node that relays traffic to the broker, or a regular node. The instance decodes a mesh's traffic once its gateway is registered. The other nodes appear on their own the first time one of their packets is decoded.
 
 The channel key (`psk_b64`) and the devices' admin keys (`admin_keys_b64`) are only shown to the mesh's owner and to superusers.
 
@@ -100,7 +100,7 @@ python3 registry_create_mesh.py --show-terms
 python3 registry_create_mesh.py --accept-terms --channel-id LongFast
 export MESH_ID=...
 
-# 3. Register the gateway that relays this mesh's traffic. This is what starts decoding.
+# 3. Register the gateway that relays this mesh's traffic. Decoding starts from then on.
 python3 registry_create_gateway.py --node-id 111222333 --label "office gateway"
 
 #    Alternatively, let the mesh find its gateways on its own. Any gateway whose packets
@@ -182,18 +182,18 @@ SINK_BROKER=mqtt.example.org:8883 SINK_USERNAME=... SINK_PASSWORD=... \
 SINK_TOPIC_FILTER='mt-sources-sinks/<sink id>/#' python3 ../../examples/sink_consume.py
 ```
 
-To check a sink, `sink_count.py` counts what it delivers and prints a summary. With `--expect`, it exits with an error when fewer messages arrive than expected.
+To check a sink, `sink_count.py` counts the messages it delivers and prints a summary. With `--expect`, it exits with an error when fewer messages arrive than expected.
 
 ## The measurement catalog
 
-The catalog describes what devices can report: the kinds of telemetry and the measurements in each, with their units. It is shared by every owner, and the instance fills it in from the Meshtastic definitions when it starts. Superusers can complete it, for example with a telemetry type's usual reporting interval. Owners can set the plausible range of a measurement on each of their devices.
+The catalog describes the data devices can report: the kinds of telemetry and the measurements in each, with their units. It is shared by every owner, and the instance fills it in from the Meshtastic definitions when it starts. Superusers can complete it, for example with a telemetry type's usual reporting interval. Owners can set the plausible range of a measurement on each of their devices.
 
 ```bash
 # The measurements of a telemetry type, and their defaults
 python3 registry_curate_telemetry_catalog.py --api-key $SUPERUSER_API_KEY \
   --payload-kind telemetry:environment_metrics --list
 
-# How often devices usually report this kind of telemetry, in seconds (superusers)
+# The usual reporting interval of this kind of telemetry, in seconds (superusers)
 python3 registry_curate_telemetry_catalog.py --api-key $SUPERUSER_API_KEY \
   --payload-kind telemetry:environment_metrics --default-reading-interval-seconds 900
 
@@ -210,7 +210,7 @@ These values are not only descriptive: the data quality checks use them as soon 
 A blueprint is a reusable recipe that turns raw readings into new values, for example a sensor's voltage into a gas concentration. It lists the channels it reads and the steps it runs, each step using one of the instance's algorithms. When you attach a blueprint to a device, you also give it that device's own calibration, since no two sensors are exactly alike. The results are computed live, and a backfill can compute them for past readings too.
 
 ```bash
-# The algorithms available, and which of their parameters are calibration
+# The available algorithms, and their calibration parameters
 python3 registry_manage_blueprint.py --list-algorithms
 
 # Create the built-in NO2 example, or your own from a JSON file
@@ -244,7 +244,7 @@ python3 export_download.py --mesh-id <mesh id> --start 2026-09-27 --stop 2026-09
 The archive keeps decoded and derived readings as Parquet files, for analysis on a larger scale. Each device joins it separately, on meshes owned by an operator, and only on instances that run it. Superusers and the mesh's owner, while an operator, can read it, with temporary credentials that the API issues.
 
 ```bash
-# 1. Start archiving a device, or stop (what was stored is kept)
+# 1. Start archiving a device, or stop (stored data is kept)
 python3 registry_device_archive.py --device-uuid <device uuid>
 python3 registry_device_archive.py --device-uuid <device uuid> --off
 

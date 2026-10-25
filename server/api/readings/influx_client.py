@@ -320,7 +320,7 @@ from(bucket: "{MESH_STATS_BUCKET}")
         return found
 
     def _active(self, mesh_id: str, measurement: str, field: str, tag: str, since: str, every: str) -> list[dict]:
-        """How many distinct `tag` values had a non-zero `field` in each bucket, stamped at its start."""
+        """Count the distinct `tag` values with a non-zero `field` in each bucket, stamped at its start."""
         flux = f'''
 from(bucket: "{MESH_STATS_BUCKET}")
   |> range(start: {since})

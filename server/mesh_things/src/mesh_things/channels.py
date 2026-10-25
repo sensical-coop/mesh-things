@@ -40,7 +40,7 @@ POSITION_KIND = f"{DEVICE}:{POSITION}"
 NODEINFO_KIND = f"{DEVICE}:{NODEINFO}"
 
 # channel_origins
-# Who produced the value. Part of the namespace, and exposed on the API.
+# The producer of a value. Part of the namespace, and exposed on the API.
 ORIGIN_MEASURED = "measured"
 ORIGIN_DEVICE = "device"
 ORIGIN_COMPUTED = "computed"
@@ -75,7 +75,7 @@ def payload_kind_of_measurement(measurement: str) -> str:
 
 
 def namespace_of_measurement(measurement: str) -> str:
-    """Which of the three producers an InfluxDB measurement came from."""
+    """Return the producer, of the three, that an InfluxDB measurement came from."""
     if measurement in COMPUTED_MEASUREMENTS:
         return COMPUTED
     if measurement in DEVICE_MEASUREMENTS or measurement.startswith(PORTNUM_PREFIX):
@@ -97,7 +97,7 @@ def namespace_of(payload_kind: str) -> str:
 
 
 def origin_of(payload_kind: str) -> str:
-    """Who produced the value from the payload_kind's namespace."""
+    """Return the origin of a value, from the payload_kind's namespace."""
     return {
         TELEMETRY: ORIGIN_MEASURED,
         DEVICE: ORIGIN_DEVICE,

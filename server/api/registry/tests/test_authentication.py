@@ -41,7 +41,7 @@ class FailedAuthGuardTests(RegistryTestCase):
         key = "registry:failed-auth:race"
 
         def incr_after_expiry(cache_key):
-            # What Redis INCR does to a key that expired after Django checked it exists.
+            # Redis INCR's behaviour on a key that expired after Django checked it exists.
             cache.set(cache_key, 1, None)
             return 1
 

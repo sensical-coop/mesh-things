@@ -82,7 +82,7 @@ def build_decoded_message(se: mqtt_pb2.ServiceEnvelope, portnum: int, pb_dict: d
 
 
 def routing_fields(mp: mesh_pb2.MeshPacket) -> dict:
-    """How a packet travelled to the gateway that heard it.
+    """Return the route a packet took to the gateway that heard it.
 
     `hop_start` is 0 on firmware that predates it, which leaves the hop count
     unknown. Signal readings are 0 when the gateway did not receive the packet

@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """Register a gateway on a mesh, the node that relays the mesh's traffic to the broker.
 
-Registering a gateway is what allows the instance to decode the mesh's traffic. The
+The instance decodes the mesh's traffic once its gateway is registered. The
 mesh's other nodes appear on their own once their packets are decoded.
 """
 import argparse

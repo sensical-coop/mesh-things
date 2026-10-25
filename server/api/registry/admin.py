@@ -263,7 +263,7 @@ class TelemetryVariantAdmin(admin.ModelAdmin):
 
 @admin.register(TelemetryVariantMeasurement)
 class TelemetryVariantMeasurementAdmin(admin.ModelAdmin):
-    """Which detectors default on per channel, read by the quality checks."""
+    """The detectors switched on by default per channel, read by the quality checks."""
 
     list_display = ("measurement_type", "telemetry_variant", "default_enabled_detectors")
     list_select_related = ("measurement_type", "telemetry_variant")

@@ -29,14 +29,14 @@ for mesh in api.meshes.list():
     print(mesh["id"], mesh["label"])
 ```
 
-Every operation of the API is available as a method. Methods are grouped by topic, such as `meshes`, `devices` or `readings`, and named after the operation they call: for example, `GET /meshes/{mesh_id}/traceroutes` becomes `api.meshes.traceroutes_list(mesh_id)`. Responses are plain Python dictionaries and lists. To see what a method does and which arguments it takes, call `help()` on it: you will see the API's own documentation.
+Every operation of the API is available as a method. Methods are grouped by topic, such as `meshes`, `devices` or `readings`, and named after the operation they call: for example, `GET /meshes/{mesh_id}/traceroutes` becomes `api.meshes.traceroutes_list(mesh_id)`. Responses are plain Python dictionaries and lists. Calling `help()` on a method shows the API's own documentation for it, including its arguments.
 
 ## Reading your data
 
-Most of the time you will want to read information. Here are some of the questions the client can answer for you:
+Most of the time you will want to read data. The calls below cover the most common cases:
 
 ```python
-# Which devices are on a mesh, and what did each of them report last?
+# The devices on a mesh, and the latest readings of each one
 for device in api.meshes.devices_list(mesh_id):
     latest = api.readings.devices_latest_get(device["uuid"])
     for reading in latest["readings"]:
@@ -47,15 +47,15 @@ temperature = api.readings.devices_get(
     device_uuid, channel="environment_metrics.temperature", start="-1d", window="1h", agg="mean",
 )
 
-# How complete the data is, and how busy the radio has been
+# Data completeness, radio traffic and mesh statistics
 quality = api.readings.devices_quality_get(device_uuid, start="-7d")
 traffic = api.readings.devices_traffic_get(device_uuid, range="7d")
 stats = api.readings.meshes_stats_get(mesh_id, range="24h")
 
-# Who hears whom on the mesh
+# Radio links between the nodes of a mesh
 links = api.meshes.links_list(mesh_id, since="7d")
 
-# What each channel measures, and in which unit
+# The measurements of one kind of telemetry, with their units
 measurements = api.measurements.list(payload_kind="telemetry:environment_metrics")
 ```
 
@@ -143,7 +143,7 @@ async with AsyncMeshThings("https://api.example.org", api_key="...") as api:
 
 ## Errors
 
-When the API answers with an error, the client raises an exception that tells you what happened:
+When the API answers with an error, the client raises one of the following exceptions:
 
 | Exception | When |
 |---|---|
@@ -152,7 +152,7 @@ When the API answers with an error, the client raises an exception that tells yo
 | `Forbidden` | You do not have access to this resource (403). |
 | `NotFound` | The resource does not exist, or you cannot see it (404). |
 | `Conflict` | The change clashes with existing data (409). |
-| `Throttled` | You are sending requests too quickly (429). `retry_after` says how long to wait, and `retries=` makes the client wait and retry for you. |
+| `Throttled` | You are sending requests too quickly (429). `retry_after` gives the waiting time in seconds, and `retries=` makes the client wait and retry for you. |
 | `ExportInProgress` | One of your exports is already running. |
 | `ServerError` | Something went wrong on the server (5xx). |
 | `InsecureTransport` | Your API key, or archive credentials, would travel over plain HTTP to another computer. |

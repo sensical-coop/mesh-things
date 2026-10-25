@@ -261,7 +261,7 @@ class EmqxClient:
             resp.raise_for_status()
 
     def sink_authorization_problem(self) -> str | None:
-        """Why sinks would not be protected, or None when the built-in database is checked first."""
+        """Return the reason sinks would not be protected, or None when the built-in database is checked first."""
         resp = self._request("GET", AUTHZ_SOURCES)
         resp.raise_for_status()
         found = resp.json().get("sources", [])
