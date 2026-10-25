@@ -101,7 +101,8 @@ class Checker:
         if name == "readings_api":
             return await self._latest(self._api(http))
         # The root and the schema are not API operations, so they are plain GETs.
-        resp = await http.get(f"{self.config.api_url}/{self._path(name)}")
+        # Followed as aiohttp did before, so a redirect to the right place still passes.
+        resp = await http.get(f"{self.config.api_url}/{self._path(name)}", follow_redirects=True)
         if resp.status_code != 200:
             raise ApiError(resp.status_code, f"HTTP {resp.status_code}")
         return None

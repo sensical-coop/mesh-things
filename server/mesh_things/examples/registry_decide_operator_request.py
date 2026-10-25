@@ -36,7 +36,8 @@ def main():
 
     decision, request_id = ("approve", args.approve) if args.approve else ("reject", args.reject)
     request = api.operator_requests.update(request_id, body={"decision": decision, "note": args.note})
-    print(f"Operator request {request['id']} {request['status']}, the requester has been emailed")
+    # The decision stands even if the email fails to send.
+    print(f"Operator request {request['id']} {request['status']}; the requester is emailed the decision")
 
 
 if __name__ == "__main__":

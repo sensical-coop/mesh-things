@@ -30,6 +30,21 @@ def read_anonymously(mesh_id: str) -> None:
         print(f"  node {device['node_id']}: {len(latest['readings'])} latest reading(s), timeseries {refused}")
 
 
+def read_as_another_owner(mesh_id: str, reader_api_key: str) -> None:
+    """Read the mesh as an owner who does not own it, and fail to rename it."""
+    reader = MeshThings(API_URL, reader_api_key)
+    body = reader.meshes.get(mesh_id)
+    print(f"\nAs another owner: read the mesh, channel_id={body['channel_id']!r}")
+    # The pre-shared key is stripped for everyone but the owner, so its
+    # absence here is the point of the exercise rather than a missing field.
+    print(f"  psk_b64 present: {'psk_b64' in body}")
+    try:
+        reader.meshes.update(mesh_id, body={"label": "not mine to rename"})
+        print("  write accepted - publishing should widen reads only")
+    except ApiError as e:
+        print(f"  write refused with {e.status} (publishing widens reads only)")
+
+
 def main():
     parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     parser.add_argument("--api-key", default=os.environ.get("MESH_THINGS_API_KEY"), help="the mesh owner's key")
@@ -46,27 +61,17 @@ def main():
     owner = MeshThings(API_URL, args.api_key)
     owner.meshes.update(args.mesh_id, body={"is_public": True})
     print(f"Mesh {args.mesh_id} is now public, also to callers without an API key")
-
-    read_anonymously(args.mesh_id)
-
-    if args.reader_api_key:
-        reader = MeshThings(API_URL, args.reader_api_key)
-        body = reader.meshes.get(args.mesh_id)
-        print(f"\nAs another owner: read the mesh, channel_id={body['channel_id']!r}")
-        # The pre-shared key is stripped for everyone but the owner, so its
-        # absence here is the point of the exercise rather than a missing field.
-        print(f"  psk_b64 present: {'psk_b64' in body}")
-        try:
-            reader.meshes.update(args.mesh_id, body={"label": "not mine to rename"})
-            print("  write accepted - publishing should widen reads only")
-        except ApiError as e:
-            print(f"  write refused with {e.status} (publishing widens reads only)")
-
-    if args.keep:
-        print("\nLeaving the mesh public (--keep)")
-        return
-    owner.meshes.update(args.mesh_id, body={"is_public": False})
-    print(f"\nMesh {args.mesh_id} is private again")
+    # Made private again even when a step below fails, unless --keep asks otherwise.
+    try:
+        read_anonymously(args.mesh_id)
+        if args.reader_api_key:
+            read_as_another_owner(args.mesh_id, args.reader_api_key)
+    finally:
+        if args.keep:
+            print("\nLeaving the mesh public (--keep)")
+        else:
+            owner.meshes.update(args.mesh_id, body={"is_public": False})
+            print(f"\nMesh {args.mesh_id} is private again")
 
 
 if __name__ == "__main__":

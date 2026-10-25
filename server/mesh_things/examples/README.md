@@ -55,7 +55,7 @@ export MESH_ID=...  # from the output above
 
 # 3. Register a gateway against that mesh ("this node relays traffic for this mesh") -
 #    this is the step that actually authorizes decoding
-python3 registry_create_gateway.py --device-id 111222333 --label "office gateway"
+python3 registry_create_gateway.py --node-id 111222333 --label "office gateway"
 #    ... or let the mesh find its gateways: any gateway whose packets decode with
 #    its channel and PSK is registered automatically (operator-only on a default or
 #    blank PSK). --wait keeps polling and prints each one as it appears.
@@ -72,7 +72,7 @@ python3 registry_update_mesh.py $MESH_ID --label "home mesh"
 #    --admin-key-b64 sets the node's *full* key list, not an addition -
 #    admin_keys_b64 is write-only, so there's nothing to read back and append to.
 #    Repeat the flag for more than one key.
-python3 registry_add_admin_key.py --device-id 111222333 --admin-key-b64 QUFBQQ==
+python3 registry_add_admin_key.py --node-id 111222333 --admin-key-b64 QUFBQQ==
 
 # 6. List owners (public) and this owner's meshes and gateways
 python3 registry_list_owners_meshes_and_gateways.py
@@ -272,8 +272,8 @@ docker compose exec registry_api python manage.py createsuperuser \
   --email you@example.com --name "You"
 ```
 
-A superuser sees and manages every owner's meshes/devices, but gets no special
-access to `psk_b64`/`admin_keys_b64` - see
+A superuser sees and manages every owner's meshes/devices, `psk_b64` and
+`admin_keys_b64` included - see
 [../../../docs/api-reference.md#superuser](../../../docs/api-reference.md#superuser).
 
 ### Browsing GET routes in a browser

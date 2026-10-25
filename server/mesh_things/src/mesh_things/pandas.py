@@ -40,7 +40,8 @@ def to_dataframe(result: Any, *, long: bool = False, units: dict[str, str] | Non
         if not frame.empty:
             frame = frame.assign(time=_times(frame["time"])).set_index("channel")
     elif "channels" in result:
-        frame = pd.DataFrame(result["channels"]).set_index("channel")
+        # An empty list still gives a frame indexed by channel.
+        frame = pd.DataFrame(result["channels"], columns=None if result["channels"] else ["channel"]).set_index("channel")
     elif "points" in result:
         frame = _points(result["points"]).rename(columns={"value": "packets"})
     else:
@@ -62,11 +63,13 @@ def read_export(source: str | Path | bytes) -> dict[str, pd.DataFrame]:
     """A downloaded export, as one frame per measurement.
 
     A CSV export gives one frame per measurement, its days concatenated, with each
-    channel's unit in `attrs["units"]`. A Parquet export gives a single `archive` frame.
+    channel's unit in `attrs["units"]`. A Parquet export gives a single `archive` frame,
+    and needs pyarrow (`mesh-things[archive]`).
     """
     with zipfile.ZipFile(io.BytesIO(source) if isinstance(source, bytes) else source) as zf:
         names = zf.namelist()
         if any(name.endswith(".parquet") for name in names):
+            _require_parquet_engine()
             parts = [pd.read_parquet(io.BytesIO(zf.read(n))) for n in sorted(names) if n.endswith(".parquet")]
             return {"archive": pd.concat(parts, ignore_index=True)}
         units = {}
@@ -102,6 +105,13 @@ def archive_frame(archive: pd.DataFrame, *, long: bool = False) -> pd.DataFrame:
     if long:
         return frame
     return frame.pivot_table(index=["node_id", "time"], columns="channel", values="value", aggfunc="last")
+
+
+def _require_parquet_engine() -> None:
+    try:
+        import pyarrow  # noqa: F401
+    except ImportError as error:
+        raise ImportError("Reading a Parquet export needs pyarrow: pip install 'mesh-things[archive]'") from error
 
 
 def _times(values) -> pd.Series:

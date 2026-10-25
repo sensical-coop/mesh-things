@@ -89,3 +89,26 @@ def test_a_missing_pandas_names_the_extra():
     code = "import sys; sys.modules['pandas'] = None\ntry:\n import mesh_things.pandas\nexcept ImportError as e:\n print(e)"
     out = subprocess.run([sys.executable, "-c", code], capture_output=True, text=True).stdout
     assert "mesh-things[pandas]" in out
+
+
+def test_quality_without_data_is_an_empty_frame():
+    frame = to_dataframe({"channels": []})
+    assert frame.empty and frame.index.name == "channel"
+
+
+def test_a_parquet_export_without_pyarrow_names_the_extra(monkeypatch):
+    import builtins
+
+    out = io.BytesIO()
+    with zipfile.ZipFile(out, "w") as zf:
+        zf.writestr("2026-10-01/2026-10-01_13.parquet", b"not read")
+    real_import = builtins.__import__
+
+    def no_pyarrow(name, *args, **kwargs):
+        if name == "pyarrow":
+            raise ImportError("no pyarrow")
+        return real_import(name, *args, **kwargs)
+
+    monkeypatch.setattr(builtins, "__import__", no_pyarrow)
+    with pytest.raises(ImportError, match=r"mesh-things\[archive\]"):
+        read_export(out.getvalue())

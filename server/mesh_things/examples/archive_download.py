@@ -27,6 +27,8 @@ def main() -> None:
         sys.exit("No API key - pass --api-key or set MESH_THINGS_API_KEY")
     if not args.mesh_id:
         sys.exit("No mesh - pass --mesh-id or set MESH_ID")
+    if (args.day is None) != (args.hour is None):
+        parser.error("--day and --hour go together")
     api = MeshThings(API_URL, args.api_key)
 
     partitions = api.readings.archive_meshes_get(args.mesh_id)["partitions"]

@@ -7,8 +7,8 @@ from os import path
 
 import sys
 
-if sys.version_info < (3,9):
-    sys.exit("scdata requires python 3.9")
+if sys.version_info < (3, 10):
+    sys.exit("mesh-things-server requires python 3.10")
 
 REQUIREMENTS = [i.strip() for i in open("requirements.txt").readlines()]
 
@@ -25,7 +25,7 @@ setup(
     # long_description_content_type='text/markdown',
     install_requires=[REQUIREMENTS],
     setup_requires=['wheel'],
-    python_requires=">=3.9",
+    python_requires=">=3.10",
     # include_package_data=True,
     # zip_safe=False
     entry_points={

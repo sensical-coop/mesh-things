@@ -36,6 +36,8 @@ def main() -> None:
     except NotFound:
         sys.exit("No archive for this mesh: not an operator's mesh you own, or the instance runs no archive.")
     expr = ds.field("node_id") == args.node_id if args.node_id else None
+    # The summary below needs every row, so the whole (filtered) archive is loaded;
+    # narrow it with --node-id, or filter on dt, for a large mesh.
     df = dataset.to_table(filter=expr).to_pandas()
     if df.empty:
         print("No rows. Check that a device on this mesh has archive_enabled, and that s3_writer has flushed.")

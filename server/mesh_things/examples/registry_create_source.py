@@ -41,11 +41,8 @@ def main():
 
     if not args.api_key:
         sys.exit("No API key - pass --api-key or set MESH_THINGS_API_KEY (see registry_create_owner.py)")
-    if args.grant_operator:
-        if not args.superuser_api_key:
-            sys.exit("--grant-operator needs --superuser-api-key or SUPERUSER_API_KEY")
-        owner = MeshThings(API_URL, args.superuser_api_key).owners.update(args.grant_operator, body={"role": "operator"})
-        print(f"{owner['email']} is now {owner['role']}")
+    if args.grant_operator and not args.superuser_api_key:
+        sys.exit("--grant-operator needs --superuser-api-key or SUPERUSER_API_KEY")
 
     api = MeshThings(API_URL, args.api_key)
     terms = api.get_terms("sources", locale=args.locale)
@@ -59,6 +56,11 @@ def main():
         sys.exit("Read the terms with --show-terms, then pass --accept-terms to create the source")
     if not args.server or not args.topic:
         sys.exit("--server and --topic are required to create a source")
+
+    # Only once the create is known to be valid, so a terms-only or invalid run changes no role.
+    if args.grant_operator:
+        owner = MeshThings(API_URL, args.superuser_api_key).owners.update(args.grant_operator, body={"role": "operator"})
+        print(f"{owner['email']} is now {owner['role']}")
 
     source = api.sources.create(body={
         **terms_fields(terms),

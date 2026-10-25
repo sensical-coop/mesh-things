@@ -38,13 +38,18 @@ def find_telemetry_variant(api: MeshThings, payload_kind: str) -> dict:
     return telemetry_variant
 
 
-def find_device_measurement(api: MeshThings, device_uuid: str, field_name: str) -> dict:
-    measurements = api.devices.measurements_list(device_uuid)
-    measurement = next((m for m in measurements if m["measurement_type"]["field_name"] == field_name), None)
+def find_device_measurement(api: MeshThings, device_uuid: str, payload_kind: str, field_name: str) -> dict:
+    measurement = next(
+        (
+            m for m in api.devices.measurements_list(device_uuid)
+            if m["measurement_type"]["payload_kind"] == payload_kind and m["measurement_type"]["field_name"] == field_name
+        ),
+        None,
+    )
     if measurement is None:
         sys.exit(
-            f"Device {device_uuid} has no measurement for field {field_name!r} - channels appear "
-            "on their own as telemetry arrives"
+            f"Device {device_uuid} has no measurement for {payload_kind} field {field_name!r} - channels "
+            "appear on their own as telemetry arrives"
         )
     return measurement
 
@@ -108,7 +113,7 @@ def main():
         )
 
     if setting_range:
-        measurement = find_device_measurement(api, args.device_uuid, args.field_name)
+        measurement = find_device_measurement(api, args.device_uuid, args.payload_kind, args.field_name)
         # valid_min/valid_max are always sent together - the API rejects one alone.
         measurement = api.devices.measurements_update(
             args.device_uuid, measurement["id"], body={"valid_min": args.range_min, "valid_max": args.range_max},

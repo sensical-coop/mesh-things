@@ -430,3 +430,30 @@ def test_setup_creates_the_mesh_and_retries_a_taken_gateway_number(monkeypatch, 
     out = capsys.readouterr().out
     assert len(attempts) == 2
     assert "MONITOR__MESH_ID=mesh-1" in out and "MONITOR__GATEWAY_UUID=gw-1" in out
+
+
+def test_the_root_check_follows_a_redirect():
+    from aiohttp import web
+
+    from monitor.checks import Checker
+
+    async def root(request):
+        raise web.HTTPFound("/index")
+
+    async def index(request):
+        return web.Response(text="ok")
+
+    async def go():
+        app = web.Application()
+        app.router.add_get("/", root)
+        app.router.add_get("/index", index)
+        server = TestServer(app)
+        await server.start_server()
+        try:
+            checker = Checker(_config(api_url=str(server.make_url("")).rstrip("/")))
+            return await checker.http_check("api_root")
+        finally:
+            await server.close()
+
+    result = asyncio.run(go())
+    assert result.ok, result.detail
