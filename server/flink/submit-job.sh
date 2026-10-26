@@ -76,7 +76,7 @@ done
 
 echo "submit-job: submitting '$JOB_NAME' from $JOB_FILE (detached)"
 exec flink run -d \
-	-Dstate.checkpoints.dir="file://$CHECKPOINTS_DIR" \
-	-Dstate.savepoints.dir="file://$SAVEPOINTS_DIR" \
+	-Dexecution.checkpointing.dir="file://$CHECKPOINTS_DIR" \
+	-Dexecution.checkpointing.savepoint-dir="file://$SAVEPOINTS_DIR" \
 	"${restore_args[@]}" \
 	-py "$JOB_FILE"
