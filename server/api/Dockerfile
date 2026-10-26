@@ -9,7 +9,7 @@ RUN pip install --no-cache-dir --require-hashes -r requirements.lock
 
 # The shared package, installed before the code so it is cached apart.
 COPY mesh_things/ /tmp/mesh_things/
-RUN pip install --no-cache-dir --no-deps /tmp/mesh_things && rm -rf /tmp/mesh_things
+RUN pip install --no-cache-dir --no-deps --no-build-isolation /tmp/mesh_things && rm -rf /tmp/mesh_things
 
 COPY api/ ./
 

@@ -17,6 +17,7 @@ jobs:
       matrix:
         include:
           - lock: server/requirements.lock
+          - lock: server/requirements-test.lock
           - lock: server/api/requirements.lock
           - lock: server/monitor/requirements.lock
           - lock: server/quality_worker/requirements.lock

@@ -22,9 +22,13 @@ lock() {
   echo "Wrote server/$out" >&2
 }
 
-lock requirements.lock 3.11 requirements.txt mesh_things/pyproject.toml --extra codec
-lock api/requirements.lock 3.11 api/requirements.txt mesh_things/pyproject.toml --extra codec
-lock monitor/requirements.lock 3.11 monitor/requirements.txt mesh_things/pyproject.toml --extra codec
-lock quality_worker/requirements.lock 3.11 quality_worker/requirements.txt mesh_things/pyproject.toml
-lock flink/requirements.lock 3.12 flink/requirements-flink.txt requirements.txt \
+BUILD=build-requirements.txt
+lock requirements.lock 3.11 requirements.txt $BUILD mesh_things/pyproject.toml --extra codec
+lock api/requirements.lock 3.11 api/requirements.txt $BUILD mesh_things/pyproject.toml --extra codec
+lock monitor/requirements.lock 3.11 monitor/requirements.txt $BUILD mesh_things/pyproject.toml --extra codec
+lock quality_worker/requirements.lock 3.11 quality_worker/requirements.txt $BUILD mesh_things/pyproject.toml
+lock flink/requirements.lock 3.12 flink/requirements-flink.txt requirements.txt $BUILD \
   mesh_things/pyproject.toml --extra codec
+# The root tests' environment: the root lock's pins plus the test-only packages.
+lock requirements-test.lock 3.11 requirements.txt requirements-test.txt $BUILD \
+  mesh_things/pyproject.toml --extra codec -c requirements.lock

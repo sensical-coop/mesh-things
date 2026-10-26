@@ -23,9 +23,9 @@ WORKDIR /build
 COPY flink/requirements.lock flink/
 RUN pip install --no-cache-dir --require-hashes -r flink/requirements.lock
 COPY mesh_things/ mesh_things/
-RUN pip install --no-cache-dir --no-deps ./mesh_things
+RUN pip install --no-cache-dir --no-deps --no-build-isolation ./mesh_things
 COPY . .
-RUN pip install --no-cache-dir --no-deps .
+RUN pip install --no-cache-dir --no-deps --no-build-isolation .
 
 RUN mkdir -p /opt/flink/checkpoints /opt/flink/savepoints && chown -R flink:flink /opt/flink/checkpoints /opt/flink/savepoints
 

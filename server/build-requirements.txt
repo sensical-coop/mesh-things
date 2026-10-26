@@ -1,0 +1,5 @@
+# Build backends of the local packages, locked so pip builds them without fetching
+# anything: hatchling for mesh_things, setuptools and wheel for the server package.
+hatchling
+setuptools
+wheel
