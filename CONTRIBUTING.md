@@ -28,7 +28,7 @@ The PR checks workflow runs the API tests, the root tests, every image build, th
 - **API schema.** Any change to an endpoint, a parameter, a serializer field or a view docstring raises `__version__` in `server/mesh_things/src/mesh_things/__init__.py`. Then run `scripts/regen-client-schema.sh` and commit the snapshot and type stub it writes. When two branches raise the version at once, keep the higher one and regenerate.
 - **Endpoints.** New or changed endpoints get an example in `server/mesh_things/examples/`, written with the mesh-things client. A test runs each example with `--help`, so it catches imports and arguments that no longer match the client, but not a request the API rejects. Run the example against a local stack before opening the pull request. Update the documentation as well, which lives in the docs app of [mesh-things-apps](https://github.com/sensical-coop/mesh-things-apps).
 - **Migrations.** Model changes come with their migration. CI fails if the models and migrations disagree.
-- **Python dependencies.** Edit the relevant `requirements.txt`, then run `scripts/lock-deps.sh` and commit the lock files. Every image installs from its lock, with hashes.
+- **Python dependencies.** After changing any file the locks are compiled from, run `scripts/lock-deps.sh` and commit the lock files it writes. Those files, all under `server/`, are each service's `requirements.txt`, `flink/requirements-flink.txt`, `requirements-test.txt`, `build-requirements.txt` and the dependencies in `mesh_things/pyproject.toml`. Every image installs from its lock, with hashes.
 - **Images.** Keep the compose profiles able to rebuild every service that a change touches, so no image is left stale.
 
 ## Pull requests
