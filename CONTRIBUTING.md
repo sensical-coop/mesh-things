@@ -83,11 +83,11 @@ Run the commands from the deploy comment on the server, in the repository checko
 
 ## Releasing mesh-things
 
-The mesh-things package is published to PyPI from this repository. Once a deploy that changes the schema is live, tag the merge commit and push the tag:
+The mesh-things package is published to PyPI from this repository. Once a deploy that changes the schema is live, tag the commit the server runs, not the newest commit on `main`. Something merged after the deploy would otherwise be published without having been deployed. On the server, `git rev-parse HEAD` prints that commit. Tag it and push the tag:
 
 ```sh
-git checkout main && git pull
-git tag mesh-things-v<version>
+git fetch origin
+git tag mesh-things-v<version> <deployed-sha>
 git push origin mesh-things-v<version>
 ```
 
