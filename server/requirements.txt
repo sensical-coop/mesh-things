@@ -5,6 +5,5 @@ python-dotenv
 influxdb-client[async]==1.50.0
 boto3
 pyarrow
-# apache-flink==1.19.2
 # aiokafka
 # asyncpg

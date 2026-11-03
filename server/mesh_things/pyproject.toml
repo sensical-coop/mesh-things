@@ -16,7 +16,7 @@ dependencies = ["httpx>=0.27"]
 
 [project.optional-dependencies]
 # 2.8.0 rescales voltage and PM; plans #10b and #32 cover moving past 2.7.
-protobuf = ["meshtastic==2.7.11", "protobuf>=4.21.12"]
+protobuf = ["meshtastic==2.7.11", "protobuf>=5.29.6"]
 codec = ["mesh-things[protobuf]", "cryptography"]
 pandas = ["pandas>=2"]
 archive = ["mesh-things[pandas]", "pyarrow>=14"]

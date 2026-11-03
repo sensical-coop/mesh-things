@@ -1,1 +1,1 @@
-apache-flink==1.19
+apache-flink==2.2.1
