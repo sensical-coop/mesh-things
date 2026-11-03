@@ -40,6 +40,9 @@ def _base_point_dict(event: dict, measurement: str) -> dict:
         tags["channel_id"] = event["channel_id"]
     if event.get("gateway_id"):
         tags["gateway_id"] = event["gateway_id"]
+    if event.get("protocol"):
+        # The values are canonical whatever the version; this says which one they were decoded from.
+        tags["protocol"] = event["protocol"]
     return {
         "measurement": measurement,
         "tags": tags,

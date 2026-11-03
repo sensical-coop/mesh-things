@@ -1,6 +1,7 @@
 import base64
 import os
 
+import pytest
 from cryptography.hazmat.backends import default_backend
 from cryptography.hazmat.primitives.ciphers import Cipher, algorithms, modes
 
@@ -40,6 +41,25 @@ def _plaintext_packet(packet_id: int, node_id: int, data: mesh_pb2.Data) -> mesh
 def _gateway_state(key_bytes: bytes | None = None, mesh_id: str | None = MESH_ID) -> dict:
     psk_b64 = base64.b64encode(key_bytes).decode("ascii") if key_bytes else ""
     return {GATEWAY_ID: {"psk_b64": psk_b64, "mesh_id": mesh_id}}
+
+def test_the_decoded_event_names_the_protocol_it_was_decoded_with():
+    data = mesh_pb2.Data(portnum=67, payload=telemetry_pb2.Telemetry(time=1).SerializeToString())
+    raw = _build_envelope(_plaintext_packet(1, 111, data))
+
+    result = decode.decode_packet(raw, gateway_state=_gateway_state(), rejected_nodes=set())
+
+    assert result["decoded"]["protocol"] == "2.7"
+
+
+def test_a_gateway_on_an_unknown_protocol_fails_loudly():
+    """A version the package does not carry is a deploy mistake, not a packet to drop quietly."""
+    data = mesh_pb2.Data(portnum=67, payload=telemetry_pb2.Telemetry(time=1).SerializeToString())
+    raw = _build_envelope(_plaintext_packet(1, 111, data))
+    state = {GATEWAY_ID: {"psk_b64": "", "mesh_id": MESH_ID, "protocol": "9.9"}}
+
+    with pytest.raises(ValueError, match="unknown protocol"):
+        decode.decode_packet(raw, gateway_state=state, rejected_nodes=set())
+
 
 def test_unregistered_gateway_returns_none():
     data = mesh_pb2.Data(portnum=67, payload=b"irrelevant")

@@ -3,11 +3,23 @@ import pkgutil
 
 import pytest
 
-pytest.importorskip("google.protobuf", reason="needs mesh-things[protobuf]")
-
 from mesh_things import protocols
 
+try:
+    import google.protobuf  # noqa: F401
+except ImportError:
+    HAS_PROTOBUF = False
+else:
+    HAS_PROTOBUF = True
 
+needs_protobuf = pytest.mark.skipif(not HAS_PROTOBUF, reason="needs mesh-things[protobuf]")
+
+
+def test_the_versions_are_listed_without_the_protobufs():
+    assert protocols.CANONICAL in protocols.VERSIONS
+
+
+@needs_protobuf
 @pytest.mark.parametrize("version", sorted(protocols.VERSIONS))
 def test_every_generated_module_imports_on_this_runtime(version):
     package = protocols.get(version)
@@ -17,6 +29,7 @@ def test_every_generated_module_imports_on_this_runtime(version):
         importlib.import_module(f"{package.__name__}.{name}")
 
 
+@needs_protobuf
 @pytest.mark.parametrize("version", sorted(protocols.VERSIONS))
 def test_each_version_has_its_own_proto_package(version):
     package = protocols.get(version)
@@ -24,6 +37,7 @@ def test_each_version_has_its_own_proto_package(version):
     assert package.REF and len(package.COMMIT) == 40
 
 
+@needs_protobuf
 @pytest.mark.parametrize("version", sorted(protocols.VERSIONS))
 def test_payload_messages_are_keyed_by_portnum(version):
     package = protocols.get(version)
@@ -31,6 +45,7 @@ def test_payload_messages_are_keyed_by_portnum(version):
     assert package.PortNum.TEXT_MESSAGE_APP not in package.PAYLOAD_MESSAGES
 
 
+@needs_protobuf
 def test_the_default_is_the_canonical_version():
     assert protocols.get() is protocols.get(protocols.CANONICAL)
 

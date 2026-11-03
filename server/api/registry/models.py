@@ -8,7 +8,7 @@ from django.dispatch import receiver
 from django.utils import timezone
 from django.utils.functional import cached_property
 
-from mesh_things import node_ids
+from mesh_things import node_ids, protocols
 from mesh_things.channels import DERIVED_KIND, channel_name
 
 
@@ -333,6 +333,10 @@ class Mesh(models.Model):
     paused_at = models.DateTimeField(null=True, blank=True)
     # Registers gateways whose packets decode with this mesh's channel and PSK, without the owner adding them.
     discover_gateways = models.BooleanField(default=False)
+    # Declared rather than detected: a version's unit changes cannot all be told apart on the wire.
+    protocol = models.CharField(
+        max_length=8, choices=[(v, v) for v in protocols.VERSIONS], default=protocols.CANONICAL
+    )
     created_at = models.DateTimeField(auto_now_add=True)
     updated_at = models.DateTimeField(auto_now=True)
 

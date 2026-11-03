@@ -34,7 +34,9 @@ METADATA_FIELDS = ("packet_id", "timestamp_quality")
 _METADATA_FIELDS_FLUX = "[" + ", ".join(f'"{f}"' for f in METADATA_FIELDS) + "]"
 # Tags an export leaves out: the mesh is the export's own, node_id has its own column,
 # and the rest say how a point arrived rather than what it measured.
-_NON_EXPORTED_COLUMNS = {"result", "table", "mesh_id", "node_id", "channel_id", "gateway_id", "postprocessing_id"}
+_NON_EXPORTED_COLUMNS = {
+    "result", "table", "mesh_id", "node_id", "channel_id", "gateway_id", "protocol", "postprocessing_id"
+}
 
 
 class InfluxQueryClient:
@@ -88,11 +90,14 @@ class InfluxQueryClient:
             )
             agg_stage = f'|> aggregateWindow(every: {window}, fn: {agg}, createEmpty: false)'
 
+        # One table per field: points that arrived through another gateway or protocol
+        # version are one series, not several each sorted and windowed on its own.
         flux = f'''{imports}
 from(bucket: "{self._bucket_for(measurement)}")
   |> range(start: {start}, stop: {stop})
   |> filter(fn: (r) => {filters})
   {numeric_only}
+  |> group(columns: ["_measurement", "_field"])
   {agg_stage}
   |> sort(columns: ["_time"])
 '''
@@ -109,6 +114,9 @@ from(bucket: "{self._bucket_for(measurement)}")
   |> filter(fn: (r) => r._measurement == "{measurement}" and r.mesh_id == "{mesh_id}" and r.node_id == "{int(node_id)}")
   |> last()
   |> filter(fn: (r) => not contains(value: r._field, set: {_METADATA_FIELDS_FLUX}))
+  |> group(columns: ["_measurement", "_field"])
+  |> sort(columns: ["_time"])
+  |> last()
 '''
         return self._records_to_series(self._query_api.query(flux))
 

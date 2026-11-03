@@ -278,6 +278,9 @@ class Meshes:
                 packets decodes with this mesh's channel and pre-shared key.
                 Defaults to `false`. Only an operator may switch it on for a mesh
                 with a default or blank key.
+            protocol: Meshtastic protocol version the mesh's devices run, which
+                its packets are decoded with. Defaults to `2.7`. Readings are
+                stored in the same units whatever the version.
             terms_version: The `version` of the mesh terms accepted. Required
                 without a source, ignored with one, and ignored on an instance
                 that does not enforce terms.
@@ -391,10 +394,10 @@ class Meshes:
     def update(self, mesh_id: str, *, body: dict[str, Any] | None = None) -> Any:
         """Update a mesh.
 
-        Changing the channel_id, the pre-shared key or the source redistributes
-        them to every allowed gateway on the mesh, and the whole update is
-        rolled back if that fails. Once the source changes, the mesh's gateways
-        are only accepted through the new one.
+        Changing the channel_id, the pre-shared key, the source or the protocol
+        redistributes them to every allowed gateway on the mesh, and the whole
+        update is rolled back if that fails. Once the source changes, the mesh's
+        gateways are only accepted through the new one.
 
         Args:
             source_id: Source to bridge the mesh's traffic from, which must be one
@@ -409,6 +412,9 @@ class Meshes:
                 rejected on this mesh. Switching it off keeps the gateways
                 already found. Only an operator may switch it on for a mesh with
                 a default or blank key.
+            protocol: Meshtastic protocol version the mesh's devices run. Packets
+                received after the change are decoded with it; readings already
+                stored are left as they are.
             terms_version: The `version` of the mesh terms accepted. Required when
                 moving the mesh onto the default broker unless it already holds a
                 current acceptance, or the instance does not enforce terms;
@@ -1417,6 +1423,9 @@ class AsyncMeshes:
                 packets decodes with this mesh's channel and pre-shared key.
                 Defaults to `false`. Only an operator may switch it on for a mesh
                 with a default or blank key.
+            protocol: Meshtastic protocol version the mesh's devices run, which
+                its packets are decoded with. Defaults to `2.7`. Readings are
+                stored in the same units whatever the version.
             terms_version: The `version` of the mesh terms accepted. Required
                 without a source, ignored with one, and ignored on an instance
                 that does not enforce terms.
@@ -1530,10 +1539,10 @@ class AsyncMeshes:
     async def update(self, mesh_id: str, *, body: dict[str, Any] | None = None) -> Any:
         """Update a mesh.
 
-        Changing the channel_id, the pre-shared key or the source redistributes
-        them to every allowed gateway on the mesh, and the whole update is
-        rolled back if that fails. Once the source changes, the mesh's gateways
-        are only accepted through the new one.
+        Changing the channel_id, the pre-shared key, the source or the protocol
+        redistributes them to every allowed gateway on the mesh, and the whole
+        update is rolled back if that fails. Once the source changes, the mesh's
+        gateways are only accepted through the new one.
 
         Args:
             source_id: Source to bridge the mesh's traffic from, which must be one
@@ -1548,6 +1557,9 @@ class AsyncMeshes:
                 rejected on this mesh. Switching it off keeps the gateways
                 already found. Only an operator may switch it on for a mesh with
                 a default or blank key.
+            protocol: Meshtastic protocol version the mesh's devices run. Packets
+                received after the change are decoded with it; readings already
+                stored are left as they are.
             terms_version: The `version` of the mesh terms accepted. Required when
                 moving the mesh onto the default broker unless it already holds a
                 current acceptance, or the instance does not enforce terms;

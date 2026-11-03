@@ -93,6 +93,21 @@ class TimeseriesFluxTests(SimpleTestCase):
         # After last(), so InfluxDB can still push last() down to storage.
         self.assertLess(flux.index("last()"), flux.index("not contains"))
 
+    def test_series_split_by_gateway_or_protocol_are_read_as_one_per_field(self):
+        flux = self._flux(window="1h")
+
+        group = flux.index('group(columns: ["_measurement", "_field"])')
+        self.assertLess(group, flux.index("aggregateWindow"))
+        self.assertLess(group, flux.index('sort(columns: ["_time"])'))
+
+    def test_latest_of_a_family_is_one_reading_per_field(self):
+        self.client.latest(MESH_ID, 123, "device_metrics")
+
+        flux = self.client._query_api.query.call_args.args[0]
+        group = flux.index('group(columns: ["_measurement", "_field"])')
+        self.assertLess(flux.index("last()"), group)
+        self.assertIn("last()", flux[group:])
+
     def test_latest_alarms_come_from_their_own_bucket(self):
         self.client.latest(MESH_ID, 123, "alarms")
 
@@ -268,6 +283,16 @@ class DayRowsTests(SimpleTestCase):
         ])
         self.assertEqual(out["nodeinfo"]["tags"], ["long_name"])
         self.assertEqual(out["nodeinfo"]["rows"][0]["long_name"], "Roof")
+
+    def test_the_protocol_a_reading_was_decoded_with_is_not_a_column(self):
+        self.client._query_api.query_stream.return_value = iter([
+            self.record("environment_metrics", "temperature", 21.5, 5, protocol="2.7"),
+        ])
+
+        env = self.client.day_rows(MESH_ID, date(2026, 9, 1))["environment_metrics"]
+
+        self.assertEqual(env["tags"], [])
+        self.assertNotIn("protocol", env["rows"][0])
 
     def test_the_query_covers_one_utc_day_without_quality(self):
         self.client._query_api.query_stream.return_value = iter([])

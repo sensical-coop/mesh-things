@@ -2,7 +2,7 @@
   "openapi": "3.0.3",
   "info": {
     "title": "Mesh Things API",
-    "version": "0.1.2"
+    "version": "0.2.0"
   },
   "paths": {
     "/algorithms": {
@@ -1425,7 +1425,7 @@
       },
       "post": {
         "operationId": "meshes_create",
-        "description": "Create a mesh owned by the caller.\n\nA mesh on the default broker needs its mesh terms accepted, which are\nrecorded with it. A mesh on a source is covered by the source's terms.\n\nArgs:\n    source_id: Source the mesh's traffic is bridged from, which must be\n        one the caller created, or any source for a superuser. Leave\n        unset for traffic on this instance's own broker.\n    discover_gateways: Register gateways automatically once one of their\n        packets decodes with this mesh's channel and pre-shared key.\n        Defaults to `false`. Only an operator may switch it on for a mesh\n        with a default or blank key.\n    terms_version: The `version` of the mesh terms accepted. Required\n        without a source, ignored with one, and ignored on an instance\n        that does not enforce terms.\n    terms_locale: Locale the terms were shown in, `en` or `es`. Defaults\n        to `en`.",
+        "description": "Create a mesh owned by the caller.\n\nA mesh on the default broker needs its mesh terms accepted, which are\nrecorded with it. A mesh on a source is covered by the source's terms.\n\nArgs:\n    source_id: Source the mesh's traffic is bridged from, which must be\n        one the caller created, or any source for a superuser. Leave\n        unset for traffic on this instance's own broker.\n    discover_gateways: Register gateways automatically once one of their\n        packets decodes with this mesh's channel and pre-shared key.\n        Defaults to `false`. Only an operator may switch it on for a mesh\n        with a default or blank key.\n    protocol: Meshtastic protocol version the mesh's devices run, which\n        its packets are decoded with. Defaults to `2.7`. Readings are\n        stored in the same units whatever the version.\n    terms_version: The `version` of the mesh terms accepted. Required\n        without a source, ignored with one, and ignored on an instance\n        that does not enforce terms.\n    terms_locale: Locale the terms were shown in, `en` or `es`. Defaults\n        to `en`.",
         "tags": [
           "meshes"
         ],
@@ -1512,7 +1512,7 @@
       },
       "put": {
         "operationId": "meshes_update",
-        "description": "Update a mesh.\n\nChanging the channel_id, the pre-shared key or the source redistributes\nthem to every allowed gateway on the mesh, and the whole update is\nrolled back if that fails. Once the source changes, the mesh's gateways\nare only accepted through the new one.\n\nArgs:\n    source_id: Source to bridge the mesh's traffic from, which must be one\n        the caller created, or any source for a superuser, and not paused.\n        Null moves it to the default broker. Moving a mesh off a source\n        schedules the readings stored until then for deletion after the\n        grace period; moving it back within that period cancels it.\n    discover_gateways: Register gateways automatically once one of their\n        packets decodes with this mesh's channel and pre-shared key. A\n        gateway is skipped when another mesh shares the same source,\n        channel and key, when it is registered elsewhere, or when it was\n        rejected on this mesh. Switching it off keeps the gateways\n        already found. Only an operator may switch it on for a mesh with\n        a default or blank key.\n    terms_version: The `version` of the mesh terms accepted. Required when\n        moving the mesh onto the default broker unless it already holds a\n        current acceptance, or the instance does not enforce terms;\n        ignored otherwise.\n    terms_locale: Locale the terms were shown in, `en` or `es`. Defaults\n        to `en`.",
+        "description": "Update a mesh.\n\nChanging the channel_id, the pre-shared key, the source or the protocol\nredistributes them to every allowed gateway on the mesh, and the whole\nupdate is rolled back if that fails. Once the source changes, the mesh's\ngateways are only accepted through the new one.\n\nArgs:\n    source_id: Source to bridge the mesh's traffic from, which must be one\n        the caller created, or any source for a superuser, and not paused.\n        Null moves it to the default broker. Moving a mesh off a source\n        schedules the readings stored until then for deletion after the\n        grace period; moving it back within that period cancels it.\n    discover_gateways: Register gateways automatically once one of their\n        packets decodes with this mesh's channel and pre-shared key. A\n        gateway is skipped when another mesh shares the same source,\n        channel and key, when it is registered elsewhere, or when it was\n        rejected on this mesh. Switching it off keeps the gateways\n        already found. Only an operator may switch it on for a mesh with\n        a default or blank key.\n    protocol: Meshtastic protocol version the mesh's devices run. Packets\n        received after the change are decoded with it; readings already\n        stored are left as they are.\n    terms_version: The `version` of the mesh terms accepted. Required when\n        moving the mesh onto the default broker unless it already holds a\n        current acceptance, or the instance does not enforce terms;\n        ignored otherwise.\n    terms_locale: Locale the terms were shown in, `en` or `es`. Defaults\n        to `en`.",
         "parameters": [
           {
             "in": "path",
@@ -7175,6 +7175,14 @@
             "type": "boolean",
             "description": "Register gateways whose packets decode with this mesh's channel and PSK automatically. Only an operator may switch it on for a mesh with a default or blank PSK."
           },
+          "protocol": {
+            "allOf": [
+              {
+                "$ref": "#/components/schemas/ProtocolEnum"
+              }
+            ],
+            "description": "Meshtastic protocol version the mesh's devices run. Its packets are decoded with that version, and readings are stored in the same units and channel names whatever the version.\n\n* `2.7` - 2.7"
+          },
           "created_at": {
             "type": "string",
             "format": "date-time",
@@ -7321,6 +7329,14 @@
           "discover_gateways": {
             "type": "boolean",
             "description": "Register gateways whose packets decode with this mesh's channel and PSK automatically. Only an operator may switch it on for a mesh with a default or blank PSK."
+          },
+          "protocol": {
+            "allOf": [
+              {
+                "$ref": "#/components/schemas/ProtocolEnum"
+              }
+            ],
+            "description": "Meshtastic protocol version the mesh's devices run. Its packets are decoded with that version, and readings are stored in the same units and channel names whatever the version.\n\n* `2.7` - 2.7"
           },
           "created_at": {
             "type": "string",
@@ -7779,7 +7795,7 @@
       },
       "MeshUpdate": {
         "type": "object",
-        "description": "PUT /meshes/{id}: channel_id, psk_b64, label, is_public, source_id and discover_gateways are editable.\n\nchannel_id/psk_b64 are a pair configured together on the physical\ndevices, so both can change here the same way - the pipeline decrypts by\ngateway_id/psk_b64 alone, not by channel_id, so this is a metadata update.",
+        "description": "PUT /meshes/{id}: channel_id, psk_b64, label, is_public, source_id, discover_gateways and protocol are editable.\n\nchannel_id/psk_b64 are a pair configured together on the physical\ndevices, so both can change here the same way - the pipeline decrypts by\ngateway_id/psk_b64 alone, not by channel_id, so this is a metadata update.",
         "properties": {
           "channel_id": {
             "type": "string",
@@ -7807,6 +7823,14 @@
           "discover_gateways": {
             "type": "boolean",
             "description": "Register gateways whose packets decode with this mesh's channel and PSK automatically. Only an operator may switch it on for a mesh with a default or blank PSK."
+          },
+          "protocol": {
+            "allOf": [
+              {
+                "$ref": "#/components/schemas/ProtocolEnum"
+              }
+            ],
+            "description": "Meshtastic protocol version the mesh's devices run. Its packets are decoded with that version, and readings are stored in the same units and channel names whatever the version.\n\n* `2.7` - 2.7"
           },
           "terms_version": {
             "type": "string",
@@ -8810,6 +8834,13 @@
           "key",
           "order"
         ]
+      },
+      "ProtocolEnum": {
+        "enum": [
+          "2.7"
+        ],
+        "type": "string",
+        "description": "* `2.7` - 2.7"
       },
       "QosEnum": {
         "enum": [

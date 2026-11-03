@@ -334,6 +334,10 @@ class DetectorSerializer(serializers.Serializer):
 
 _PSK_HELP = "Base64-encoded channel PSK"
 _SOURCE_HELP = "Source the mesh's traffic is bridged from. Null for this instance's own broker."
+_PROTOCOL_HELP = (
+    "Meshtastic protocol version the mesh's devices run. Its packets are decoded with that "
+    "version, and readings are stored in the same units and channel names whatever the version."
+)
 _DISCOVER_HELP = (
     "Register gateways whose packets decode with this mesh's channel and PSK automatically. "
     "Only an operator may switch it on for a mesh with a default or blank PSK."
@@ -430,7 +434,7 @@ class MeshPublicSerializer(serializers.ModelSerializer):
 
     class Meta:
         model = Mesh
-        fields = ["id", "channel_id", "label", "owner_id", "is_public", "created_at", "updated_at"]
+        fields = ["id", "channel_id", "label", "owner_id", "is_public", "protocol", "created_at", "updated_at"]
         read_only_fields = fields
 
 
@@ -459,6 +463,7 @@ class MeshSerializer(_MeshTermsMixin, serializers.ModelSerializer):
             "terms_expires_at",
             "paused_at",
             "discover_gateways",
+            "protocol",
             "created_at",
             "updated_at",
         ]
@@ -466,6 +471,7 @@ class MeshSerializer(_MeshTermsMixin, serializers.ModelSerializer):
         extra_kwargs = {
             "is_public": {"required": False},
             "discover_gateways": {"required": False, "help_text": _DISCOVER_HELP},
+            "protocol": {"required": False, "help_text": _PROTOCOL_HELP},
         }
 
     # Viewers other than the owner and superusers get MeshPublicSerializer instead.
@@ -491,7 +497,7 @@ class MeshCreateSerializer(MeshSerializer):
 
 
 class MeshUpdateSerializer(_MeshTermsMixin, serializers.ModelSerializer):
-    """PUT /meshes/{id}: channel_id, psk_b64, label, is_public, source_id and discover_gateways are editable.
+    """PUT /meshes/{id}: channel_id, psk_b64, label, is_public, source_id, discover_gateways and protocol are editable.
 
     channel_id/psk_b64 are a pair configured together on the physical
     devices, so both can change here the same way - the pipeline decrypts by
@@ -512,6 +518,7 @@ class MeshUpdateSerializer(_MeshTermsMixin, serializers.ModelSerializer):
             "is_public",
             "source_id",
             "discover_gateways",
+            "protocol",
             "terms_version",
             "terms_locale",
         ]
@@ -520,6 +527,7 @@ class MeshUpdateSerializer(_MeshTermsMixin, serializers.ModelSerializer):
             "channel_id": {"required": False},
             "is_public": {"required": False},
             "discover_gateways": {"required": False, "help_text": _DISCOVER_HELP},
+            "protocol": {"required": False, "help_text": _PROTOCOL_HELP},
         }
 
     def validate(self, attrs):

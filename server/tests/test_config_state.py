@@ -16,7 +16,25 @@ def test_a_gateway_upsert_keeps_its_key_mesh_and_source():
         gateways, set(), False, _value(key="!aabbccdd", op="upsert", psk_b64="AQ==", mesh_id="m", source_id="s")
     )
 
-    assert gateways == {"!aabbccdd": {"psk_b64": "AQ==", "mesh_id": "m", "source_id": "s"}}
+    assert gateways == {
+        "!aabbccdd": {"psk_b64": "AQ==", "mesh_id": "m", "source_id": "s", "protocol": "2.7"}
+    }
+
+
+def test_a_gateway_upsert_keeps_its_mesh_protocol():
+    gateways = {}
+
+    apply_config_event(gateways, set(), False, _value(key="!aabbccdd", op="upsert", mesh_id="m", protocol="2.8"))
+
+    assert gateways["!aabbccdd"]["protocol"] == "2.8"
+
+
+def test_an_upsert_from_before_protocols_decodes_with_the_canonical_one():
+    gateways = {}
+
+    apply_config_event(gateways, set(), False, _value(key="!aabbccdd", op="upsert", psk_b64="AQ==", mesh_id="m"))
+
+    assert gateways["!aabbccdd"]["protocol"] == "2.7"
 
 
 def test_an_upsert_from_before_sources_reads_as_the_own_topic():

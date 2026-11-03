@@ -1,6 +1,20 @@
-from mesh_things import codec, node_ids
+from mesh_things import codec, node_ids, protocols
 from mesh_things.channels import NODEINFO_KIND, POSITION_KIND, TELEMETRY
 from mesh_things.protocols.v2_7 import portnums_pb2
+
+
+def gateway_entry(event: dict) -> dict:
+    """The state both decode runtimes keep per gateway from one upsert on mesh.keys.v1.
+
+    Events published before meshes had a protocol carry none, so they decode with the
+    canonical one.
+    """
+    return {
+        "psk_b64": event.get("psk_b64", ""),
+        "mesh_id": event.get("mesh_id"),
+        "source_id": event.get("source_id"),
+        "protocol": event.get("protocol") or protocols.CANONICAL,
+    }
 
 
 def _discovered_fields(payload_kind: str, payload: dict) -> list[str]:
@@ -105,6 +119,7 @@ def decode_packet(raw: bytes, gateway_state, rejected_nodes, on_drop=None, recei
 
     key_b64 = state.get("psk_b64")
     mesh_id = state.get("mesh_id")
+    protocol = state.get("protocol") or protocols.CANONICAL
     key_bytes = codec.decode_psk(key_b64) if key_b64 else None
     events = {}
 
@@ -129,12 +144,12 @@ def decode_packet(raw: bytes, gateway_state, rejected_nodes, on_drop=None, recei
         )
         return events
 
-    result = codec.decode_payload(mp)
+    result = codec.decode_payload(mp, protocol)
     if result is None:
         _drop(on_drop, f"portnum {mp.decoded.portnum} has no protobuf schema, nothing to store")
         return events
     portnum, pb_dict, payload_kind = result
-    decoded = codec.build_decoded_message(se, portnum, pb_dict, payload_kind)
+    decoded = codec.build_decoded_message(se, portnum, pb_dict, payload_kind, protocol)
     if mesh_id:
         decoded["mesh_id"] = mesh_id
 

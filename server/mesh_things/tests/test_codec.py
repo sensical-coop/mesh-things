@@ -50,6 +50,20 @@ def test_decode_plaintext_telemetry():
     assert result["gateway_id"] == 0xAABBCCDD
     assert result["payload_kind"] == "telemetry:device_metrics"
     assert result["payload"]["device_metrics"]["battery_level"] == 87
+    assert result["protocol"] == "2.7"
+
+
+def test_decode_names_the_protocol_it_was_asked_for():
+    raw = _build_envelope(_telemetry_packet(packet_id=1, node_id=1, battery_level=5))
+
+    assert codec.decode_message(raw, key_bytes=None, protocol="2.7")["protocol"] == "2.7"
+
+
+def test_an_unknown_protocol_is_refused():
+    raw = _build_envelope(_telemetry_packet(packet_id=1, node_id=1, battery_level=5))
+
+    with pytest.raises(ValueError, match="unknown protocol"):
+        codec.decode_message(raw, key_bytes=None, protocol="9.9")
 
 def test_decode_encrypted_with_correct_key():
     key_bytes = os.urandom(32)

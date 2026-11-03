@@ -4,8 +4,8 @@ from cryptography.hazmat.backends import default_backend
 from cryptography.hazmat.primitives.ciphers import Cipher, algorithms, modes
 from google.protobuf.json_format import MessageToDict
 
-from mesh_things import node_ids, portnum_registry
-from mesh_things.protocols.v2_7 import PAYLOAD_MESSAGES, mesh_pb2, mqtt_pb2
+from mesh_things import node_ids, portnum_registry, protocols
+from mesh_things.protocols.v2_7 import mesh_pb2, mqtt_pb2
 
 # Channel.psk default AQ==
 _DEFAULT_CHANNEL_KEY = bytes(
@@ -14,6 +14,11 @@ _DEFAULT_CHANNEL_KEY = bytes(
 
 
 def parse_envelope(raw: bytes) -> mqtt_pb2.ServiceEnvelope:
+    """Parse an MQTT envelope with the canonical protocol.
+
+    The envelope names the gateway, and so the mesh and its protocol, so it is read
+    before either is known. Its fields have the same numbers in every version.
+    """
     se = mqtt_pb2.ServiceEnvelope()
     se.ParseFromString(raw)
     return se
@@ -45,13 +50,13 @@ def decrypt_packet(mp: mesh_pb2.MeshPacket, key_bytes: bytes | None) -> mesh_pb2
         # Do not log anything here
         return None
 
-def decode_payload(mp: mesh_pb2.MeshPacket):
-    """Returns (portnum, pb_dict, payload_kind) or None."""
+def decode_payload(mp: mesh_pb2.MeshPacket, protocol: str = protocols.CANONICAL):
+    """Returns (portnum, pb_dict, payload_kind) or None, decoding with a protocol version's messages."""
     if not mp.HasField("decoded"):
         return None
 
     portnum = mp.decoded.portnum
-    message = PAYLOAD_MESSAGES.get(portnum)
+    message = protocols.get(protocol).PAYLOAD_MESSAGES.get(portnum)
     if message is None:
         return None
 
@@ -62,7 +67,9 @@ def decode_payload(mp: mesh_pb2.MeshPacket):
 
     return portnum, pb_dict, payload_kind
 
-def build_decoded_message(se: mqtt_pb2.ServiceEnvelope, portnum: int, pb_dict: dict, payload_kind: str) -> dict:
+def build_decoded_message(
+    se: mqtt_pb2.ServiceEnvelope, portnum: int, pb_dict: dict, payload_kind: str, protocol: str = protocols.CANONICAL
+) -> dict:
     """Shape a decoded packet into the event downstream writers consume"""
     mp = se.packet
     return {
@@ -76,6 +83,7 @@ def build_decoded_message(se: mqtt_pb2.ServiceEnvelope, portnum: int, pb_dict: d
         "channel_id": se.channel_id,
         "gateway_id": node_ids.to_num(se.gateway_id),
         "payload_kind": payload_kind,
+        "protocol": protocol,
         "payload": pb_dict,
     }
 
@@ -98,7 +106,7 @@ def routing_fields(mp: mesh_pb2.MeshPacket) -> dict:
         "via_mqtt": mp.via_mqtt,
     }
 
-def decode_message(raw: bytes, key_bytes: bytes | None) -> dict | None:
+def decode_message(raw: bytes, key_bytes: bytes | None, protocol: str = protocols.CANONICAL) -> dict | None:
     """Parse, decrypt (if needed), decode, and shape the output.
 
     Returns None if the message cannot be decrypted, has an unknown
@@ -113,12 +121,12 @@ def decode_message(raw: bytes, key_bytes: bytes | None) -> dict | None:
             return None
         mp.decoded.CopyFrom(decrypted)
 
-    result = decode_payload(mp)
+    result = decode_payload(mp, protocol)
     if result is None:
         return None
 
     portnum, pb_dict, payload_kind = result
-    return build_decoded_message(se, portnum, pb_dict, payload_kind)
+    return build_decoded_message(se, portnum, pb_dict, payload_kind, protocol)
 
 
 def decode_psk(key_b64: str) -> bytes | None:
@@ -146,8 +154,8 @@ def is_well_known_psk(key_b64: str | None) -> bool:
         return False
 
 
-def decodes_with(raw: bytes, key_b64: str | None) -> bool:
-    """Whether a ServiceEnvelope fully decodes with a channel PSK.
+def decodes_with(raw: bytes, key_b64: str | None, protocol: str = protocols.CANONICAL) -> bool:
+    """Whether a ServiceEnvelope fully decodes with a channel PSK and protocol version.
 
     An encrypted packet must decrypt to a known portnum whose payload parses; a
     plain one only matches a mesh without encryption. Parsing alone is not
@@ -167,6 +175,6 @@ def decodes_with(raw: bytes, key_b64: str | None) -> bool:
             return False
         mp.decoded.CopyFrom(decrypted)
     try:
-        return decode_payload(mp) is not None
+        return decode_payload(mp, protocol) is not None
     except Exception:
         return False

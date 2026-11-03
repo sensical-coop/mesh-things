@@ -1,15 +1,11 @@
-"""The Meshtastic protocol versions this package decodes. Needs mesh-things[protobuf].
+"""The Meshtastic protocol versions this package decodes.
 
 Each version is a set of protobuf modules generated from the upstream protos, under
-`mesh_things.protocols.<slug>`, so versions load side by side.
+`mesh_things.protocols.<slug>`, so versions load side by side. Listing the versions
+needs nothing extra; loading a set needs mesh-things[protobuf].
 """
 import importlib
 from types import ModuleType
-
-try:
-    import google.protobuf  # noqa: F401
-except ImportError as error:
-    raise ImportError("mesh_things.protocols needs the protobufs: pip install 'mesh-things[protobuf]'") from error
 
 CANONICAL = "2.7"
 VERSIONS = {"2.7": "v2_7"}
@@ -21,4 +17,9 @@ def get(version: str = CANONICAL) -> ModuleType:
         slug = VERSIONS[version]
     except KeyError:
         raise ValueError(f"unknown protocol {version!r}; known: {', '.join(VERSIONS)}") from None
-    return importlib.import_module(f"{__name__}.{slug}")
+    try:
+        return importlib.import_module(f"{__name__}.{slug}")
+    except ImportError as error:
+        if error.name and error.name.startswith("google"):
+            raise ImportError("mesh_things.protocols needs the protobufs: pip install 'mesh-things[protobuf]'") from error
+        raise

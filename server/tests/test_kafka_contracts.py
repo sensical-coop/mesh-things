@@ -28,13 +28,12 @@ def test_the_variant_config_key_pattern_detection_builds():
 
 
 class TestGatewayStateShape:
-    """Both decode paths store {"psk_b64", "mesh_id"} per gateway."""
+    """Both decode paths store decode.gateway_entry() per gateway."""
 
-    def test_decode_reads_psk_and_mesh_id_out_of_the_stored_state(self):
-        state = {"psk_b64": "AQ==", "mesh_id": MESH_ID}
+    def test_the_stored_state_keeps_what_decode_reads_from_the_upsert(self):
+        event = {"psk_b64": "AQ==", "mesh_id": MESH_ID, "source_id": None, "protocol": "2.7"}
 
-        assert state.get("psk_b64") == "AQ=="
-        assert state.get("mesh_id") == MESH_ID
+        assert decode.gateway_entry(event) == event
 
     def test_a_gateway_missing_from_the_state_is_dropped_with_a_reason(self):
         """The registered-gateways-only gate, and it has to name the gateway."""

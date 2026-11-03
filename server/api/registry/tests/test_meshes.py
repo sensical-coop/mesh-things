@@ -181,6 +181,46 @@ class MeshCrudTests(RegistryTestCase):
         published_meshes = [call.args[1] for call in self.fake_publisher.publish_gateway_upsert.call_args_list]
         self.assertTrue(all(m.psk_b64 == "BBBB" for m in published_meshes))
 
+    def test_a_new_mesh_runs_the_canonical_protocol(self):
+        owner = self.create_owner()
+        mesh = self.create_mesh(owner)
+
+        self.assertEqual(mesh["protocol"], "2.7")
+
+    def test_an_unknown_protocol_is_refused(self):
+        owner = self.create_owner()
+        resp = self.client.post(
+            "/meshes",
+            {**MESH_TERMS, "channel_id": "LongFast", "psk_b64": "AQ==", "protocol": "1.0"},
+            format="json",
+            **self.auth_headers(owner),
+        )
+
+        self.assertEqual(resp.status_code, 400)
+        self.assertIn("protocol", resp.json())
+
+    def test_update_mesh_protocol_republishes_all_its_gateways(self):
+        owner = self.create_owner()
+        mesh = self.create_mesh(owner)
+        self.create_gateway(owner, mesh, device_id=1)
+        self.fake_publisher.publish_gateway_upsert.reset_mock()
+
+        resp = self.client.put(
+            f"/meshes/{mesh['id']}", {"protocol": "2.7"}, format="json", **self.auth_headers(owner)
+        )
+
+        self.assertEqual(resp.status_code, 200)
+        self.assertEqual(self.fake_publisher.publish_gateway_upsert.call_count, 1)
+
+    def test_the_protocol_is_shown_to_viewers_who_are_not_the_owner(self):
+        owner = self.create_owner()
+        other = self.create_owner(name="Other", email="mesh-protocol-other@example.com")
+        mesh_obj = Mesh.objects.get(pk=self.create_mesh(owner)["id"])
+
+        data = MeshSerializer(mesh_obj, context={"viewer_id": other["id"]}).data
+
+        self.assertEqual(data["protocol"], "2.7")
+
     def test_update_mesh_label_only_does_not_republish_gateways(self):
         owner = self.create_owner()
         mesh = self.create_mesh(owner)

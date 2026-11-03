@@ -73,6 +73,13 @@ class GatewayKeyEventTests(KafkaContractTestCase):
         self.assertEqual(event["mesh_id"], str(self.mesh.id))
         self.assertEqual(event["key"], key)
 
+    def test_upsert_carries_the_protocol_the_decoder_decodes_with(self):
+        self.publisher.publish_gateway_upsert(self.device, self.mesh)
+
+        _, _, event = self.published()
+
+        self.assertEqual(event["protocol"], "2.7")
+
     def test_the_key_is_the_gateway_id_the_envelope_carries(self):
         """Looked up as gateway_state[ServiceEnvelope.gateway_id]: hex, not decimal."""
         self.publisher.publish_gateway_upsert(self.device, self.mesh)

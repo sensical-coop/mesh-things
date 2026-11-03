@@ -47,6 +47,22 @@ def test_mesh_id_is_tagged_when_present():
     line = points[0].to_line_protocol()
     assert "mesh_id=11111111-2222-3333-4444-555555555555" in line
 
+def test_the_protocol_a_point_was_decoded_with_is_tagged():
+    event = _event(
+        "telemetry:device_metrics",
+        {"time": 1700000010, "device_metrics": {"battery_level": 87}},
+        protocol="2.7",
+    )
+
+    assert "protocol=2.7" in get_points(event)[0].to_line_protocol()
+
+
+def test_an_event_from_before_protocols_is_stored_without_the_tag():
+    event = _event("telemetry:device_metrics", {"time": 1700000010, "device_metrics": {"battery_level": 87}})
+
+    assert "protocol=" not in get_points(event)[0].to_line_protocol()
+
+
 def test_mesh_id_tag_omitted_when_absent():
     event = _event("telemetry:device_metrics", {"time": 1700000010, "device_metrics": {"battery_level": 87}})
 
