@@ -3,9 +3,9 @@ import os
 
 from cryptography.hazmat.backends import default_backend
 from cryptography.hazmat.primitives.ciphers import Cipher, algorithms, modes
-from meshtastic.protobuf import mesh_pb2, mqtt_pb2, telemetry_pb2
 
 from common import decode
+from mesh_things.protocols.v2_7 import mesh_pb2, mqtt_pb2, telemetry_pb2
 
 GATEWAY_ID = "!aabbccdd"
 MESH_ID = "mesh-1"

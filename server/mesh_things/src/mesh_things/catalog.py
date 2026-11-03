@@ -2,9 +2,9 @@
 from typing import Iterator, NamedTuple
 
 from google.protobuf.descriptor import FieldDescriptor
-from meshtastic.protobuf import telemetry_pb2
 
 from mesh_things.channels import TELEMETRY
+from mesh_things.protocols.v2_7 import telemetry_pb2
 
 _SKIP_CPP_TYPES = (FieldDescriptor.CPPTYPE_STRING, FieldDescriptor.CPPTYPE_MESSAGE)
 

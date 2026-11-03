@@ -1,10 +1,9 @@
 import pytest
 
-pytest.importorskip("meshtastic", reason="needs mesh-things[protobuf]")
-
-from meshtastic.protobuf import telemetry_pb2
+pytest.importorskip("google.protobuf", reason="needs mesh-things[protobuf]")
 
 from mesh_things.catalog import is_catalogued, telemetry_variants
+from mesh_things.protocols.v2_7 import telemetry_pb2
 
 
 def _field(message, name):

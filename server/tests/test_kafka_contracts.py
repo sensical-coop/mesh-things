@@ -38,7 +38,7 @@ class TestGatewayStateShape:
 
     def test_a_gateway_missing_from_the_state_is_dropped_with_a_reason(self):
         """The registered-gateways-only gate, and it has to name the gateway."""
-        from meshtastic.protobuf import mesh_pb2, mqtt_pb2
+        from mesh_things.protocols.v2_7 import mesh_pb2, mqtt_pb2
 
         se = mqtt_pb2.ServiceEnvelope()
         se.packet.CopyFrom(mesh_pb2.MeshPacket())
@@ -55,7 +55,7 @@ class TestGatewayStateShape:
 
     def test_a_gateway_present_in_the_state_gets_past_the_gate(self):
         """Proves the test above fails on the lookup, not on parsing."""
-        from meshtastic.protobuf import mesh_pb2, mqtt_pb2
+        from mesh_things.protocols.v2_7 import mesh_pb2, mqtt_pb2
 
         se = mqtt_pb2.ServiceEnvelope()
         se.packet.CopyFrom(mesh_pb2.MeshPacket())

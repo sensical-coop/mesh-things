@@ -1,6 +1,6 @@
 import pytest
 
-pytest.importorskip("meshtastic", reason="needs mesh-things[protobuf]")
+pytest.importorskip("google.protobuf", reason="needs mesh-things[protobuf]")
 
 from mesh_things.portnums import portnum_name
 

@@ -3,9 +3,8 @@ import json
 import os
 import uuid
 
-from meshtastic.protobuf import mesh_pb2, mqtt_pb2
-
 from mesh_things import codec
+from mesh_things.protocols.v2_7 import mesh_pb2, mqtt_pb2
 from registry.gateways import discover_gateway
 from registry.management.commands.consume_gateway_candidates import Command as DiscoveryCommand
 from registry.models import Device, Mesh, Owner, OwnerRole

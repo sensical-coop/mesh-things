@@ -3,10 +3,9 @@ import base64
 from cryptography.hazmat.backends import default_backend
 from cryptography.hazmat.primitives.ciphers import Cipher, algorithms, modes
 from google.protobuf.json_format import MessageToDict
-from meshtastic import protocols
-from meshtastic.protobuf import mesh_pb2, mqtt_pb2
 
 from mesh_things import node_ids, portnum_registry
+from mesh_things.protocols.v2_7 import PAYLOAD_MESSAGES, mesh_pb2, mqtt_pb2
 
 # Channel.psk default AQ==
 _DEFAULT_CHANNEL_KEY = bytes(
@@ -52,11 +51,11 @@ def decode_payload(mp: mesh_pb2.MeshPacket):
         return None
 
     portnum = mp.decoded.portnum
-    handler = protocols.get(portnum) if portnum else None
-    if handler is None or handler.protobufFactory is None:
+    message = PAYLOAD_MESSAGES.get(portnum)
+    if message is None:
         return None
 
-    pb = handler.protobufFactory()
+    pb = message()
     pb.ParseFromString(mp.decoded.payload)
     pb_dict = MessageToDict(pb, preserving_proto_field_name=True)
     payload_kind = portnum_registry.classify(portnum, pb)

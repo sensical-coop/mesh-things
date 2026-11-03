@@ -1,7 +1,7 @@
 """Readings and archived payloads as Meshtastic protobuf messages. Needs mesh-things[protobuf].
 
-Values are in the units the API stores, which are those of the `meshtastic` release this
-package pins.
+Values are in the units the API stores, which are those of the canonical protocol,
+`mesh_things.protocols.CANONICAL`.
 """
 from collections import defaultdict
 from datetime import datetime
@@ -9,7 +9,7 @@ from datetime import datetime
 try:
     from google.protobuf import json_format
     from google.protobuf.message import Message
-    from meshtastic.protobuf import telemetry_pb2
+    from mesh_things.protocols.v2_7 import telemetry_pb2
 except ImportError as error:
     raise ImportError("mesh_things.protobuf needs the protobufs: pip install 'mesh-things[protobuf]'") from error
 

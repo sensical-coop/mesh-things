@@ -1,6 +1,3 @@
-from meshtastic import protocols
-from meshtastic.protobuf import portnums_pb2
-
 from mesh_things.channels import (
     DEVICE,
     NODEINFO_KIND,
@@ -9,6 +6,7 @@ from mesh_things.channels import (
     TELEMETRY,
     namespace_of,
 )
+from mesh_things.protocols.v2_7 import PAYLOAD_MESSAGES, portnums_pb2
 
 _NAMED_PORTNUMS = {
     portnums_pb2.PortNum.POSITION_APP: POSITION_KIND,
@@ -45,5 +43,4 @@ def message_type(payload_kind: str):
     prefix = f"{DEVICE}:{PORTNUM_PREFIX}"
     if portnum is None and payload_kind.startswith(prefix) and payload_kind[len(prefix):].isdigit():
         portnum = int(payload_kind[len(prefix):])
-    handler = protocols.get(portnum)
-    return handler.protobufFactory if handler else None
+    return PAYLOAD_MESSAGES.get(portnum)
