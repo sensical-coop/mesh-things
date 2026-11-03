@@ -154,7 +154,7 @@ services:
   # alarm-email windows and the alarms held for their summaries.
   redis:
     mem_limit: 256m
-    container_name: meshtastic-things-redis
+    container_name: mesh-things-redis
     image: redis:7-alpine
     command: ["redis-server", "--appendonly", "yes"]
     restart: unless-stopped

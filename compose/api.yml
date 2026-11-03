@@ -1,11 +1,11 @@
 x-api-image: &api-image
-  image: meshtastic-things/api:latest
+  image: mesh-things/api:latest
   # To pull prebuilt images instead of building on the server: uncomment below,
   # comment `build:`, and re-enable the publish jobs in deploy.yml. Set TAG to a
   # commit sha
-  # image: ghcr.io/sensical-coop/meshtastic-kafka/api:${TAG:-latest}
+  # image: ghcr.io/sensical-coop/mesh-things/api:${TAG:-latest}
   build:
-    context: ../meshtastic_things
+    context: ../server
     dockerfile: api/Dockerfile
 
 x-registry-role: &registry-role

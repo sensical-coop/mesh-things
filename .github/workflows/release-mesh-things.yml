@@ -1,0 +1,62 @@
+name: Release mesh-things
+
+# Publishes the mesh-things package when a tag such as `mesh-things-v0.2.0` is pushed.
+# PyPI trusts this workflow through Trusted Publishing, so no token is stored here.
+# Third-party actions are pinned to commit SHAs because this workflow can publish.
+
+on:
+  push:
+    tags: ["mesh-things-v*"]
+
+jobs:
+  checks:
+    uses: ./.github/workflows/pr-checks.yml
+
+  build:
+    needs: checks
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    defaults:
+      run:
+        working-directory: server/mesh_things
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262  # v4.4.0
+        with:
+          persist-credentials: false
+      - uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065  # v5.6.0
+        with:
+          python-version: "3.11"
+      - name: The tag names the package version
+        run: |
+          version=$(sed -n 's/^__version__ = "\(.*\)"$/\1/p' src/mesh_things/__init__.py)
+          if [ "mesh-things-v$version" != "$GITHUB_REF_NAME" ]; then
+            echo "::error::Tag $GITHUB_REF_NAME does not match __version__ $version"
+            exit 1
+          fi
+      - run: pip install build
+      - run: python -m build
+      - name: The wheel works on its own
+        run: |
+          python -m venv /tmp/wheel
+          /tmp/wheel/bin/pip install "$(ls dist/*.whl)[codec,pandas,archive]" pytest
+          # Outside the checkout, so neither pytest.ini nor the source tree is picked up.
+          mkdir /tmp/wheel-check && cp -r tests examples /tmp/wheel-check/
+          cd /tmp/wheel-check && /tmp/wheel/bin/python -m pytest -q -p no:cacheprovider tests
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02  # v4.6.2
+        with:
+          name: dist
+          path: server/mesh_things/dist/
+
+  publish:
+    needs: build
+    runs-on: ubuntu-latest
+    environment: pypi
+    permissions:
+      id-token: write
+    steps:
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093  # v4.3.0
+        with:
+          name: dist
+          path: dist/
+      - uses: pypa/gh-action-pypi-publish@7245906fb61fa33a13554f9d5fb856fe61758086  # v1.14.3

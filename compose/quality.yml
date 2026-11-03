@@ -1,9 +1,9 @@
 x-quality-worker-image: &quality-worker-image
-  image: meshtastic-things/quality-worker:latest
+  image: mesh-things/quality-worker:latest
   # Prebuilt alternative, disabled. See compose/api.yml.
-  # image: ghcr.io/sensical-coop/meshtastic-kafka/quality-worker:${TAG:-latest}
+  # image: ghcr.io/sensical-coop/mesh-things/quality-worker:${TAG:-latest}
   build:
-    context: ../meshtastic_things
+    context: ../server
     dockerfile: quality_worker/Dockerfile
 
 services:

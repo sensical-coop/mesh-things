@@ -1,9 +1,9 @@
 x-monitor-image: &monitor-image
-  image: meshtastic-things/monitor:latest
+  image: mesh-things/monitor:latest
   # Prebuilt alternative, disabled. See compose/api.yml.
-  # image: ghcr.io/sensical-coop/meshtastic-kafka/monitor:${TAG:-latest}
+  # image: ghcr.io/sensical-coop/mesh-things/monitor:${TAG:-latest}
   build:
-    context: ../meshtastic_things
+    context: ../server
     dockerfile: monitor/Dockerfile
 
 services:

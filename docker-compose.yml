@@ -1,3 +1,8 @@
+# Pinned so the volumes (meshtastic-things_postgres_data and the rest), the network and
+# the container names stay the same whatever the checkout folder is called. Changing it
+# starts the stack on new, empty volumes.
+name: meshtastic-things
+
 include:
   - compose/base.yml
   - compose/pipeline.yml
