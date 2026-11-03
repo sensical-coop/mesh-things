@@ -47,7 +47,13 @@ from .models import (
     TermsKind,
 )
 from . import topology
-from .status_alerts import check_silent_sources, check_sinks, check_source_rates, check_sources
+from .status_alerts import (
+    check_protocol_mismatches,
+    check_silent_sources,
+    check_sinks,
+    check_source_rates,
+    check_sources,
+)
 from .terms import terms, terms_enforced, text_hash
 
 log = structlog.get_logger()
@@ -405,6 +411,7 @@ def run_pass(now: datetime | None = None) -> dict:
         "source_rate_alerts": check_source_rates(now),
         "source_silent_alerts": check_silent_sources(now),
         "sink_alerts": check_sinks(now),
+        "protocol_mismatch_alerts": check_protocol_mismatches(now),
         "disk_alerts": int(check_disk()),
         "topology_pruned": topology.prune(now),
     }

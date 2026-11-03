@@ -203,3 +203,42 @@ def test_a_2_7_packet_decodes_the_same_with_2_8(battery_level):
 
     assert {**as_2_7, "protocol": None} == {**as_2_8, "protocol": None}
 
+
+def _parsed(raw: bytes, protocol: str):
+    mp = codec.parse_service_envelope(raw)
+    return codec.parse_payload(mp, protocol), mp.decoded.payload
+
+
+def test_a_payload_the_declared_version_knows_needs_nothing_newer():
+    (portnum, pb), payload = _parsed(_build_envelope(_telemetry_packet(1, 1, 50)), "2.7")
+
+    assert codec.needed_protocol(portnum, pb, payload, "2.7") is None
+
+
+def test_a_new_variant_needs_the_version_that_added_it():
+    (portnum, pb), payload = _parsed(_soil_water_envelope(), "2.7")
+
+    assert codec.needed_protocol(portnum, pb, payload, "2.7") == "2.8"
+
+
+def test_a_new_field_inside_a_known_measurement_counts_too():
+    v2_8 = protocols.get("2.8")
+    telemetry = v2_8.telemetry_pb2.Telemetry(time=1)
+    telemetry.environment_metrics.temperature = 20.0
+    telemetry.environment_metrics.lightning_distance_km = 12.0
+    pb = protocols.get("2.7").telemetry_pb2.Telemetry()
+    pb.ParseFromString(telemetry.SerializeToString())
+
+    assert pb.environment_metrics.temperature == 20.0
+    assert codec.needed_protocol(67, pb, telemetry.SerializeToString(), "2.7") == "2.8"
+
+
+def test_a_field_no_supported_version_knows_is_unsupported():
+    # Field 999, varint 1: what a version newer than any supported one would add.
+    payload = protocols.get("2.8").telemetry_pb2.Telemetry(time=1).SerializeToString() + bytes([0xB8, 0x3E, 0x01])
+    pb = protocols.get("2.7").telemetry_pb2.Telemetry()
+    pb.ParseFromString(payload)
+
+    assert codec.needed_protocol(67, pb, payload, "2.7") == protocols.UNSUPPORTED
+    assert codec.needed_protocol(67, pb, payload, "2.8") == protocols.UNSUPPORTED
+

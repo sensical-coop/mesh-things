@@ -10,6 +10,8 @@ from django.core.management.base import BaseCommand
 from django.utils import timezone
 from kafka import KafkaConsumer
 
+from mesh_things import protocols
+
 from registry.consumer_loop import consume_forever
 from registry.models import Device, Mesh
 
@@ -60,4 +62,12 @@ class Command(BaseCommand):
                 if key in event:
                     setattr(device, key, event[key])
                     update_fields.append(key)
+        needs = event.get("needs_protocol")
+        if needs and (device.observed_protocol is None or protocols.is_newer(needs, device.observed_protocol)):
+            device.observed_protocol = needs
+            device.observed_protocol_at = device.last_seen
+            update_fields += ["observed_protocol", "observed_protocol_at"]
+        elif needs and needs == device.observed_protocol:
+            device.observed_protocol_at = device.last_seen
+            update_fields.append("observed_protocol_at")
         device.save(update_fields=update_fields)

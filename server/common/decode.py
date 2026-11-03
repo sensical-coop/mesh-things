@@ -144,11 +144,12 @@ def decode_packet(raw: bytes, gateway_state, rejected_nodes, on_drop=None, recei
         )
         return events
 
-    result = codec.decode_payload(mp, protocol)
-    if result is None:
+    parsed = codec.parse_payload(mp, protocol)
+    if parsed is None:
         _drop(on_drop, f"portnum {mp.decoded.portnum} has no protobuf schema, nothing to store")
         return events
-    portnum, pb_dict, payload_kind = result
+    portnum, pb = parsed
+    pb_dict, payload_kind = codec.payload_fields(portnum, pb)
     decoded = codec.build_decoded_message(se, portnum, pb_dict, payload_kind, protocol)
     if mesh_id:
         decoded["mesh_id"] = mesh_id
@@ -156,6 +157,10 @@ def decode_packet(raw: bytes, gateway_state, rejected_nodes, on_drop=None, recei
     events["decoded"] = decoded
     if mesh_id:
         events["sighting"] = _build_sighting(mesh_id, decoded)
+        needs = codec.needed_protocol(portnum, pb, mp.decoded.payload, protocol)
+        if needs:
+            # A newer firmware than the mesh declares; what that version adds is lost.
+            events["sighting"]["needs_protocol"] = needs
         fields = _discovered_fields(decoded["payload_kind"], decoded["payload"])
         if fields:
             events["discovery"] = _build_discovery(mesh_id, decoded, fields)

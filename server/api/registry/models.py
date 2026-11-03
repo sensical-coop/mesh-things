@@ -57,7 +57,8 @@ class Owner(AbstractBaseUser, PermissionsMixin):
     password_reset_sent_at = models.DateTimeField(null=True, blank=True)
     # Length of a device's alarm-email window, in seconds. Null uses the server default.
     alarm_email_cooldown_seconds = models.PositiveIntegerField(null=True, blank=True)
-    # Emails about the sources and sinks this owner created that stay disconnected or unused.
+    # Emails about the sources and sinks this owner created that stay disconnected or unused,
+    # and about devices on their meshes that run a newer protocol than the mesh declares.
     status_alerts_enabled = models.BooleanField(default=False)
     # Emails about the sources this owner created that stay busier than the instance allows.
     source_rate_alerts_enabled = models.BooleanField(default=False)
@@ -478,6 +479,15 @@ class Device(models.Model):
     last_seen = models.DateTimeField(null=True, blank=True)
     # Set when gateway discovery registered it rather than its owner.
     discovered_at = models.DateTimeField(null=True, blank=True)
+    # The oldest protocol version that decodes everything the device sent, once its
+    # mesh's version left fields unknown. Only moves forward.
+    observed_protocol = models.CharField(
+        max_length=16,
+        null=True,
+        blank=True,
+        choices=[(v, v) for v in protocols.VERSIONS] + [(protocols.UNSUPPORTED, protocols.UNSUPPORTED)],
+    )
+    observed_protocol_at = models.DateTimeField(null=True, blank=True)
     created_at = models.DateTimeField(auto_now_add=True)
     updated_at = models.DateTimeField(auto_now=True)
 
@@ -497,6 +507,16 @@ class Device(models.Model):
                 name="uq_devices_gateway_device_id_allowed",
             ),
         ]
+
+    @property
+    def protocol(self) -> str:
+        """The protocol version this device's packets are decoded with: its mesh's."""
+        return self.mesh.protocol
+
+    @property
+    def protocol_mismatch(self) -> bool:
+        """Whether the device sends fields its mesh's protocol version does not know, which are lost."""
+        return protocols.is_newer(self.observed_protocol, self.mesh.protocol)
 
     def __str__(self) -> str:
         """Node number in the wire form a Meshtastic client shows, plus whatever

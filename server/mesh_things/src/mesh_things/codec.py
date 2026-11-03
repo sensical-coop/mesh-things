@@ -2,7 +2,9 @@ import base64
 
 from cryptography.hazmat.backends import default_backend
 from cryptography.hazmat.primitives.ciphers import Cipher, algorithms, modes
+from google.protobuf import unknown_fields
 from google.protobuf.json_format import MessageToDict
+from google.protobuf.message import Message
 
 from mesh_things import node_ids, portnum_registry, protocols
 from mesh_things.protocols.v2_7 import mesh_pb2, mqtt_pb2
@@ -50,8 +52,8 @@ def decrypt_packet(mp: mesh_pb2.MeshPacket, key_bytes: bytes | None) -> mesh_pb2
         # Do not log anything here
         return None
 
-def decode_payload(mp: mesh_pb2.MeshPacket, protocol: str = protocols.CANONICAL):
-    """Returns (portnum, pb_dict, payload_kind) or None, decoding with a protocol version's messages."""
+def parse_payload(mp: mesh_pb2.MeshPacket, protocol: str = protocols.CANONICAL) -> tuple[int, Message] | None:
+    """Returns (portnum, message) or None, parsing with a protocol version's messages."""
     if not mp.HasField("decoded"):
         return None
 
@@ -62,10 +64,56 @@ def decode_payload(mp: mesh_pb2.MeshPacket, protocol: str = protocols.CANONICAL)
 
     pb = message()
     pb.ParseFromString(mp.decoded.payload)
-    pb_dict = MessageToDict(pb, preserving_proto_field_name=True)
-    payload_kind = portnum_registry.classify(portnum, pb)
+    return portnum, pb
 
-    return portnum, pb_dict, payload_kind
+
+def payload_fields(portnum: int, pb: Message) -> tuple[dict, str]:
+    """A parsed payload as (pb_dict, payload_kind)."""
+    return MessageToDict(pb, preserving_proto_field_name=True), portnum_registry.classify(portnum, pb)
+
+
+def decode_payload(mp: mesh_pb2.MeshPacket, protocol: str = protocols.CANONICAL):
+    """Returns (portnum, pb_dict, payload_kind) or None, decoding with a protocol version's messages."""
+    parsed = parse_payload(mp, protocol)
+    if parsed is None:
+        return None
+    portnum, pb = parsed
+    return (portnum, *payload_fields(portnum, pb))
+
+
+def has_unknown_fields(message: Message) -> bool:
+    """Whether a parsed message, or any message inside it, holds fields its schema does not know."""
+    if len(unknown_fields.UnknownFieldSet(message)):
+        return True
+    for field, value in message.ListFields():
+        if field.message_type is None or field.message_type.GetOptions().map_entry:
+            continue
+        # protobuf >= 6 dropped FieldDescriptor.label in favour of is_repeated.
+        is_repeated = getattr(field, "is_repeated", None)
+        if is_repeated is None:
+            is_repeated = field.label == field.LABEL_REPEATED
+        values = value if is_repeated else [value]
+        if any(has_unknown_fields(item) for item in values):
+            return True
+    return False
+
+
+def needed_protocol(portnum: int, pb: Message, payload: bytes, protocol: str) -> str | None:
+    """The version a payload needs when `protocol` leaves fields unknown, or None when it does not.
+
+    The oldest newer version that knows every field, or protocols.UNSUPPORTED when none does.
+    """
+    if not has_unknown_fields(pb):
+        return None
+    for version in protocols.newer_than(protocol):
+        message = protocols.get(version).PAYLOAD_MESSAGES.get(portnum)
+        if message is None:
+            continue
+        newer = message()
+        newer.ParseFromString(payload)
+        if not has_unknown_fields(newer):
+            return version
+    return protocols.UNSUPPORTED
 
 def build_decoded_message(
     se: mqtt_pb2.ServiceEnvelope, portnum: int, pb_dict: dict, payload_kind: str, protocol: str = protocols.CANONICAL

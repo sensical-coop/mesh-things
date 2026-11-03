@@ -7,6 +7,8 @@ from django.core.mail import EmailMultiAlternatives
 from django.template import TemplateDoesNotExist
 from django.template.loader import render_to_string
 
+from mesh_things import protocols
+
 from . import email_health
 from .models import OperatorRequestStatus, Owner
 
@@ -247,6 +249,26 @@ def send_sink_unused_email(sink, since) -> None:
             "since": since,
             "max_offline_hours": settings.SINKS_MAX_OFFLINE_HOURS,
             "sink_link": console_url("sinks", sink.id),
+        },
+    )
+
+
+def send_protocol_mismatch_email(mesh, devices: list) -> None:
+    """Tell a mesh's owner which devices send fields the mesh's protocol version drops."""
+    owner = mesh.owner
+    needed = protocols.newest(device.observed_protocol for device in devices)
+    send_templated_email(
+        to_email=owner.email,
+        subject="Some devices run a newer protocol than your mesh - Mesh Things",
+        template_name="protocol_mismatch",
+        context={
+            "name": owner.name,
+            "mesh": str(mesh),
+            "protocol": mesh.protocol,
+            "needed": needed,
+            "unsupported": protocols.UNSUPPORTED,
+            "devices": [str(device) for device in devices],
+            "mesh_link": console_url("meshes", mesh.id),
         },
     )
 

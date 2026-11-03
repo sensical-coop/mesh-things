@@ -2,7 +2,7 @@
   "openapi": "3.0.3",
   "info": {
     "title": "Mesh Things API",
-    "version": "0.3.0"
+    "version": "0.4.0"
   },
   "paths": {
     "/algorithms": {
@@ -2395,7 +2395,7 @@
       },
       "put": {
         "operationId": "owners_me_update",
-        "description": "Update the authenticated owner's name, email address, or email preferences.\n\nChanging the email address deactivates the account until the new one\nis verified, and sends a fresh verification email.\n\nArgs:\n    alarm_email_cooldown_seconds: Length of a device's alarm window,\n        in seconds. The first alarm on a device is emailed straight\n        away; any further alarms on that device during the window are\n        sent as one summary when it ends. Accepts 0 (email on every\n        alarm, no summaries) up to 2592000 (30 days). Leave unset or\n        null to use the server default.\n    status_alerts_enabled: Email me when a source I created stays\n        disconnected or stops receiving messages, or a sink I created\n        with meshes or devices attached has nobody connected. Defaults\n        to false. Superusers are always emailed about silent sources.\n    source_rate_alerts_enabled: Email me when a source I created\n        averages more messages per second over an hour than this\n        instance allows. Defaults to false. Superusers are always\n        emailed about busy sources.",
+        "description": "Update the authenticated owner's name, email address, or email preferences.\n\nChanging the email address deactivates the account until the new one\nis verified, and sends a fresh verification email.\n\nArgs:\n    alarm_email_cooldown_seconds: Length of a device's alarm window,\n        in seconds. The first alarm on a device is emailed straight\n        away; any further alarms on that device during the window are\n        sent as one summary when it ends. Accepts 0 (email on every\n        alarm, no summaries) up to 2592000 (30 days). Leave unset or\n        null to use the server default.\n    status_alerts_enabled: Email me when a source I created stays\n        disconnected or stops receiving messages, a sink I created\n        with meshes or devices attached has nobody connected, or a\n        device on a mesh I own runs a newer protocol than the mesh\n        declares. Defaults to false. Superusers are always emailed\n        about silent sources.\n    source_rate_alerts_enabled: Email me when a source I created\n        averages more messages per second over an hour than this\n        instance allows. Defaults to false. Superusers are always\n        emailed about busy sources.",
         "tags": [
           "owners"
         ],
@@ -6512,6 +6512,36 @@
             "readOnly": true,
             "nullable": true
           },
+          "protocol": {
+            "type": "string",
+            "readOnly": true,
+            "description": "Meshtastic protocol version the device's packets are decoded with: its mesh's."
+          },
+          "observed_protocol": {
+            "readOnly": true,
+            "nullable": true,
+            "description": "Oldest protocol version that decodes everything the device has sent, `unsupported` when no supported version does, or null while its mesh's version has always been enough.\n\n* `2.7` - 2.7\n* `2.8` - 2.8\n* `unsupported` - unsupported",
+            "oneOf": [
+              {
+                "$ref": "#/components/schemas/ObservedProtocolEnum"
+              },
+              {
+                "$ref": "#/components/schemas/NullEnum"
+              }
+            ]
+          },
+          "observed_protocol_at": {
+            "type": "string",
+            "format": "date-time",
+            "readOnly": true,
+            "nullable": true,
+            "description": "When the evidence for observed_protocol last arrived."
+          },
+          "protocol_mismatch": {
+            "type": "boolean",
+            "readOnly": true,
+            "description": "The device sends fields its mesh's protocol version does not know, so those readings are lost until the mesh declares observed_protocol."
+          },
           "telemetry_variant_ids": {
             "type": "array",
             "items": {
@@ -6548,6 +6578,10 @@
           "name",
           "node_id",
           "nodeinfo_overridden",
+          "observed_protocol",
+          "observed_protocol_at",
+          "protocol",
+          "protocol_mismatch",
           "publish_interval_seconds",
           "reading_interval_seconds",
           "role",
@@ -7948,6 +7982,15 @@
           null
         ]
       },
+      "ObservedProtocolEnum": {
+        "enum": [
+          "2.7",
+          "2.8",
+          "unsupported"
+        ],
+        "type": "string",
+        "description": "* `2.7` - 2.7\n* `2.8` - 2.8\n* `unsupported` - unsupported"
+      },
       "OperatorRequest": {
         "type": "object",
         "description": "An operator request as its requester sees it.",
@@ -8493,7 +8536,7 @@
           },
           "status_alerts_enabled": {
             "type": "boolean",
-            "description": "Email me when a source I created stays disconnected or stops receiving messages, or a sink I created with meshes or devices attached has nobody connected. Off by default. Superusers are always emailed about silent sources."
+            "description": "Email me when a source I created stays disconnected or stops receiving messages, a sink I created with meshes or devices attached has nobody connected, or a device on a mesh I own runs a newer protocol than the mesh declares. Off by default. Superusers are always emailed about silent sources."
           },
           "source_rate_alerts_enabled": {
             "type": "boolean",

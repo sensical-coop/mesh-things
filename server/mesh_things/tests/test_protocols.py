@@ -53,3 +53,22 @@ def test_the_default_is_the_canonical_version():
 def test_an_unknown_version_is_refused():
     with pytest.raises(ValueError, match="unknown protocol"):
         protocols.get("1.0")
+
+
+def test_versions_are_ordered_oldest_first():
+    assert protocols.newer_than("2.7") == ["2.8"]
+    assert protocols.newer_than("2.8") == []
+
+
+def test_unsupported_is_newer_than_every_supported_version():
+    assert protocols.is_newer("2.8", "2.7")
+    assert not protocols.is_newer("2.7", "2.8")
+    assert not protocols.is_newer("2.7", "2.7")
+    assert protocols.is_newer(protocols.UNSUPPORTED, "2.8")
+    assert not protocols.is_newer("2.8", protocols.UNSUPPORTED)
+    assert not protocols.is_newer(None, "2.7")
+
+
+def test_the_newest_of_several_versions():
+    assert protocols.newest(["2.7", "2.8", "2.7"]) == "2.8"
+    assert protocols.newest(["2.8", protocols.UNSUPPORTED]) == protocols.UNSUPPORTED

@@ -207,8 +207,9 @@ class OwnerUpdateSerializer(serializers.ModelSerializer):
             "status_alerts_enabled": {
                 "help_text": (
                     "Email me when a source I created stays disconnected or stops receiving messages, "
-                    "or a sink I created with meshes or devices attached has nobody connected. Off by "
-                    "default. Superusers are always emailed about silent sources."
+                    "a sink I created with meshes or devices attached has nobody connected, or a device "
+                    "on a mesh I own runs a newer protocol than the mesh declares. Off by default. "
+                    "Superusers are always emailed about silent sources."
                 )
             },
             "source_rate_alerts_enabled": {
@@ -939,6 +940,16 @@ class DeviceReadSerializer(serializers.ModelSerializer):
     telemetry_variant_ids = serializers.SerializerMethodField(
         help_text="Telemetry variants this device has been seen reporting."
     )
+    protocol = serializers.CharField(
+        read_only=True, help_text="Meshtastic protocol version the device's packets are decoded with: its mesh's."
+    )
+    protocol_mismatch = serializers.BooleanField(
+        read_only=True,
+        help_text=(
+            "The device sends fields its mesh's protocol version does not know, so those readings are lost "
+            "until the mesh declares observed_protocol."
+        ),
+    )
 
     class Meta:
         model = Device
@@ -966,11 +977,24 @@ class DeviceReadSerializer(serializers.ModelSerializer):
             "archive_enabled_by",
             "last_seen",
             "discovered_at",
+            "protocol",
+            "observed_protocol",
+            "observed_protocol_at",
+            "protocol_mismatch",
             "telemetry_variant_ids",
             "created_at",
             "updated_at",
         ]
         read_only_fields = fields
+        extra_kwargs = {
+            "observed_protocol": {
+                "help_text": (
+                    "Oldest protocol version that decodes everything the device has sent, `unsupported` when "
+                    "no supported version does, or null while its mesh's version has always been enough."
+                )
+            },
+            "observed_protocol_at": {"help_text": "When the evidence for observed_protocol last arrived."},
+        }
 
     @extend_schema_field(serializers.ListField(child=serializers.UUIDField()))
     def get_telemetry_variant_ids(self, instance) -> list[str]:

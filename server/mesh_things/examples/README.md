@@ -113,6 +113,11 @@ python3 registry_device_role.py --device-uuid <device uuid>
 #    gateway on the mesh.
 python3 registry_update_mesh.py $MESH_ID --label "home mesh"
 
+#    See which Meshtastic protocol version each device follows. A device on newer
+#    firmware than the mesh declares loses the readings that version adds; --fix
+#    declares the version the devices need.
+python3 registry_device_protocols.py $MESH_ID --fix
+
 # 5. Give a node its admin keys, for remote administration in Meshtastic. The keys you
 #    pass replace the node's whole list, so repeat --admin-key-b64 for each key it needs.
 python3 registry_add_admin_key.py --node-id 111222333 --admin-key-b64 QUFBQQ==

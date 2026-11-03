@@ -61,6 +61,32 @@ def test_a_gateway_on_an_unknown_protocol_fails_loudly():
         decode.decode_packet(raw, gateway_state=state, rejected_nodes=set())
 
 
+def _soil_water_raw() -> bytes:
+    from mesh_things import protocols
+
+    v2_8 = protocols.get("2.8")
+    telemetry = v2_8.telemetry_pb2.Telemetry(time=1)
+    telemetry.soil_water_metrics.solar_irradiance = 300.0
+    return _build_envelope(_plaintext_packet(1, 111, mesh_pb2.Data(portnum=67, payload=telemetry.SerializeToString())))
+
+
+def test_a_device_on_a_newer_protocol_says_which_on_its_sighting():
+    result = decode.decode_packet(_soil_water_raw(), gateway_state=_gateway_state(), rejected_nodes=set())
+
+    assert result["sighting"]["needs_protocol"] == "2.8"
+    # Still decoded with the declared version, which drops the new variant.
+    assert result["decoded"]["payload_kind"] == "telemetry"
+
+
+def test_a_device_on_the_declared_protocol_adds_nothing_to_its_sighting():
+    state = {GATEWAY_ID: {"psk_b64": "", "mesh_id": MESH_ID, "protocol": "2.8"}}
+
+    result = decode.decode_packet(_soil_water_raw(), gateway_state=state, rejected_nodes=set())
+
+    assert "needs_protocol" not in result["sighting"]
+    assert result["decoded"]["payload_kind"] == "telemetry:soil_water_metrics"
+
+
 def test_unregistered_gateway_returns_none():
     data = mesh_pb2.Data(portnum=67, payload=b"irrelevant")
     raw = _build_envelope(_plaintext_packet(1, 111, data))

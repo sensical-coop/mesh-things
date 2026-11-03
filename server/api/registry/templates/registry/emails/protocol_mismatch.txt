@@ -1,0 +1,20 @@
+{% autoescape off %}Hi {{ name }},
+
+Your mesh "{{ mesh }}" is declared on Meshtastic protocol {{ protocol }}, but some of
+its devices run newer firmware and send readings that version does not know:
+{% for device in devices %}
+  - {{ device }}{% endfor %}
+
+Those readings are not stored. Everything else from these devices still is.
+{% if needed == unsupported %}
+This instance does not support the version these devices run yet. Their other
+readings are unaffected, and the missing ones will be stored once it does.
+{% else %}
+Set the mesh's protocol to {{ needed }} to store them from now on. Readings that
+were already missed cannot be recovered.
+{% endif %}
+{{ mesh_link }}
+
+You will not be emailed again until the mesh's devices match its protocol and then
+one stops matching again.
+{% endautoescape %}
