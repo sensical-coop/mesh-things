@@ -336,8 +336,10 @@ class Mesh(models.Model):
     discover_gateways = models.BooleanField(default=False)
     # Declared rather than detected: a version's unit changes cannot all be told apart on the wire.
     protocol = models.CharField(
-        max_length=8, choices=[(v, v) for v in protocols.VERSIONS], default=protocols.CANONICAL
+        max_length=8, choices=[(v, v) for v in protocols.VERSIONS], default=protocols.DEFAULT
     )
+    # The last deprecation reminder sent, as "<version>:<status>", so each goes out once.
+    protocol_notice = models.CharField(max_length=32, null=True, blank=True)
     created_at = models.DateTimeField(auto_now_add=True)
     updated_at = models.DateTimeField(auto_now=True)
 
@@ -348,6 +350,16 @@ class Mesh(models.Model):
         if not self.label or self.label == self.channel_id:
             return self.channel_id
         return f"{self.label} ({self.channel_id})"
+
+    @property
+    def protocol_status(self) -> str:
+        """Where the mesh's protocol version stands: current, supported, deprecated or sunset."""
+        return protocols.status(self.protocol)
+
+    @property
+    def protocol_sunset(self):
+        """The date the mesh's protocol version stops being offered, if one is set."""
+        return protocols.PROTOCOLS[self.protocol].sunset
 
     @property
     def ingest_paused(self) -> bool:

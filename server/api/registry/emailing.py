@@ -273,6 +273,26 @@ def send_protocol_mismatch_email(mesh, devices: list) -> None:
     )
 
 
+def send_protocol_retiring_email(mesh, status: str) -> None:
+    """Tell a mesh's owner that its protocol version is deprecated or past its sunset."""
+    owner = mesh.owner
+    standing = "past its sunset" if status == protocols.SUNSET else "deprecated"
+    send_templated_email(
+        to_email=owner.email,
+        subject=f"Meshtastic protocol {mesh.protocol} is {standing} - Mesh Things",
+        template_name="protocol_retiring",
+        context={
+            "name": owner.name,
+            "mesh": str(mesh),
+            "protocol": mesh.protocol,
+            "status": status,
+            "sunset": mesh.protocol_sunset,
+            "suggested": protocols.DEFAULT,
+            "mesh_link": console_url("meshes", mesh.id),
+        },
+    )
+
+
 def send_mesh_terms_renewal_email(mesh, acceptance) -> None:
     owner = mesh.owner
     send_templated_email(

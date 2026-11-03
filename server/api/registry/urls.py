@@ -24,6 +24,7 @@ urlpatterns = [
     path("operator-requests", views.OperatorRequestListView.as_view()),
     path("operator-requests/<uuid:request_id>", views.OperatorRequestDetailView.as_view()),
     path("owners/<uuid:owner_id>", views.OwnerDetailView.as_view()),
+    path("protocols", views.ProtocolListView.as_view()),
     path("meshes", views.MeshListCreateView.as_view()),
     path("meshes/terms", views.MeshTermsView.as_view()),
     path("meshes/<uuid:mesh_id>", views.MeshDetailView.as_view()),

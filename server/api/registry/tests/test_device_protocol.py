@@ -17,6 +17,7 @@ class DeviceProtocolTests(RegistryTestCase):
         super().setUp()
         self.owner = self.create_owner()
         self.mesh = self.create_mesh(self.owner)
+        Mesh.objects.filter(pk=self.mesh["id"]).update(protocol="2.7")
 
     def sighting(self, device_id: int = 7, **fields) -> Device:
         SightingsCommand._upsert({"mesh_id": self.mesh["id"], "device_id": device_id, "op": "upsert", **fields})
@@ -80,6 +81,7 @@ class ProtocolMismatchAlertTests(RegistryTestCase):
         super().setUp()
         self.owner = self.create_owner(email="mismatch-owner@example.com")
         self.mesh = self.create_mesh(self.owner, label="Garden")
+        Mesh.objects.filter(pk=self.mesh["id"]).update(protocol="2.7")
         resp = self.client.put(
             "/owners/me", {"status_alerts_enabled": True}, format="json", **self.auth_headers(self.owner)
         )

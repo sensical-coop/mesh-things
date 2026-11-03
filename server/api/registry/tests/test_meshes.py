@@ -181,11 +181,13 @@ class MeshCrudTests(RegistryTestCase):
         published_meshes = [call.args[1] for call in self.fake_publisher.publish_gateway_upsert.call_args_list]
         self.assertTrue(all(m.psk_b64 == "BBBB" for m in published_meshes))
 
-    def test_a_new_mesh_runs_the_canonical_protocol(self):
+    def test_a_new_mesh_runs_the_default_protocol(self):
         owner = self.create_owner()
         mesh = self.create_mesh(owner)
 
-        self.assertEqual(mesh["protocol"], "2.7")
+        self.assertEqual(mesh["protocol"], "2.8")
+        self.assertEqual(mesh["protocol_status"], "current")
+        self.assertIsNone(mesh["protocol_sunset"])
 
     def test_an_unknown_protocol_is_refused(self):
         owner = self.create_owner()
@@ -221,7 +223,8 @@ class MeshCrudTests(RegistryTestCase):
 
         data = MeshSerializer(mesh_obj, context={"viewer_id": other["id"]}).data
 
-        self.assertEqual(data["protocol"], "2.7")
+        self.assertEqual(data["protocol"], "2.8")
+        self.assertEqual(data["protocol_status"], "current")
 
     def test_update_mesh_label_only_does_not_republish_gateways(self):
         owner = self.create_owner()

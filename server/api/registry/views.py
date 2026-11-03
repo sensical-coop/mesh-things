@@ -41,7 +41,7 @@ from .emqx_client import get_emqx_client
 from .exceptions import BadGateway, Conflict
 from .gateways import save_gateway
 from .kafka_publisher import get_publisher, publish_gateway_state
-from mesh_things import node_ids
+from mesh_things import node_ids, protocols
 from mesh_things.detectors import DETECTOR_SPECS
 from mesh_things.env import env_str
 
@@ -139,6 +139,7 @@ from .serializers import (
     DeviceMeasurementUpdateSerializer,
     DetectorSerializer,
     DeviceTelemetryVariantSerializer,
+    ProtocolSerializer,
     catalog_defaults_for,
     TelemetryVariantMeasurementReadSerializer,
     TelemetryVariantMeasurementUpdateSerializer,
@@ -232,6 +233,32 @@ class MetricsView(APIView):
             "active_gateways": Device.objects.filter(is_gateway=True, is_allowed=True).count(),
         }
         return Response(MetricsResponseSerializer(body).data)
+
+
+class ProtocolListView(APIView):
+    """Return the Meshtastic protocol versions a mesh can be declared on, oldest first.
+
+    Each version carries its status and sunset date. A deprecated version is still
+    decoded, and owners of meshes on it are reminded to move. A version past its sunset
+    can no longer be chosen for a mesh, but meshes already on it keep decoding.
+    Readings are stored in the same units and channel names whatever the version.
+    """
+
+    permission_classes = [AllowAny]
+
+    @extend_schema(responses=ProtocolSerializer(many=True))
+    def get(self, request):
+        body = [
+            {
+                "version": p.version,
+                "status": protocols.status(p.version),
+                "sunset": p.sunset,
+                "source_ref": p.source_ref,
+                "is_default": p.version == protocols.DEFAULT,
+            }
+            for p in protocols.PROTOCOLS.values()
+        ]
+        return Response(ProtocolSerializer(body, many=True).data)
 
 
 class EmailStatusView(APIView):
@@ -989,8 +1016,9 @@ class MeshListCreateView(APIView):
                 Defaults to `false`. Only an operator may switch it on for a mesh
                 with a default or blank key.
             protocol: Meshtastic protocol version the mesh's devices run, which
-                its packets are decoded with. Defaults to `2.7`. Readings are
-                stored in the same units whatever the version.
+                its packets are decoded with. Defaults to `2.8`. A version past
+                its sunset is refused. Readings are stored in the same units
+                whatever the version.
             terms_version: The `version` of the mesh terms accepted. Required
                 without a source, ignored with one, and ignored on an instance
                 that does not enforce terms.
@@ -1074,7 +1102,8 @@ class MeshDetailView(APIView):
                 a default or blank key.
             protocol: Meshtastic protocol version the mesh's devices run. Packets
                 received after the change are decoded with it; readings already
-                stored are left as they are.
+                stored are left as they are. A version past its sunset is refused,
+                unless the mesh is already on it.
             terms_version: The `version` of the mesh terms accepted. Required when
                 moving the mesh onto the default broker unless it already holds a
                 current acceptance, or the instance does not enforce terms;

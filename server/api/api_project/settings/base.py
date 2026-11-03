@@ -185,6 +185,7 @@ SPECTACULAR_SETTINGS = {
         "BackfillStatusEnum": "registry.models.BackfillStatus",
         "BackfillResultStatusEnum": [("done", "done"), ("failed", "failed")],
         "RfLinkSourceEnum": "registry.models.RfLinkSource",
+        "ProtocolStatusEnum": "mesh_things.protocols.STATUSES",
     },
     "POSTPROCESSING_HOOKS": [
         "drf_spectacular.hooks.postprocess_schema_enums",
@@ -258,6 +259,8 @@ DATA_RETENTION_DAYS = int(_retention_days) if _retention_days else None
 # Data scheduled for deletion stays in place this long, so it can be exported or restored.
 DATA_DELETION_GRACE_DAYS = env_int("REGISTRY__DATA_DELETION_GRACE_DAYS", 30)
 TERMS_RENEWAL_NOTICE_DAYS = env_int("REGISTRY__TERMS_RENEWAL_NOTICE_DAYS", 30)
+# Owners of meshes on a deprecated protocol version are reminded this long before its sunset.
+PROTOCOL_SUNSET_NOTICE_DAYS = env_int("REGISTRY__PROTOCOL_SUNSET_NOTICE_DAYS", 30)
 DATA_LIFECYCLE_INTERVAL_SECONDS = env_int("REGISTRY__DATA_LIFECYCLE_INTERVAL_SECONDS", 3600)
 # Superusers are emailed, at most once a day, when the disk holding Docker's data is fuller
 # than this. 0 turns the check off. A full disk is what stops Postgres writing.

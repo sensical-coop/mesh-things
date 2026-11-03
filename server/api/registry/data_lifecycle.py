@@ -11,8 +11,9 @@ and anything a lapse paused is resumed. Each step is idempotent, so `run_pass` c
 resume after a failure.
 
 Each pass also discards sink consumers' broker sessions that have been offline too long or
-queued too much, which the broker's own limits would let grow for weeks, and tells operators
-about sources that stay disconnected and sinks nobody is connected to.
+queued too much, which the broker's own limits would let grow for weeks, tells operators
+about sources that stay disconnected and sinks nobody is connected to, and reminds owners of
+meshes on a deprecated protocol version.
 """
 from datetime import datetime, timedelta
 
@@ -21,12 +22,14 @@ from django.conf import settings
 from django.db import transaction
 from django.utils import timezone
 
+from mesh_things import protocols
 from mesh_things.env import env_str
 
 from .data_store import get_data_store
 from .disk_alert import check_disk
 from .emailing import (
     send_mesh_terms_lapsed_email,
+    send_protocol_retiring_email,
     send_mesh_terms_renewal_email,
     send_sink_terms_lapsed_email,
     send_sink_terms_renewal_email,
@@ -221,6 +224,29 @@ def send_renewal_notices(now: datetime) -> int:
     return sent
 
 
+def send_protocol_notices(now: datetime) -> int:
+    """Email the owner of every mesh on a deprecated protocol version, once within the notice
+    window before its sunset, and once more when the sunset passes."""
+    today = now.date()
+    notice = timedelta(days=settings.PROTOCOL_SUNSET_NOTICE_DAYS)
+    retiring = [
+        p.version for p in protocols.PROTOCOLS.values()
+        if protocols.status(p.version, today) in (protocols.DEPRECATED, protocols.SUNSET)
+    ]
+    sent = 0
+    for mesh in Mesh.objects.filter(protocol__in=retiring).select_related("owner"):
+        status = protocols.status(mesh.protocol, today)
+        if status == protocols.DEPRECATED and mesh.protocol_sunset and today < mesh.protocol_sunset - notice:
+            continue
+        key = f"{mesh.protocol}:{status}"
+        if mesh.protocol_notice == key or not _notify(send_protocol_retiring_email, mesh, status):
+            continue
+        mesh.protocol_notice = key
+        mesh.save(update_fields=["protocol_notice"])
+        sent += 1
+    return sent
+
+
 def _notify(send, *args) -> bool:
     try:
         send(*args)
@@ -401,6 +427,7 @@ def run_pass(now: datetime | None = None) -> dict:
     now = now or timezone.now()
     return {
         "renewal_notices": send_renewal_notices(now),
+        "protocol_notices": send_protocol_notices(now),
         "paused_sources": pause_lapsed_sources(now),
         "paused_meshes": pause_lapsed_meshes(now),
         "paused_sinks": pause_lapsed_sinks(now),

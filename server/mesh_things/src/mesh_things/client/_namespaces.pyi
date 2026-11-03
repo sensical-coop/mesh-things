@@ -279,8 +279,9 @@ class Meshes:
                 Defaults to `false`. Only an operator may switch it on for a mesh
                 with a default or blank key.
             protocol: Meshtastic protocol version the mesh's devices run, which
-                its packets are decoded with. Defaults to `2.7`. Readings are
-                stored in the same units whatever the version.
+                its packets are decoded with. Defaults to `2.8`. A version past
+                its sunset is refused. Readings are stored in the same units
+                whatever the version.
             terms_version: The `version` of the mesh terms accepted. Required
                 without a source, ignored with one, and ignored on an instance
                 that does not enforce terms.
@@ -414,7 +415,8 @@ class Meshes:
                 a default or blank key.
             protocol: Meshtastic protocol version the mesh's devices run. Packets
                 received after the change are decoded with it; readings already
-                stored are left as they are.
+                stored are left as they are. A version past its sunset is refused,
+                unless the mesh is already on it.
             terms_version: The `version` of the mesh terms accepted. Required when
                 moving the mesh onto the default broker unless it already holds a
                 current acceptance, or the instance does not enforce terms;
@@ -713,6 +715,16 @@ class PostprocessingBlueprints:
 
     def versions_list(self, blueprint_id: str) -> Any:
         """List every version of a blueprint, oldest first."""
+
+class Protocols:
+    def list(self) -> Any:
+        """Return the Meshtastic protocol versions a mesh can be declared on, oldest first.
+
+        Each version carries its status and sunset date. A deprecated version is still
+        decoded, and owners of meshes on it are reminded to move. A version past its sunset
+        can no longer be chosen for a mesh, but meshes already on it keep decoding.
+        Readings are stored in the same units and channel names whatever the version.
+        """
 
 class Readings:
     def archive_meshes_credentials_create(self, mesh_id: str) -> Any:
@@ -1426,8 +1438,9 @@ class AsyncMeshes:
                 Defaults to `false`. Only an operator may switch it on for a mesh
                 with a default or blank key.
             protocol: Meshtastic protocol version the mesh's devices run, which
-                its packets are decoded with. Defaults to `2.7`. Readings are
-                stored in the same units whatever the version.
+                its packets are decoded with. Defaults to `2.8`. A version past
+                its sunset is refused. Readings are stored in the same units
+                whatever the version.
             terms_version: The `version` of the mesh terms accepted. Required
                 without a source, ignored with one, and ignored on an instance
                 that does not enforce terms.
@@ -1561,7 +1574,8 @@ class AsyncMeshes:
                 a default or blank key.
             protocol: Meshtastic protocol version the mesh's devices run. Packets
                 received after the change are decoded with it; readings already
-                stored are left as they are.
+                stored are left as they are. A version past its sunset is refused,
+                unless the mesh is already on it.
             terms_version: The `version` of the mesh terms accepted. Required when
                 moving the mesh onto the default broker unless it already holds a
                 current acceptance, or the instance does not enforce terms;
@@ -1860,6 +1874,16 @@ class AsyncPostprocessingBlueprints:
 
     async def versions_list(self, blueprint_id: str) -> Any:
         """List every version of a blueprint, oldest first."""
+
+class AsyncProtocols:
+    async def list(self) -> Any:
+        """Return the Meshtastic protocol versions a mesh can be declared on, oldest first.
+
+        Each version carries its status and sunset date. A deprecated version is still
+        decoded, and owners of meshes on it are reminded to move. A version past its sunset
+        can no longer be chosen for a mesh, but meshes already on it keep decoding.
+        Readings are stored in the same units and channel names whatever the version.
+        """
 
 class AsyncReadings:
     async def archive_meshes_credentials_create(self, mesh_id: str) -> Any:
@@ -2309,6 +2333,7 @@ class SyncNamespaces:
     owners: Owners
     postprocessing_backfills: PostprocessingBackfills
     postprocessing_blueprints: PostprocessingBlueprints
+    protocols: Protocols
     readings: Readings
     sinks: Sinks
     sources: Sources
@@ -2329,6 +2354,7 @@ class AsyncNamespaces:
     owners: AsyncOwners
     postprocessing_backfills: AsyncPostprocessingBackfills
     postprocessing_blueprints: AsyncPostprocessingBlueprints
+    protocols: AsyncProtocols
     readings: AsyncReadings
     sinks: AsyncSinks
     sources: AsyncSources

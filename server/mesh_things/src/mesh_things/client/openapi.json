@@ -2,7 +2,7 @@
   "openapi": "3.0.3",
   "info": {
     "title": "Mesh Things API",
-    "version": "0.4.0"
+    "version": "0.5.0"
   },
   "paths": {
     "/algorithms": {
@@ -1425,7 +1425,7 @@
       },
       "post": {
         "operationId": "meshes_create",
-        "description": "Create a mesh owned by the caller.\n\nA mesh on the default broker needs its mesh terms accepted, which are\nrecorded with it. A mesh on a source is covered by the source's terms.\n\nArgs:\n    source_id: Source the mesh's traffic is bridged from, which must be\n        one the caller created, or any source for a superuser. Leave\n        unset for traffic on this instance's own broker.\n    discover_gateways: Register gateways automatically once one of their\n        packets decodes with this mesh's channel and pre-shared key.\n        Defaults to `false`. Only an operator may switch it on for a mesh\n        with a default or blank key.\n    protocol: Meshtastic protocol version the mesh's devices run, which\n        its packets are decoded with. Defaults to `2.7`. Readings are\n        stored in the same units whatever the version.\n    terms_version: The `version` of the mesh terms accepted. Required\n        without a source, ignored with one, and ignored on an instance\n        that does not enforce terms.\n    terms_locale: Locale the terms were shown in, `en` or `es`. Defaults\n        to `en`.",
+        "description": "Create a mesh owned by the caller.\n\nA mesh on the default broker needs its mesh terms accepted, which are\nrecorded with it. A mesh on a source is covered by the source's terms.\n\nArgs:\n    source_id: Source the mesh's traffic is bridged from, which must be\n        one the caller created, or any source for a superuser. Leave\n        unset for traffic on this instance's own broker.\n    discover_gateways: Register gateways automatically once one of their\n        packets decodes with this mesh's channel and pre-shared key.\n        Defaults to `false`. Only an operator may switch it on for a mesh\n        with a default or blank key.\n    protocol: Meshtastic protocol version the mesh's devices run, which\n        its packets are decoded with. Defaults to `2.8`. A version past\n        its sunset is refused. Readings are stored in the same units\n        whatever the version.\n    terms_version: The `version` of the mesh terms accepted. Required\n        without a source, ignored with one, and ignored on an instance\n        that does not enforce terms.\n    terms_locale: Locale the terms were shown in, `en` or `es`. Defaults\n        to `en`.",
         "tags": [
           "meshes"
         ],
@@ -1512,7 +1512,7 @@
       },
       "put": {
         "operationId": "meshes_update",
-        "description": "Update a mesh.\n\nChanging the channel_id, the pre-shared key, the source or the protocol\nredistributes them to every allowed gateway on the mesh, and the whole\nupdate is rolled back if that fails. Once the source changes, the mesh's\ngateways are only accepted through the new one.\n\nArgs:\n    source_id: Source to bridge the mesh's traffic from, which must be one\n        the caller created, or any source for a superuser, and not paused.\n        Null moves it to the default broker. Moving a mesh off a source\n        schedules the readings stored until then for deletion after the\n        grace period; moving it back within that period cancels it.\n    discover_gateways: Register gateways automatically once one of their\n        packets decodes with this mesh's channel and pre-shared key. A\n        gateway is skipped when another mesh shares the same source,\n        channel and key, when it is registered elsewhere, or when it was\n        rejected on this mesh. Switching it off keeps the gateways\n        already found. Only an operator may switch it on for a mesh with\n        a default or blank key.\n    protocol: Meshtastic protocol version the mesh's devices run. Packets\n        received after the change are decoded with it; readings already\n        stored are left as they are.\n    terms_version: The `version` of the mesh terms accepted. Required when\n        moving the mesh onto the default broker unless it already holds a\n        current acceptance, or the instance does not enforce terms;\n        ignored otherwise.\n    terms_locale: Locale the terms were shown in, `en` or `es`. Defaults\n        to `en`.",
+        "description": "Update a mesh.\n\nChanging the channel_id, the pre-shared key, the source or the protocol\nredistributes them to every allowed gateway on the mesh, and the whole\nupdate is rolled back if that fails. Once the source changes, the mesh's\ngateways are only accepted through the new one.\n\nArgs:\n    source_id: Source to bridge the mesh's traffic from, which must be one\n        the caller created, or any source for a superuser, and not paused.\n        Null moves it to the default broker. Moving a mesh off a source\n        schedules the readings stored until then for deletion after the\n        grace period; moving it back within that period cancels it.\n    discover_gateways: Register gateways automatically once one of their\n        packets decodes with this mesh's channel and pre-shared key. A\n        gateway is skipped when another mesh shares the same source,\n        channel and key, when it is registered elsewhere, or when it was\n        rejected on this mesh. Switching it off keeps the gateways\n        already found. Only an operator may switch it on for a mesh with\n        a default or blank key.\n    protocol: Meshtastic protocol version the mesh's devices run. Packets\n        received after the change are decoded with it; readings already\n        stored are left as they are. A version past its sunset is refused,\n        unless the mesh is already on it.\n    terms_version: The `version` of the mesh terms accepted. Required when\n        moving the mesh onto the default broker unless it already holds a\n        current acceptance, or the instance does not enforce terms;\n        ignored otherwise.\n    terms_locale: Locale the terms were shown in, `en` or `es`. Defaults\n        to `en`.",
         "parameters": [
           {
             "in": "path",
@@ -3368,6 +3368,39 @@
               "application/json": {
                 "schema": {
                   "$ref": "#/components/schemas/BlueprintVersion"
+                }
+              }
+            },
+            "description": ""
+          }
+        }
+      }
+    },
+    "/protocols": {
+      "get": {
+        "operationId": "protocols_list",
+        "description": "Return the Meshtastic protocol versions a mesh can be declared on, oldest first.\n\nEach version carries its status and sunset date. A deprecated version is still\ndecoded, and owners of meshes on it are reminded to move. A version past its sunset\ncan no longer be chosen for a mesh, but meshes already on it keep decoding.\nReadings are stored in the same units and channel names whatever the version.",
+        "tags": [
+          "protocols"
+        ],
+        "security": [
+          {
+            "bearerAuth": []
+          },
+          {
+            "cookieAuth": []
+          },
+          {}
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "array",
+                  "items": {
+                    "$ref": "#/components/schemas/Protocol"
+                  }
                 }
               }
             },
@@ -7215,7 +7248,23 @@
                 "$ref": "#/components/schemas/ProtocolEnum"
               }
             ],
-            "description": "Meshtastic protocol version the mesh's devices run. Its packets are decoded with that version, and readings are stored in the same units and channel names whatever the version.\n\n* `2.7` - 2.7\n* `2.8` - 2.8"
+            "description": "Meshtastic protocol version the mesh's devices run. Its packets are decoded with that version, and readings are stored in the same units and channel names whatever the version. A version past its sunset cannot be chosen.\n\n* `2.7` - 2.7\n* `2.8` - 2.8"
+          },
+          "protocol_status": {
+            "allOf": [
+              {
+                "$ref": "#/components/schemas/ProtocolStatusEnum"
+              }
+            ],
+            "readOnly": true,
+            "description": "Where the mesh's protocol version stands: current, supported, deprecated or sunset.\n\n* `current` - current\n* `supported` - supported\n* `deprecated` - deprecated\n* `sunset` - sunset"
+          },
+          "protocol_sunset": {
+            "type": "string",
+            "format": "date",
+            "readOnly": true,
+            "nullable": true,
+            "description": "Date the mesh's protocol version stops being offered, or null when none is set."
           },
           "created_at": {
             "type": "string",
@@ -7233,6 +7282,8 @@
           "created_at",
           "id",
           "owner_id",
+          "protocol_status",
+          "protocol_sunset",
           "updated_at"
         ]
       },
@@ -7370,7 +7421,23 @@
                 "$ref": "#/components/schemas/ProtocolEnum"
               }
             ],
-            "description": "Meshtastic protocol version the mesh's devices run. Its packets are decoded with that version, and readings are stored in the same units and channel names whatever the version.\n\n* `2.7` - 2.7\n* `2.8` - 2.8"
+            "description": "Meshtastic protocol version the mesh's devices run. Its packets are decoded with that version, and readings are stored in the same units and channel names whatever the version. A version past its sunset cannot be chosen.\n\n* `2.7` - 2.7\n* `2.8` - 2.8"
+          },
+          "protocol_status": {
+            "allOf": [
+              {
+                "$ref": "#/components/schemas/ProtocolStatusEnum"
+              }
+            ],
+            "readOnly": true,
+            "description": "Where the mesh's protocol version stands: current, supported, deprecated or sunset.\n\n* `current` - current\n* `supported` - supported\n* `deprecated` - deprecated\n* `sunset` - sunset"
+          },
+          "protocol_sunset": {
+            "type": "string",
+            "format": "date",
+            "readOnly": true,
+            "nullable": true,
+            "description": "Date the mesh's protocol version stops being offered, or null when none is set."
           },
           "created_at": {
             "type": "string",
@@ -7389,6 +7456,8 @@
           "id",
           "owner_id",
           "paused_at",
+          "protocol_status",
+          "protocol_sunset",
           "psk_b64",
           "terms_accepted_version",
           "terms_expires_at",
@@ -7864,7 +7933,7 @@
                 "$ref": "#/components/schemas/ProtocolEnum"
               }
             ],
-            "description": "Meshtastic protocol version the mesh's devices run. Its packets are decoded with that version, and readings are stored in the same units and channel names whatever the version.\n\n* `2.7` - 2.7\n* `2.8` - 2.8"
+            "description": "Meshtastic protocol version the mesh's devices run. Its packets are decoded with that version, and readings are stored in the same units and channel names whatever the version. A version past its sunset cannot be chosen.\n\n* `2.7` - 2.7\n* `2.8` - 2.8"
           },
           "terms_version": {
             "type": "string",
@@ -8878,6 +8947,45 @@
           "order"
         ]
       },
+      "Protocol": {
+        "type": "object",
+        "description": "One Meshtastic protocol version this instance decodes.",
+        "properties": {
+          "version": {
+            "type": "string",
+            "description": "The value to give a mesh's protocol, for example `2.8`."
+          },
+          "status": {
+            "allOf": [
+              {
+                "$ref": "#/components/schemas/ProtocolStatusEnum"
+              }
+            ],
+            "description": "current: the newest version. supported: decoded with no end date. deprecated: still decoded, but owners are reminded to move. sunset: still decoded for meshes on it, but it can no longer be chosen.\n\n* `current` - current\n* `supported` - supported\n* `deprecated` - deprecated\n* `sunset` - sunset"
+          },
+          "sunset": {
+            "type": "string",
+            "format": "date",
+            "nullable": true,
+            "description": "Date from which the version can no longer be chosen, or null."
+          },
+          "source_ref": {
+            "type": "string",
+            "description": "The Meshtastic protobufs release the version is decoded with."
+          },
+          "is_default": {
+            "type": "boolean",
+            "description": "Whether a new mesh is declared on this version."
+          }
+        },
+        "required": [
+          "is_default",
+          "source_ref",
+          "status",
+          "sunset",
+          "version"
+        ]
+      },
       "ProtocolEnum": {
         "enum": [
           "2.7",
@@ -8885,6 +8993,16 @@
         ],
         "type": "string",
         "description": "* `2.7` - 2.7\n* `2.8` - 2.8"
+      },
+      "ProtocolStatusEnum": {
+        "enum": [
+          "current",
+          "supported",
+          "deprecated",
+          "sunset"
+        ],
+        "type": "string",
+        "description": "* `current` - current\n* `supported` - supported\n* `deprecated` - deprecated\n* `sunset` - sunset"
       },
       "QosEnum": {
         "enum": [

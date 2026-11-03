@@ -42,6 +42,9 @@ python3 get_catalog.py
 
 # Public meshes, read without an API key
 python3 get_public_meshes.py
+
+# The Meshtastic protocol versions a mesh can be declared on, and where each stands
+python3 get_protocols.py
 ```
 
 To look at readings over time, `readings.py` walks through the devices you have registered, the channels they report, their values over a range of time and their latest values. Add `--dataframe` to see the values as a pandas DataFrame:

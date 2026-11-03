@@ -22,7 +22,7 @@ def main():
     parser.add_argument("--psk-b64", default="", help="base64 channel PSK; empty string for a plaintext-only mesh")
     parser.add_argument("--label", default=None)
     parser.add_argument(
-        "--protocol", choices=sorted(protocols.VERSIONS), default=protocols.CANONICAL,
+        "--protocol", choices=sorted(protocols.VERSIONS), default=protocols.DEFAULT,
         help="Meshtastic protocol version the devices run",
     )
     parser.add_argument("--locale", choices=("en", "es"), default="en")
