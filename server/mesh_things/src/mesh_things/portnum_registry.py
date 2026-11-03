@@ -6,7 +6,8 @@ from mesh_things.channels import (
     TELEMETRY,
     namespace_of,
 )
-from mesh_things.protocols.v2_7 import PAYLOAD_MESSAGES, portnums_pb2
+from mesh_things import protocols
+from mesh_things.protocols.v2_7 import portnums_pb2
 
 _NAMED_PORTNUMS = {
     portnums_pb2.PortNum.POSITION_APP: POSITION_KIND,
@@ -36,11 +37,11 @@ def classify(portnum: int, pb) -> str:
     return base
 
 
-def message_type(payload_kind: str):
-    """The protobuf message a payload_kind's payload decodes to, or None for one with no message."""
+def message_type(payload_kind: str, protocol: str = protocols.CANONICAL):
+    """The protobuf message a payload_kind's payload decodes to in a protocol version, or None."""
     base = TELEMETRY if namespace_of(payload_kind) == TELEMETRY else payload_kind
     portnum = next((num for num, kind in _NAMED_PORTNUMS.items() if kind == base), None)
     prefix = f"{DEVICE}:{PORTNUM_PREFIX}"
     if portnum is None and payload_kind.startswith(prefix) and payload_kind[len(prefix):].isdigit():
         portnum = int(payload_kind[len(prefix):])
-    return PAYLOAD_MESSAGES.get(portnum)
+    return protocols.get(protocol).PAYLOAD_MESSAGES.get(portnum)

@@ -9,7 +9,7 @@ pytest.importorskip("google.protobuf", reason="needs mesh-things[codec]")
 from cryptography.hazmat.backends import default_backend
 from cryptography.hazmat.primitives.ciphers import Cipher, algorithms, modes
 
-from mesh_things import codec
+from mesh_things import codec, protocols
 from mesh_things.protocols.v2_7 import mesh_pb2, mqtt_pb2, telemetry_pb2
 
 def _build_envelope(mp: mesh_pb2.MeshPacket, channel_id: str = "LongFast", gateway_id: str = "!aabbccdd") -> bytes:
@@ -162,3 +162,44 @@ def test_well_known_psks():
     assert codec.is_well_known_psk("AA==")
     assert codec.is_well_known_psk("Cg==")
     assert not codec.is_well_known_psk(base64.b64encode(os.urandom(16)).decode())
+
+
+def _soil_water_envelope() -> bytes:
+    """A 2.8 packet with the soil_water_metrics variant, which 2.7 does not have."""
+    v2_8 = protocols.get("2.8")
+    telemetry = v2_8.telemetry_pb2.Telemetry(time=1700000010)
+    telemetry.soil_water_metrics.solar_irradiance = 512.5
+    telemetry.soil_water_metrics.soil_ph = 6.5
+    packet = v2_8.mesh_pb2.MeshPacket(id=7, rx_time=1700000001)
+    setattr(packet, "from", 42)
+    packet.decoded.CopyFrom(v2_8.mesh_pb2.Data(portnum=67, payload=telemetry.SerializeToString()))
+    envelope = v2_8.mqtt_pb2.ServiceEnvelope(channel_id="LongFast", gateway_id="!aabbccdd")
+    envelope.packet.CopyFrom(packet)
+    return envelope.SerializeToString()
+
+
+def test_a_2_8_variant_decodes_with_2_8():
+    result = codec.decode_message(_soil_water_envelope(), key_bytes=None, protocol="2.8")
+
+    assert result["payload_kind"] == "telemetry:soil_water_metrics"
+    assert result["payload"]["soil_water_metrics"] == {"solar_irradiance": 512.5, "soil_ph": 6.5}
+    assert result["protocol"] == "2.8"
+
+
+def test_a_2_8_variant_is_lost_on_a_mesh_declared_2_7():
+    """What a mesh declared on the wrong version looks like: telemetry with no variant."""
+    result = codec.decode_message(_soil_water_envelope(), key_bytes=None, protocol="2.7")
+
+    assert result["payload_kind"] == "telemetry"
+    assert "soil_water_metrics" not in result["payload"]
+
+
+@pytest.mark.parametrize("battery_level", [0, 87, 101])
+def test_a_2_7_packet_decodes_the_same_with_2_8(battery_level):
+    raw = _build_envelope(_telemetry_packet(packet_id=1, node_id=1, battery_level=battery_level))
+
+    as_2_7 = codec.decode_message(raw, key_bytes=None, protocol="2.7")
+    as_2_8 = codec.decode_message(raw, key_bytes=None, protocol="2.8")
+
+    assert {**as_2_7, "protocol": None} == {**as_2_8, "protocol": None}
+

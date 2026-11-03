@@ -1,6 +1,5 @@
 from mesh_things import codec, node_ids, protocols
 from mesh_things.channels import NODEINFO_KIND, POSITION_KIND, TELEMETRY
-from mesh_things.protocols.v2_7 import portnums_pb2
 
 
 def gateway_entry(event: dict) -> dict:
@@ -69,7 +68,8 @@ def _drop(on_drop, reason: str) -> None:
     return None
 
 
-_KNOWN_PORTNUMS = frozenset(portnums_pb2.PortNum.values())
+# Any version's, so traffic names a portnum even before its mesh declares that version.
+_KNOWN_PORTNUMS = frozenset(n for v in protocols.VERSIONS for n in protocols.get(v).PortNum.values())
 
 
 def _build_traffic(mesh_id: str, se, rejected: bool, received_at: int | None) -> dict:

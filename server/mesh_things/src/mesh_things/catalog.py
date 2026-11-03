@@ -3,8 +3,8 @@ from typing import Iterator, NamedTuple
 
 from google.protobuf.descriptor import FieldDescriptor
 
+from mesh_things import protocols
 from mesh_things.channels import TELEMETRY
-from mesh_things.protocols.v2_7 import telemetry_pb2
 
 _SKIP_CPP_TYPES = (FieldDescriptor.CPPTYPE_STRING, FieldDescriptor.CPPTYPE_MESSAGE)
 
@@ -30,11 +30,18 @@ def is_catalogued(field: FieldDescriptor) -> bool:
 
 
 def telemetry_variants() -> Iterator[TelemetryVariant]:
-    """Each `Telemetry.variant` and its catalogued fields, in schema order."""
-    for variant_field in telemetry_pb2.Telemetry.DESCRIPTOR.oneofs_by_name["variant"].fields:
-        message = variant_field.message_type
-        yield TelemetryVariant(
-            payload_kind=f"{TELEMETRY}:{variant_field.name}",
-            message_name=message.name,
-            field_names=tuple(f.name for f in message.fields if is_catalogued(f)),
-        )
+    """Each `Telemetry.variant` of every protocol version, with its catalogued fields.
+
+    Versions are read oldest first, so variants and fields keep the order they first
+    appeared in, and a later version only adds the ones it introduces.
+    """
+    variants: dict[str, TelemetryVariant] = {}
+    for version in protocols.VERSIONS:
+        telemetry = protocols.get(version).telemetry_pb2.Telemetry
+        for variant_field in telemetry.DESCRIPTOR.oneofs_by_name["variant"].fields:
+            message = variant_field.message_type
+            payload_kind = f"{TELEMETRY}:{variant_field.name}"
+            known = variants[payload_kind].field_names if payload_kind in variants else ()
+            new = tuple(f.name for f in message.fields if is_catalogued(f) and f.name not in known)
+            variants[payload_kind] = TelemetryVariant(payload_kind, message.name, known + new)
+    yield from variants.values()

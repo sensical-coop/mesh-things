@@ -206,11 +206,13 @@ class MeshCrudTests(RegistryTestCase):
         self.fake_publisher.publish_gateway_upsert.reset_mock()
 
         resp = self.client.put(
-            f"/meshes/{mesh['id']}", {"protocol": "2.7"}, format="json", **self.auth_headers(owner)
+            f"/meshes/{mesh['id']}", {"protocol": "2.8"}, format="json", **self.auth_headers(owner)
         )
 
         self.assertEqual(resp.status_code, 200)
+        self.assertEqual(resp.json()["protocol"], "2.8")
         self.assertEqual(self.fake_publisher.publish_gateway_upsert.call_count, 1)
+        self.assertEqual(self.fake_publisher.publish_gateway_upsert.call_args.args[1].protocol, "2.8")
 
     def test_the_protocol_is_shown_to_viewers_who_are_not_the_owner(self):
         owner = self.create_owner()

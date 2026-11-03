@@ -8,7 +8,7 @@ import importlib
 from types import ModuleType
 
 CANONICAL = "2.7"
-VERSIONS = {"2.7": "v2_7"}
+VERSIONS = {"2.7": "v2_7", "2.8": "v2_8"}
 
 
 def get(version: str = CANONICAL) -> ModuleType:

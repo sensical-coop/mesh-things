@@ -2,7 +2,7 @@
   "openapi": "3.0.3",
   "info": {
     "title": "Mesh Things API",
-    "version": "0.2.0"
+    "version": "0.3.0"
   },
   "paths": {
     "/algorithms": {
@@ -7181,7 +7181,7 @@
                 "$ref": "#/components/schemas/ProtocolEnum"
               }
             ],
-            "description": "Meshtastic protocol version the mesh's devices run. Its packets are decoded with that version, and readings are stored in the same units and channel names whatever the version.\n\n* `2.7` - 2.7"
+            "description": "Meshtastic protocol version the mesh's devices run. Its packets are decoded with that version, and readings are stored in the same units and channel names whatever the version.\n\n* `2.7` - 2.7\n* `2.8` - 2.8"
           },
           "created_at": {
             "type": "string",
@@ -7336,7 +7336,7 @@
                 "$ref": "#/components/schemas/ProtocolEnum"
               }
             ],
-            "description": "Meshtastic protocol version the mesh's devices run. Its packets are decoded with that version, and readings are stored in the same units and channel names whatever the version.\n\n* `2.7` - 2.7"
+            "description": "Meshtastic protocol version the mesh's devices run. Its packets are decoded with that version, and readings are stored in the same units and channel names whatever the version.\n\n* `2.7` - 2.7\n* `2.8` - 2.8"
           },
           "created_at": {
             "type": "string",
@@ -7830,7 +7830,7 @@
                 "$ref": "#/components/schemas/ProtocolEnum"
               }
             ],
-            "description": "Meshtastic protocol version the mesh's devices run. Its packets are decoded with that version, and readings are stored in the same units and channel names whatever the version.\n\n* `2.7` - 2.7"
+            "description": "Meshtastic protocol version the mesh's devices run. Its packets are decoded with that version, and readings are stored in the same units and channel names whatever the version.\n\n* `2.7` - 2.7\n* `2.8` - 2.8"
           },
           "terms_version": {
             "type": "string",
@@ -8837,10 +8837,11 @@
       },
       "ProtocolEnum": {
         "enum": [
-          "2.7"
+          "2.7",
+          "2.8"
         ],
         "type": "string",
-        "description": "* `2.7` - 2.7"
+        "description": "* `2.7` - 2.7\n* `2.8` - 2.8"
       },
       "QosEnum": {
         "enum": [
