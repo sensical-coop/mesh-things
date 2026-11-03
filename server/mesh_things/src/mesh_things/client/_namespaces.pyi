@@ -740,7 +740,13 @@ class Readings:
         """
 
     def devices_get(self, device_uuid: str, *, agg: Literal['count', 'first', 'last', 'max', 'mean', 'min', 'sum'] | None = None, channel: str | None = None, payload_kind: str | None = None, start: str | datetime | date | None = None, stop: str | datetime | date | None = None, window: str | None = None) -> Any:
-        """Readings over a time range, addressed by the device's registration ID."""
+        """Readings over a time range, addressed by the device's registration ID.
+
+        Each point's bookkeeping fields, `packet_id` and `timestamp_quality`, are not
+        readings and are left out unless one is asked for with `channel`.
+        Downsampling covers numeric fields only, so text fields are also left out
+        whenever `window` is set.
+        """
 
     def devices_latest_get(self, device_uuid: str, *, lookback: str | datetime | date | None = None, payload_kind: str | None = None) -> Any:
         """Most recent readings, addressed by the device's registration ID.
@@ -1873,7 +1879,13 @@ class AsyncReadings:
         """
 
     async def devices_get(self, device_uuid: str, *, agg: Literal['count', 'first', 'last', 'max', 'mean', 'min', 'sum'] | None = None, channel: str | None = None, payload_kind: str | None = None, start: str | datetime | date | None = None, stop: str | datetime | date | None = None, window: str | None = None) -> Any:
-        """Readings over a time range, addressed by the device's registration ID."""
+        """Readings over a time range, addressed by the device's registration ID.
+
+        Each point's bookkeeping fields, `packet_id` and `timestamp_quality`, are not
+        readings and are left out unless one is asked for with `channel`.
+        Downsampling covers numeric fields only, so text fields are also left out
+        whenever `window` is set.
+        """
 
     async def devices_latest_get(self, device_uuid: str, *, lookback: str | datetime | date | None = None, payload_kind: str | None = None) -> Any:
         """Most recent readings, addressed by the device's registration ID.

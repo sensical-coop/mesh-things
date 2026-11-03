@@ -3529,7 +3529,7 @@
     "/readings/devices/{device_uuid}": {
       "get": {
         "operationId": "readings_devices_retrieve",
-        "description": "Readings over a time range, addressed by the device's registration ID.",
+        "description": "Readings over a time range, addressed by the device's registration ID.\n\nEach point's bookkeeping fields, `packet_id` and `timestamp_quality`, are not\nreadings and are left out unless one is asked for with `channel`.\nDownsampling covers numeric fields only, so text fields are also left out\nwhenever `window` is set.",
         "parameters": [
           {
             "in": "query",

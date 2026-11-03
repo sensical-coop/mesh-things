@@ -582,7 +582,13 @@ class DeviceQualityView(QualityView):
 
 
 class DeviceReadingsView(ReadingsView):
-    """Readings over a time range, addressed by the device's registration ID."""
+    """Readings over a time range, addressed by the device's registration ID.
+
+    Each point's bookkeeping fields, `packet_id` and `timestamp_quality`, are not
+    readings and are left out unless one is asked for with `channel`.
+    Downsampling covers numeric fields only, so text fields are also left out
+    whenever `window` is set.
+    """
 
     @extend_schema(parameters=READINGS_PARAMS, responses=ReadingsResponseSerializer)
     def get(self, request, device_uuid):
