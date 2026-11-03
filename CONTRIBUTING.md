@@ -48,11 +48,12 @@ Variables to add, change or remove, or "Nothing to add, change or remove."
 
 ### Commands
 
-One sentence on which images change and why, then the exact commands:
+One sentence on which images change and why, then the exact commands. When the Flink image changes, keep the redeploy line, and leave the Flink services out of the `up -d` line:
 
 ```
 git pull
 docker compose --profile full build <services>
+./scripts/redeploy-flink.sh   # only when the Flink image changes
 docker compose --profile full up -d --no-deps <services>
 ```
 
