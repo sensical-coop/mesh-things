@@ -73,6 +73,9 @@ class InfluxQueryClient:
         filters = f'r._measurement == "{measurement}" and r.mesh_id == "{mesh_id}" and r.node_id == "{int(node_id)}"'
         if field:
             filters += f' and r._field == "{field}"'
+        else:
+            # Writer bookkeeping, not readings; still reachable by asking for the field.
+            filters += f" and not contains(value: r._field, set: {_METADATA_FIELDS_FLUX})"
 
         # Aggregation is only defined over numbers
         imports, agg_stage, numeric_only = "", "", ""
@@ -105,6 +108,7 @@ from(bucket: "{self._bucket_for(measurement)}")
   |> range(start: {lookback})
   |> filter(fn: (r) => r._measurement == "{measurement}" and r.mesh_id == "{mesh_id}" and r.node_id == "{int(node_id)}")
   |> last()
+  |> filter(fn: (r) => not contains(value: r._field, set: {_METADATA_FIELDS_FLUX}))
 '''
         return self._records_to_series(self._query_api.query(flux))
 

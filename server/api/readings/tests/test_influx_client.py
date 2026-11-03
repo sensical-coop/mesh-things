@@ -63,6 +63,14 @@ class TimeseriesFluxTests(SimpleTestCase):
     def test_field_filter_is_applied_when_given(self):
         self.assertIn('r._field == "temperature"', self._flux(field="temperature"))
 
+    def test_bookkeeping_fields_are_left_out_of_a_whole_family(self):
+        self.assertIn('not contains(value: r._field, set: ["packet_id", "timestamp_quality"])', self._flux())
+
+    def test_a_bookkeeping_field_can_still_be_asked_for(self):
+        flux = self._flux(field="packet_id")
+        self.assertIn('r._field == "packet_id"', flux)
+        self.assertNotIn("not contains", flux)
+
     def test_absolute_bounds_reach_the_range_call_as_utc_timestamps(self):
         flux = self._flux(start="2026-09-01", stop="2026-09-02T13:45:00Z")
 
@@ -76,6 +84,14 @@ class TimeseriesFluxTests(SimpleTestCase):
 
     def test_alarms_come_from_their_own_bucket(self):
         self.assertIn(f'from(bucket: "{ALARMS_BUCKET}")', self._flux(measurement="alarms"))
+
+    def test_latest_of_a_family_leaves_out_the_bookkeeping_fields(self):
+        self.client.latest(MESH_ID, 123, "device_metrics")
+
+        flux = self.client._query_api.query.call_args.args[0]
+        self.assertIn('not contains(value: r._field, set: ["packet_id", "timestamp_quality"])', flux)
+        # After last(), so InfluxDB can still push last() down to storage.
+        self.assertLess(flux.index("last()"), flux.index("not contains"))
 
     def test_latest_alarms_come_from_their_own_bucket(self):
         self.client.latest(MESH_ID, 123, "alarms")
