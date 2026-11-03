@@ -4,12 +4,12 @@ WORKDIR /app
 
 RUN apt-get update && apt-get install -y curl && rm -rf /var/lib/apt/lists/*
 
-COPY monitor/requirements.txt .
-RUN pip install --no-cache-dir -r requirements.txt
+COPY monitor/requirements.lock .
+RUN pip install --no-cache-dir --require-hashes -r requirements.lock
 
 # The shared package, installed before the code so it is cached apart.
 COPY mesh_things/ /tmp/mesh_things/
-RUN pip install --no-cache-dir "/tmp/mesh_things[codec]" && rm -rf /tmp/mesh_things
+RUN pip install --no-cache-dir --no-deps --no-build-isolation /tmp/mesh_things && rm -rf /tmp/mesh_things
 
 COPY common/ ./common/
 COPY monitor/ ./monitor/
