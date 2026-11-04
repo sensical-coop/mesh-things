@@ -67,9 +67,42 @@ def parse_payload(mp: mesh_pb2.MeshPacket, protocol: str = protocols.CANONICAL) 
     return portnum, pb
 
 
+def _is_repeated(field) -> bool:
+    # protobuf >= 6 dropped FieldDescriptor.label in favour of is_repeated.
+    is_repeated = getattr(field, "is_repeated", None)
+    return field.label == field.LABEL_REPEATED if is_repeated is None else is_repeated
+
+
+def _with_enum_defaults(message: Message, fields: dict) -> dict:
+    """Add the enum fields MessageToDict leaves out at value 0, recursively.
+
+    An enum without presence cannot say it was not sent, and its value 0 is usually
+    meaningful (role `CLIENT`, preset `LONG_FAST`). Numeric fields at 0 stay out, since
+    there 0 commonly means the device has no value.
+    """
+    for field in message.DESCRIPTOR.fields:
+        if (
+            field.enum_type is not None
+            and not field.has_presence
+            and not _is_repeated(field)
+            and field.name not in fields
+        ):
+            fields[field.name] = field.enum_type.values_by_number[field.default_value].name
+    for field, value in message.ListFields():
+        if field.message_type is None or field.message_type.GetOptions().map_entry:
+            continue
+        if _is_repeated(field):
+            for item, item_fields in zip(value, fields.get(field.name) or []):
+                _with_enum_defaults(item, item_fields)
+        elif isinstance(fields.get(field.name), dict):
+            _with_enum_defaults(value, fields[field.name])
+    return fields
+
+
 def payload_fields(portnum: int, pb: Message) -> tuple[dict, str]:
-    """A parsed payload as (pb_dict, payload_kind)."""
-    return MessageToDict(pb, preserving_proto_field_name=True), portnum_registry.classify(portnum, pb)
+    """A parsed payload as (pb_dict, payload_kind), with enums at value 0 included."""
+    pb_dict = _with_enum_defaults(pb, MessageToDict(pb, preserving_proto_field_name=True))
+    return pb_dict, portnum_registry.classify(portnum, pb)
 
 
 def decode_payload(mp: mesh_pb2.MeshPacket, protocol: str = protocols.CANONICAL):
@@ -88,11 +121,7 @@ def has_unknown_fields(message: Message) -> bool:
     for field, value in message.ListFields():
         if field.message_type is None or field.message_type.GetOptions().map_entry:
             continue
-        # protobuf >= 6 dropped FieldDescriptor.label in favour of is_repeated.
-        is_repeated = getattr(field, "is_repeated", None)
-        if is_repeated is None:
-            is_repeated = field.label == field.LABEL_REPEATED
-        values = value if is_repeated else [value]
+        values = value if _is_repeated(field) else [value]
         if any(has_unknown_fields(item) for item in values):
             return True
     return False
@@ -116,9 +145,18 @@ def needed_protocol(portnum: int, pb: Message, payload: bytes, protocol: str) ->
     return protocols.UNSUPPORTED
 
 def build_decoded_message(
-    se: mqtt_pb2.ServiceEnvelope, portnum: int, pb_dict: dict, payload_kind: str, protocol: str = protocols.CANONICAL
+    se: mqtt_pb2.ServiceEnvelope,
+    portnum: int,
+    pb_dict: dict,
+    payload_kind: str,
+    protocol: str = protocols.CANONICAL,
+    received_at: int | None = None,
 ) -> dict:
-    """Shape a decoded packet into the event downstream writers consume"""
+    """Shape a decoded packet into the event downstream writers consume.
+
+    `rx_time` is when the gateway heard it, in epoch seconds, or 0 when the gateway
+    had no clock. `received_at` is when the pipeline did, in epoch milliseconds.
+    """
     mp = se.packet
     return {
         "node_id": getattr(mp, "from"),
@@ -127,6 +165,7 @@ def build_decoded_message(
         "portnum": portnum,
         "request_id": mp.decoded.request_id or None,
         "rx_time": mp.rx_time,
+        "received_at": received_at,
         **routing_fields(mp),
         "channel_id": se.channel_id,
         "gateway_id": node_ids.to_num(se.gateway_id),

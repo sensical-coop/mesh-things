@@ -3,7 +3,7 @@ from datetime import date, datetime, timedelta, timezone
 
 from influxdb_client import InfluxDBClient
 
-from mesh_things.channels import ALARMS, QUALITY
+from mesh_things.channels import ALARMS, METADATA_FIELDS, QUALITY
 from mesh_things.detectors import RANGE
 from mesh_things.influx_query import bound_to_datetime
 
@@ -29,8 +29,6 @@ from mesh_things.influx_query import (  # noqa: F401
 )
 
 
-# writer/point_builders.py stores these on every point. Ignore them
-METADATA_FIELDS = ("packet_id", "timestamp_quality")
 _METADATA_FIELDS_FLUX = "[" + ", ".join(f'"{f}"' for f in METADATA_FIELDS) + "]"
 # Tags an export leaves out: the mesh is the export's own, node_id has its own column,
 # and the rest say how a point arrived rather than what it measured.

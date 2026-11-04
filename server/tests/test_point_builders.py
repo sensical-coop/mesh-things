@@ -247,3 +247,37 @@ def test_derived_event_needs_no_packet_id():
 
 def test_derived_event_without_numeric_fields_writes_nothing():
     assert get_points(_derived({"x": None, "flag": True})) == []
+
+
+def test_a_reading_without_any_device_time_is_stored_when_the_pipeline_received_it():
+    event = _event(
+        "telemetry:device_metrics", {"device_metrics": {"battery_level": 87}}, rx_time=0, received_at=1700000123456
+    )
+
+    line = get_points(event)[0].to_line_protocol()
+
+    assert line.endswith(" 1700000123000000000")
+    assert 'timestamp_quality="received"' in line
+    assert "received_at=1700000123i" in line
+    assert "rx_time=" not in line
+
+
+def test_a_point_keeps_both_reception_times_next_to_the_payload_time():
+    event = _event(
+        "telemetry:device_metrics",
+        {"time": 1699999000, "device_metrics": {"battery_level": 87}},
+        received_at=1700000002000,
+    )
+
+    line = get_points(event)[0].to_line_protocol()
+
+    assert line.endswith(" 1699999000000000000")
+    assert 'timestamp_quality="payload"' in line
+    assert "rx_time=1700000000i" in line
+    assert "received_at=1700000002i" in line
+
+
+def test_a_payload_with_only_bookkeeping_is_not_stored():
+    event = _event("device:portnum_99", {"label": "text only"}, received_at=1700000002000)
+
+    assert get_points(event) == []

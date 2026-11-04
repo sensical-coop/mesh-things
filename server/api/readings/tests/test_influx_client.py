@@ -64,7 +64,7 @@ class TimeseriesFluxTests(SimpleTestCase):
         self.assertIn('r._field == "temperature"', self._flux(field="temperature"))
 
     def test_bookkeeping_fields_are_left_out_of_a_whole_family(self):
-        self.assertIn('not contains(value: r._field, set: ["packet_id", "timestamp_quality"])', self._flux())
+        self.assertIn('not contains(value: r._field, set: ["packet_id", "timestamp_quality", "rx_time", "received_at"])', self._flux())
 
     def test_a_bookkeeping_field_can_still_be_asked_for(self):
         flux = self._flux(field="packet_id")
@@ -89,7 +89,7 @@ class TimeseriesFluxTests(SimpleTestCase):
         self.client.latest(MESH_ID, 123, "device_metrics")
 
         flux = self.client._query_api.query.call_args.args[0]
-        self.assertIn('not contains(value: r._field, set: ["packet_id", "timestamp_quality"])', flux)
+        self.assertIn('not contains(value: r._field, set: ["packet_id", "timestamp_quality", "rx_time", "received_at"])', flux)
         # After last(), so InfluxDB can still push last() down to storage.
         self.assertLess(flux.index("last()"), flux.index("not contains"))
 

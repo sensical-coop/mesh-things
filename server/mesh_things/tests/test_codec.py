@@ -242,3 +242,42 @@ def test_a_field_no_supported_version_knows_is_unsupported():
     assert codec.needed_protocol(67, pb, payload, "2.7") == protocols.UNSUPPORTED
     assert codec.needed_protocol(67, pb, payload, "2.8") == protocols.UNSUPPORTED
 
+
+
+def _decoded_payload(portnum: int, message) -> dict:
+    mp = mesh_pb2.MeshPacket()
+    mp.decoded.portnum = portnum
+    mp.decoded.payload = message.SerializeToString()
+    return codec.decode_payload(mp)[1]
+
+
+def test_enums_at_value_zero_are_kept():
+    user = _decoded_payload(4, mesh_pb2.User(long_name="Node", role="CLIENT", hw_model="UNSET"))
+
+    assert user["role"] == "CLIENT"
+    assert user["hw_model"] == "UNSET"
+
+
+def test_a_map_report_keeps_its_default_preset_and_region():
+    report = mqtt_pb2.MapReport(long_name="Roof", modem_preset="LONG_FAST")
+
+    assert _decoded_payload(73, report)["modem_preset"] == "LONG_FAST"
+    assert _decoded_payload(73, report)["region"] == "UNSET"
+
+
+def test_numbers_at_zero_stay_out():
+    position = _decoded_payload(3, mesh_pb2.Position(latitude_i=414000000, longitude_i=21000000))
+
+    assert position["location_source"] == "LOC_UNSET"
+    assert "time" not in position
+    assert "sats_in_view" not in position
+
+
+def test_the_decoded_event_carries_when_the_pipeline_received_it():
+    raw = _build_envelope(_telemetry_packet(1, 2, 50))
+    se = codec.parse_envelope(raw)
+    portnum, pb_dict, kind = codec.decode_payload(se.packet)
+
+    event = codec.build_decoded_message(se, portnum, pb_dict, kind, received_at=1700000005000)
+
+    assert event["received_at"] == 1700000005000

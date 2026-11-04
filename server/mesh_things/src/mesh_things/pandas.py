@@ -15,6 +15,7 @@ except ImportError as error:
     raise ImportError("mesh_things.pandas needs pandas: pip install 'mesh-things[pandas]'") from error
 
 from mesh_things.channels import channels_in, origin_of
+from mesh_things.timestamps import resolve_timestamp
 
 
 def to_dataframe(result: Any, *, long: bool = False, units: dict[str, str] | None = None) -> pd.DataFrame:
@@ -92,14 +93,21 @@ def read_export(source: str | Path | bytes) -> dict[str, pd.DataFrame]:
 def archive_frame(archive: pd.DataFrame, *, long: bool = False) -> pd.DataFrame:
     """Archive rows with their `payload_json` spread into one column per channel.
 
-    The wide frame is indexed by `node_id` and `time`. Channels are named as the API
-    names them.
+    The wide frame is indexed by `node_id` and `time`, the time the API stores each
+    reading under. Channels are named as the API names them.
     """
-    rows = [
-        {"node_id": row.node_id, "time": row.rx_time, "channel": channel, "value": value}
-        for row in archive.itertuples()
-        for channel, value in channels_in(row.payload_kind, json.loads(row.payload_json or "null"))
-    ]
+    rows = []
+    for row in archive.itertuples():
+        payload = json.loads(row.payload_json or "null")
+        # Archives written before received_at was kept have no such column.
+        received_at = getattr(row, "received_at", None)
+        time, _ = resolve_timestamp(
+            {"rx_time": row.rx_time, "received_at": None if pd.isna(received_at) else int(received_at), "payload": payload}
+        )
+        rows += [
+            {"node_id": row.node_id, "time": time, "channel": channel, "value": value}
+            for channel, value in channels_in(row.payload_kind, payload)
+        ]
     frame = pd.DataFrame(rows, columns=["node_id", "time", "channel", "value"])
     frame["time"] = pd.to_datetime(frame["time"], unit="s", utc=True)
     if long:

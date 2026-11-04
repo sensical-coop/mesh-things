@@ -1,5 +1,3 @@
-from google.protobuf.json_format import MessageToDict
-
 from mesh_things import codec, node_ids, protocols
 from mesh_things.channels import NODEINFO_KIND, POSITION_KIND, TELEMETRY
 
@@ -173,10 +171,7 @@ def decode_packet(raw: bytes, gateway_state, rejected_nodes, on_drop=None, recei
         return events
     portnum, pb = parsed
     pb_dict, payload_kind = codec.payload_fields(portnum, pb)
-    if portnum == MAP_REPORT_PORTNUM:
-        # LONG_FAST, CLIENT and UNSET are each enum value 0, which is otherwise left out.
-        pb_dict = MessageToDict(pb, preserving_proto_field_name=True, always_print_fields_with_no_presence=True)
-    decoded = codec.build_decoded_message(se, portnum, pb_dict, payload_kind, protocol)
+    decoded = codec.build_decoded_message(se, portnum, pb_dict, payload_kind, protocol, received_at)
     if mesh_id:
         decoded["mesh_id"] = mesh_id
 
