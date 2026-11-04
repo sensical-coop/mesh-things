@@ -978,11 +978,19 @@ class DeviceReadSerializer(serializers.ModelSerializer):
     protocol = serializers.CharField(
         read_only=True, help_text="Meshtastic protocol version the device's packets are decoded with: its mesh's."
     )
+    firmware_protocol = serializers.CharField(
+        read_only=True,
+        allow_null=True,
+        help_text=(
+            "Protocol version the reported firmware speaks, `unsupported` when it is newer than every supported "
+            "version, or null while the device has sent no map report."
+        ),
+    )
     protocol_mismatch = serializers.BooleanField(
         read_only=True,
         help_text=(
-            "The device sends fields its mesh's protocol version does not know, so those readings are lost "
-            "until the mesh declares observed_protocol."
+            "Readings from the device are lost or misread under its mesh's protocol version: it sends fields "
+            "that version does not know, or its firmware speaks a version that reads some values differently."
         ),
     )
 
@@ -1015,6 +1023,11 @@ class DeviceReadSerializer(serializers.ModelSerializer):
             "protocol",
             "observed_protocol",
             "observed_protocol_at",
+            "firmware_version",
+            "firmware_protocol",
+            "firmware_seen_at",
+            "region",
+            "modem_preset",
             "protocol_mismatch",
             "telemetry_variant_ids",
             "created_at",
@@ -1029,6 +1042,15 @@ class DeviceReadSerializer(serializers.ModelSerializer):
                 )
             },
             "observed_protocol_at": {"help_text": "When the evidence for observed_protocol last arrived."},
+            "firmware_version": {
+                "help_text": (
+                    "Firmware version from the device's last map report. Only a device with its own MQTT uplink "
+                    "sends one, and only with map reporting enabled."
+                )
+            },
+            "firmware_seen_at": {"help_text": "When the last map report arrived."},
+            "region": {"help_text": "LoRa region from the device's last map report, for example `EU_868`."},
+            "modem_preset": {"help_text": "Modem preset from the device's last map report, for example `LONG_FAST`."},
         }
 
     @extend_schema_field(serializers.ListField(child=serializers.UUIDField()))

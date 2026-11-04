@@ -138,6 +138,26 @@ def test_nodeinfo_sighting_promotes_identity_fields():
     assert result["sighting"]["short_name"] == "N1"
     assert result["sighting"]["hardware_type"] == "TBEAM"
 
+def test_a_map_report_describes_its_gateway_and_stores_no_reading():
+    report = mqtt_pb2.MapReport(
+        long_name="Roof", hw_model="HELTEC_V3", role="ROUTER", firmware_version="2.8.2.a1b2c3d",
+        region="EU_868", modem_preset="LONG_FAST", latitude_i=414000000, longitude_i=21000000,
+    )
+    data = mesh_pb2.Data(portnum=decode.MAP_REPORT_PORTNUM, payload=report.SerializeToString())
+    raw = _build_envelope(_plaintext_packet(3, 0xAABBCCDD, data))
+
+    result = decode.decode_packet(raw, gateway_state=_gateway_state(), rejected_nodes=set())
+
+    assert "decoded" not in result
+    sighting = result["sighting"]
+    assert sighting["device_id"] == 0xAABBCCDD
+    assert sighting["firmware_version"] == "2.8.2.a1b2c3d"
+    assert sighting["region"] == "EU_868"
+    assert sighting["modem_preset"] == "LONG_FAST"
+    assert sighting["name"] == "Roof"
+    assert sighting["hardware_type"] == "HELTEC_V3"
+    assert "latitude" not in sighting
+
 def test_telemetry_produces_discovery_with_numeric_fields():
     tel = telemetry_pb2.Telemetry()
     tel.device_metrics.battery_level = 87

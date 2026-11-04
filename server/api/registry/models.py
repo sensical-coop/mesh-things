@@ -500,6 +500,11 @@ class Device(models.Model):
         choices=[(v, v) for v in protocols.VERSIONS] + [(protocols.UNSUPPORTED, protocols.UNSUPPORTED)],
     )
     observed_protocol_at = models.DateTimeField(null=True, blank=True)
+    # Auto-filled from map reports, which only a node with its own MQTT uplink sends.
+    firmware_version = models.CharField(max_length=32, null=True, blank=True)
+    region = models.CharField(max_length=32, null=True, blank=True)
+    modem_preset = models.CharField(max_length=32, null=True, blank=True)
+    firmware_seen_at = models.DateTimeField(null=True, blank=True)
     created_at = models.DateTimeField(auto_now_add=True)
     updated_at = models.DateTimeField(auto_now=True)
 
@@ -526,9 +531,32 @@ class Device(models.Model):
         return self.mesh.protocol
 
     @property
+    def firmware_protocol(self) -> str | None:
+        """The protocol version the device's reported firmware speaks, or None while it has reported none."""
+        return protocols.of_firmware(self.firmware_version)
+
+    @property
+    def protocol_ahead(self) -> bool:
+        """Whether the device runs a newer protocol than its mesh in a way that loses or misreads readings."""
+        firmware = self.firmware_protocol
+        return protocols.is_newer(self.observed_protocol, self.mesh.protocol) or (
+            protocols.is_newer(firmware, self.mesh.protocol) and not protocols.compatible(firmware, self.mesh.protocol)
+        )
+
+    @property
+    def protocol_behind(self) -> bool:
+        """Whether the device's firmware speaks an older protocol than its mesh, which reads some values differently."""
+        firmware = self.firmware_protocol
+        return (
+            firmware is not None
+            and protocols.is_newer(self.mesh.protocol, firmware)
+            and not protocols.compatible(firmware, self.mesh.protocol)
+        )
+
+    @property
     def protocol_mismatch(self) -> bool:
-        """Whether the device sends fields its mesh's protocol version does not know, which are lost."""
-        return protocols.is_newer(self.observed_protocol, self.mesh.protocol)
+        """Whether readings from the device are lost or misread under its mesh's protocol version."""
+        return self.protocol_ahead or self.protocol_behind
 
     def __str__(self) -> str:
         """Node number in the wire form a Meshtastic client shows, plus whatever

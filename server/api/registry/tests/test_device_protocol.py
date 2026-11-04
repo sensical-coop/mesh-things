@@ -1,7 +1,9 @@
-"""Which protocol version a device follows, and the alert when it is newer than its mesh's."""
+"""Which protocol version a device follows, and the alert when it does not match its mesh's."""
 from datetime import datetime, timedelta, timezone as dt_timezone
+from unittest import mock
 
 from django.core import mail
+from mesh_things import protocols
 
 from registry import status_alerts
 from registry.management.commands.consume_device_sightings import Command as SightingsCommand
@@ -10,6 +12,12 @@ from registry.models import Device, Mesh
 from .helpers import RegistryTestCase
 
 NOW = datetime(2026, 11, 3, 12, 0, tzinfo=dt_timezone.utc)
+MAP_REPORT = {"firmware_version": "2.7.26.54e0d8d", "region": "EU_868", "modem_preset": "LONG_FAST"}
+
+
+def rescaling_2_8():
+    """Pretend 2.8 changed how some values are encoded, as 3.0 will."""
+    return mock.patch.dict(protocols.PROTOCOLS, {"2.8": protocols.PROTOCOLS["2.8"]._replace(adds_only=False)})
 
 
 class DeviceProtocolTests(RegistryTestCase):
@@ -76,6 +84,47 @@ class DeviceProtocolTests(RegistryTestCase):
         self.assertTrue(resp.json()["protocol_mismatch"])
 
 
+    def test_a_map_report_fills_the_firmware_fields(self):
+        body = self.device_json(self.sighting(**MAP_REPORT))
+
+        self.assertEqual(body["firmware_version"], "2.7.26.54e0d8d")
+        self.assertEqual(body["firmware_protocol"], "2.7")
+        self.assertEqual(body["region"], "EU_868")
+        self.assertEqual(body["modem_preset"], "LONG_FAST")
+        self.assertIsNotNone(body["firmware_seen_at"])
+        self.assertFalse(body["protocol_mismatch"])
+
+    def test_a_sighting_without_a_report_keeps_the_firmware(self):
+        self.sighting(**MAP_REPORT)
+
+        self.assertEqual(self.sighting().firmware_version, "2.7.26.54e0d8d")
+
+    def test_firmware_that_only_adds_fields_is_not_a_mismatch(self):
+        Mesh.objects.filter(pk=self.mesh["id"]).update(protocol="2.8")
+
+        self.assertFalse(self.sighting(**MAP_REPORT).protocol_mismatch)
+
+    def test_older_firmware_is_a_mismatch_once_a_version_rescales(self):
+        Mesh.objects.filter(pk=self.mesh["id"]).update(protocol="2.8")
+        device = self.sighting(**MAP_REPORT)
+
+        with rescaling_2_8():
+            self.assertTrue(device.protocol_behind)
+            self.assertTrue(device.protocol_mismatch)
+
+    def test_newer_firmware_is_a_mismatch_once_a_version_rescales(self):
+        device = self.sighting(**{**MAP_REPORT, "firmware_version": "2.8.2.a1b2c3d"})
+
+        with rescaling_2_8():
+            self.assertTrue(device.protocol_ahead)
+
+    def test_firmware_newer_than_every_version_is_a_mismatch(self):
+        body = self.device_json(self.sighting(**{**MAP_REPORT, "firmware_version": "3.0.0.a1b2c3d"}))
+
+        self.assertEqual(body["firmware_protocol"], "unsupported")
+        self.assertTrue(body["protocol_mismatch"])
+
+
 class ProtocolMismatchAlertTests(RegistryTestCase):
     def setUp(self):
         super().setUp()
@@ -128,3 +177,21 @@ class ProtocolMismatchAlertTests(RegistryTestCase):
         Device.objects.filter(mesh_id=self.mesh["id"]).update(is_allowed=False)
 
         self.assertEqual(status_alerts.check_protocol_mismatches(NOW), 0)
+
+    def test_older_firmware_asks_for_a_firmware_update(self):
+        Mesh.objects.filter(pk=self.mesh["id"]).update(protocol="2.8")
+        self.sighting(**MAP_REPORT)
+
+        with rescaling_2_8():
+            self.assertEqual(status_alerts.check_protocol_mismatches(NOW), 1)
+
+        body = mail.outbox[0].body
+        self.assertIn("firmware 2.7.26.54e0d8d", body)
+        self.assertIn("update the devices' firmware", body)
+        self.assertNotIn("Set the mesh's protocol", body)
+
+    def test_firmware_this_instance_lacks_says_so(self):
+        self.sighting(**{**MAP_REPORT, "firmware_version": "3.0.0.a1b2c3d"})
+
+        self.assertEqual(status_alerts.check_protocol_mismatches(NOW), 1)
+        self.assertIn("does not support the version", mail.outbox[0].body)

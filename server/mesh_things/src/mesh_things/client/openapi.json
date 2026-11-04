@@ -2,7 +2,7 @@
   "openapi": "3.0.3",
   "info": {
     "title": "Mesh Things API",
-    "version": "0.5.0"
+    "version": "0.6.0"
   },
   "paths": {
     "/algorithms": {
@@ -6570,10 +6570,41 @@
             "nullable": true,
             "description": "When the evidence for observed_protocol last arrived."
           },
+          "firmware_version": {
+            "type": "string",
+            "readOnly": true,
+            "nullable": true,
+            "description": "Firmware version from the device's last map report. Only a device with its own MQTT uplink sends one, and only with map reporting enabled."
+          },
+          "firmware_protocol": {
+            "type": "string",
+            "readOnly": true,
+            "nullable": true,
+            "description": "Protocol version the reported firmware speaks, `unsupported` when it is newer than every supported version, or null while the device has sent no map report."
+          },
+          "firmware_seen_at": {
+            "type": "string",
+            "format": "date-time",
+            "readOnly": true,
+            "nullable": true,
+            "description": "When the last map report arrived."
+          },
+          "region": {
+            "type": "string",
+            "readOnly": true,
+            "nullable": true,
+            "description": "LoRa region from the device's last map report, for example `EU_868`."
+          },
+          "modem_preset": {
+            "type": "string",
+            "readOnly": true,
+            "nullable": true,
+            "description": "Modem preset from the device's last map report, for example `LONG_FAST`."
+          },
           "protocol_mismatch": {
             "type": "boolean",
             "readOnly": true,
-            "description": "The device sends fields its mesh's protocol version does not know, so those readings are lost until the mesh declares observed_protocol."
+            "description": "Readings from the device are lost or misread under its mesh's protocol version: it sends fields that version does not know, or its firmware speaks a version that reads some values differently."
           },
           "telemetry_variant_ids": {
             "type": "array",
@@ -6599,6 +6630,9 @@
           "absence_detection_enabled",
           "created_at",
           "discovered_at",
+          "firmware_protocol",
+          "firmware_seen_at",
+          "firmware_version",
           "hardware_type",
           "is_allowed",
           "is_gateway",
@@ -6608,6 +6642,7 @@
           "location_overridden",
           "longitude",
           "mesh_id",
+          "modem_preset",
           "name",
           "node_id",
           "nodeinfo_overridden",
@@ -6617,6 +6652,7 @@
           "protocol_mismatch",
           "publish_interval_seconds",
           "reading_interval_seconds",
+          "region",
           "role",
           "short_name",
           "telemetry_variant_ids",

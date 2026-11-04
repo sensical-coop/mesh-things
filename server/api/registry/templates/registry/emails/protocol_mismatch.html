@@ -1,11 +1,15 @@
 {% extends "emails/base.html" %}
 {% block content %}
-{% include "emails/_chip.html" with label="Readings lost" tone="warning" %}
-{% include "emails/_title.html" with title="Some devices run a newer protocol than your mesh" %}
-<p style="margin:12px 0 0 0;font-size:15px;line-height:22px;color:#1b1c1f;">Hi {{ name }}, your mesh <strong>{{ mesh }}</strong> is declared on Meshtastic protocol {{ protocol }}, but some of its devices run newer firmware and send readings that version does not know:</p>
-<ul style="margin:12px 0 0 0;padding-left:20px;font-size:15px;line-height:22px;color:#1b1c1f;">{% for device in devices %}<li>{{ device }}</li>{% endfor %}</ul>
-<p style="margin:12px 0 0 0;font-size:15px;line-height:22px;color:#1b1c1f;">Those readings are not stored. Everything else from these devices still is.</p>
-{% if needed == unsupported %}<p style="margin:12px 0 0 0;font-size:15px;line-height:22px;color:#1b1c1f;">This instance does not support the version these devices run yet. Their other readings are unaffected, and the missing ones will be stored once it does.</p>{% else %}<p style="margin:12px 0 0 0;font-size:15px;line-height:22px;color:#1b1c1f;">Set the mesh's protocol to <strong>{{ needed }}</strong> to store them from now on. Readings that were already missed cannot be recovered.</p>{% endif %}
+{% include "emails/_chip.html" with label="Readings at risk" tone="warning" %}
+{% include "emails/_title.html" with title="Some devices do not match your mesh's protocol" %}
+<p style="margin:12px 0 0 0;font-size:15px;line-height:22px;color:#1b1c1f;">Hi {{ name }}, your mesh <strong>{{ mesh }}</strong> is declared on Meshtastic protocol {{ protocol }}, but some of its devices do not match it.</p>
+{% if ahead %}<p style="margin:12px 0 0 0;font-size:15px;line-height:22px;color:#1b1c1f;">These devices run newer firmware than that version:</p>
+<ul style="margin:12px 0 0 0;padding-left:20px;font-size:15px;line-height:22px;color:#1b1c1f;">{% for device in ahead %}<li>{{ device }}</li>{% endfor %}</ul>
+<p style="margin:12px 0 0 0;font-size:15px;line-height:22px;color:#1b1c1f;">Readings that version does not know, or encodes differently, are lost or misread.</p>
+{% if needed == unsupported %}<p style="margin:12px 0 0 0;font-size:15px;line-height:22px;color:#1b1c1f;">This instance does not support the version these devices run yet. Their other readings are unaffected, and the missing ones will be stored once it does.</p>{% else %}<p style="margin:12px 0 0 0;font-size:15px;line-height:22px;color:#1b1c1f;">Set the mesh's protocol to <strong>{{ needed }}</strong> to read them correctly from now on. Readings that were already missed cannot be recovered.</p>{% endif %}{% endif %}
+{% if behind %}<p style="margin:12px 0 0 0;font-size:15px;line-height:22px;color:#1b1c1f;">These devices run older firmware, which encodes some readings differently from protocol {{ protocol }}:</p>
+<ul style="margin:12px 0 0 0;padding-left:20px;font-size:15px;line-height:22px;color:#1b1c1f;">{% for device in behind %}<li>{{ device }}</li>{% endfor %}</ul>
+<p style="margin:12px 0 0 0;font-size:15px;line-height:22px;color:#1b1c1f;">Those readings are misread until you update the devices' firmware.</p>{% endif %}
 {% include "emails/_button.html" with href=mesh_link label="Open mesh" %}
 <p style="margin:20px 0 0 0;font-size:13px;line-height:20px;color:#6d6d6d;">You will not be emailed again until the mesh's devices match its protocol and then one stops matching again.</p>
 {% endblock %}

@@ -130,3 +130,31 @@ def test_a_version_past_its_sunset_date_is_sunset():
 def test_moving_up_needs_a_newer_version_that_only_adds():
     assert protocols.can_move_up("2.7")
     assert not protocols.can_move_up("2.8")
+
+
+@pytest.mark.parametrize(
+    "firmware, protocol",
+    [
+        ("2.7.26.54e0d8d", "2.7"),
+        ("2.8.2.a1b2c3d", "2.8"),
+        ("2.6.11.60ec05e", "2.7"),
+        ("2.9.0.a1b2c3d", protocols.UNSUPPORTED),
+        ("3.0.0", protocols.UNSUPPORTED),
+        ("", None),
+        (None, None),
+        ("develop", None),
+    ],
+)
+def test_a_firmware_version_names_its_protocol(firmware, protocol):
+    assert protocols.of_firmware(firmware) == protocol
+
+
+def test_versions_that_only_add_fields_are_compatible():
+    import unittest.mock as mock
+
+    assert protocols.compatible("2.7", "2.8")
+    assert protocols.compatible("2.8", "2.7")
+    assert not protocols.compatible("2.8", protocols.UNSUPPORTED)
+    rescaling = {**protocols.PROTOCOLS, "2.8": protocols.PROTOCOLS["2.8"]._replace(adds_only=False)}
+    with mock.patch.object(protocols, "PROTOCOLS", rescaling):
+        assert not protocols.compatible("2.7", "2.8")

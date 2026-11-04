@@ -12,7 +12,7 @@ from datetime import datetime, timedelta
 import structlog
 from django.conf import settings
 from django.core.cache import cache
-from django.db.models import Exists, OuterRef
+from django.db.models import Exists, OuterRef, Q
 
 from mesh_things.env import env_str
 
@@ -200,8 +200,10 @@ def check_sinks(now: datetime) -> int:
 
 
 def check_protocol_mismatches(now: datetime) -> int:
-    """Email a mesh's owner, if opted in, once while any allowed device sends fields the mesh's protocol drops."""
-    observed = Device.objects.filter(is_allowed=True, observed_protocol__isnull=False).select_related("mesh")
+    """Email a mesh's owner, if opted in, once while readings from any allowed device are lost or misread."""
+    observed = Device.objects.filter(
+        Q(observed_protocol__isnull=False) | Q(firmware_version__isnull=False), is_allowed=True
+    ).select_related("mesh")
     mismatched: dict = {}
     for device in observed:
         if device.protocol_mismatch:

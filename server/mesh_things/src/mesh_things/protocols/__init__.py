@@ -83,6 +83,42 @@ def can_move_up(version: str) -> bool:
     return bool(following) and PROTOCOLS[following[0]].adds_only
 
 
+def of_firmware(firmware_version: str | None) -> str | None:
+    """The protocol a Meshtastic firmware version speaks, such as `2.8` for `2.8.2.a1b2c3d`.
+
+    Firmware older than every supported version speaks the oldest, which is what its
+    packets have always been decoded with. Firmware newer than every supported version is
+    UNSUPPORTED, and an unreadable version None.
+    """
+    try:
+        major, minor = (int(part) for part in (firmware_version or "").split(".")[:2])
+    except ValueError:
+        return None
+    version = f"{major}.{minor}"
+    if version in VERSIONS:
+        return version
+    oldest = next(iter(VERSIONS))
+    if (major, minor) < tuple(int(part) for part in oldest.split(".")):
+        return oldest
+    return UNSUPPORTED
+
+
+def compatible(version: str, other: str) -> bool:
+    """Whether devices on one version and a mesh on the other read every value alike.
+
+    True when they are the same, or every version after the older one up to the newer
+    only adds fields. UNSUPPORTED is compatible with nothing else, as nobody knows what
+    it changes.
+    """
+    if version == other:
+        return True
+    if UNSUPPORTED in (version, other):
+        return False
+    older, newer = sorted((version, other), key=_rank)
+    steps = newer_than(older)
+    return all(PROTOCOLS[step].adds_only for step in steps[: steps.index(newer) + 1])
+
+
 def get(version: str = CANONICAL) -> ModuleType:
     """The generated set for a protocol version, such as `2.7`."""
     try:

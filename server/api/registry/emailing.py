@@ -254,12 +254,23 @@ def send_sink_unused_email(sink, since) -> None:
 
 
 def send_protocol_mismatch_email(mesh, devices: list) -> None:
-    """Tell a mesh's owner which devices send fields the mesh's protocol version drops."""
+    """Tell a mesh's owner which devices send readings the mesh's protocol version loses or misreads."""
     owner = mesh.owner
-    needed = protocols.newest(device.observed_protocol for device in devices)
+    ahead = [device for device in devices if device.protocol_ahead]
+    behind = [device for device in devices if not device.protocol_ahead]
+    needed = (
+        protocols.newest(
+            version
+            for device in ahead
+            for version in (device.observed_protocol, device.firmware_protocol)
+            if protocols.is_newer(version, mesh.protocol)
+        )
+        if ahead
+        else None
+    )
     send_templated_email(
         to_email=owner.email,
-        subject="Some devices run a newer protocol than your mesh - Mesh Things",
+        subject="Some devices do not match your mesh's protocol - Mesh Things",
         template_name="protocol_mismatch",
         context={
             "name": owner.name,
@@ -267,7 +278,8 @@ def send_protocol_mismatch_email(mesh, devices: list) -> None:
             "protocol": mesh.protocol,
             "needed": needed,
             "unsupported": protocols.UNSUPPORTED,
-            "devices": [str(device) for device in devices],
+            "ahead": [str(device) for device in ahead],
+            "behind": [f"{device} (firmware {device.firmware_version})" for device in behind],
             "mesh_link": console_url("meshes", mesh.id),
         },
     )

@@ -3,8 +3,9 @@
 
 Every device is decoded with its mesh's protocol version. A device on newer firmware
 sends readings that version does not know, and those are not stored until the mesh
-declares the newer version. This lists the devices that need it, and with --fix sets
-the mesh's protocol to the newest version its devices need.
+declares the newer version. A gateway that sends map reports also shows its firmware.
+This lists the devices that need a newer version, and with --fix sets the mesh's
+protocol to the newest one they need.
 """
 import argparse
 import os
@@ -32,13 +33,18 @@ def main():
     for device in api.meshes.devices_list(args.mesh_id):
         name = device["label"] or device["name"] or node_ids.to_hex(device["node_id"])
         observed = device["observed_protocol"] or "-"
-        flag = "  readings lost" if device["protocol_mismatch"] else ""
-        print(f"  {name:<24} decoded with {device['protocol']}  needs {observed}{flag}")
+        firmware = device["firmware_version"] or "-"
+        flag = "  readings lost or misread" if device["protocol_mismatch"] else ""
+        print(f"  {name:<24} decoded with {device['protocol']}  needs {observed}  firmware {firmware}{flag}")
         if device["protocol_mismatch"]:
-            mismatched.append(device["observed_protocol"])
+            mismatched += [
+                version
+                for version in (device["observed_protocol"], device["firmware_protocol"])
+                if protocols.is_newer(version, mesh["protocol"])
+            ]
 
     if not mismatched:
-        print("Every device matches the mesh's protocol.")
+        print("No device needs a newer protocol than the mesh's.")
         return
     needed = protocols.newest(mismatched)
     if needed == protocols.UNSUPPORTED:

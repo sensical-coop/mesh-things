@@ -1,3 +1,5 @@
+from google.protobuf.json_format import MessageToDict
+
 from mesh_things import codec, node_ids, protocols
 from mesh_things.channels import NODEINFO_KIND, POSITION_KIND, TELEMETRY
 
@@ -27,6 +29,29 @@ def _discovered_fields(payload_kind: str, payload: dict) -> list[str]:
     return [k for k, v in sub.items() if isinstance(v, (int, float)) and not isinstance(v, bool)]
 
 
+# A node publishes its map report straight to MQTT, describing itself, so the report
+# is always about the gateway that sent it.
+MAP_REPORT_PORTNUM = protocols.get(protocols.CANONICAL).PortNum.Value("MAP_REPORT_APP")
+
+_NODEINFO_FIELDS = (
+    ("long_name", "name"),
+    ("short_name", "short_name"),
+    ("hw_model", "hardware_type"),
+    ("role", "role"),
+)
+_MAP_REPORT_FIELDS = _NODEINFO_FIELDS + (
+    ("firmware_version", "firmware_version"),
+    ("region", "region"),
+    ("modem_preset", "modem_preset"),
+)
+
+
+def _copy_present(payload: dict, fields, sighting: dict) -> None:
+    for src_field, sighting_key in fields:
+        if payload.get(src_field):
+            sighting[sighting_key] = payload[src_field]
+
+
 def _build_sighting(mesh_id: str, decoded: dict) -> dict:
     sighting = {
         "key": f"{mesh_id}:{decoded['node_id']}",
@@ -41,14 +66,10 @@ def _build_sighting(mesh_id: str, decoded: dict) -> dict:
             sighting["latitude"] = lat_i / 1e7
             sighting["longitude"] = lon_i / 1e7
     elif decoded["payload_kind"] == NODEINFO_KIND:
-        for src_field, sighting_key in (
-            ("long_name", "name"),
-            ("short_name", "short_name"),
-            ("hw_model", "hardware_type"),
-            ("role", "role"),
-        ):
-            if payload.get(src_field):
-                sighting[sighting_key] = payload[src_field]
+        _copy_present(payload, _NODEINFO_FIELDS, sighting)
+    elif decoded["portnum"] == MAP_REPORT_PORTNUM:
+        # The report's position is deliberately coarse, so it never replaces one.
+        _copy_present(payload, _MAP_REPORT_FIELDS, sighting)
     return sighting
 
 
@@ -103,7 +124,9 @@ def decode_packet(raw: bytes, gateway_state, rejected_nodes, on_drop=None, recei
     Returns None only for a packet from an unregistered gateway, which belongs
     to no mesh. Otherwise a dict of events: "traffic" for every packet of a
     gateway whose mesh is known, and "decoded", plus "sighting" and possibly
-    "discovery", when the packet decodes and its node is not rejected.
+    "discovery", when the packet decodes and its node is not rejected. A map
+    report yields a "sighting" and no "decoded", since it describes the gateway
+    rather than measuring anything, and carries no time of its own.
 
     Args:
         on_drop: Called with the reason whenever a packet yields no decoded
@@ -150,11 +173,15 @@ def decode_packet(raw: bytes, gateway_state, rejected_nodes, on_drop=None, recei
         return events
     portnum, pb = parsed
     pb_dict, payload_kind = codec.payload_fields(portnum, pb)
+    if portnum == MAP_REPORT_PORTNUM:
+        # LONG_FAST, CLIENT and UNSET are each enum value 0, which is otherwise left out.
+        pb_dict = MessageToDict(pb, preserving_proto_field_name=True, always_print_fields_with_no_presence=True)
     decoded = codec.build_decoded_message(se, portnum, pb_dict, payload_kind, protocol)
     if mesh_id:
         decoded["mesh_id"] = mesh_id
 
-    events["decoded"] = decoded
+    if portnum != MAP_REPORT_PORTNUM:
+        events["decoded"] = decoded
     if mesh_id:
         events["sighting"] = _build_sighting(mesh_id, decoded)
         needs = codec.needed_protocol(portnum, pb, mp.decoded.payload, protocol)
