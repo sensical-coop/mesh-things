@@ -11,6 +11,7 @@ from drf_spectacular.utils import extend_schema_field
 from rest_framework import serializers
 from rest_framework.exceptions import PermissionDenied
 
+from mesh_things import protocols
 from mesh_things import streams as sink_streams
 from mesh_things.channels import channel_name, origin_of
 from mesh_things.codec import is_well_known_psk
@@ -207,8 +208,9 @@ class OwnerUpdateSerializer(serializers.ModelSerializer):
             "status_alerts_enabled": {
                 "help_text": (
                     "Email me when a source I created stays disconnected or stops receiving messages, "
-                    "or a sink I created with meshes or devices attached has nobody connected. Off by "
-                    "default. Superusers are always emailed about silent sources."
+                    "a sink I created with meshes or devices attached has nobody connected, or a device "
+                    "on a mesh I own runs a newer protocol than the mesh declares. Off by default. "
+                    "Superusers are always emailed about silent sources."
                 )
             },
             "source_rate_alerts_enabled": {
@@ -334,6 +336,21 @@ class DetectorSerializer(serializers.Serializer):
 
 _PSK_HELP = "Base64-encoded channel PSK"
 _SOURCE_HELP = "Source the mesh's traffic is bridged from. Null for this instance's own broker."
+_PROTOCOL_HELP = (
+    "Meshtastic protocol version the mesh's devices run. Its packets are decoded with that "
+    "version, and readings are stored in the same units and channel names whatever the version. "
+    "A version past its sunset cannot be chosen."
+)
+_PROTOCOL_STATUS_HELP = "Where the mesh's protocol version stands: current, supported, deprecated or sunset."
+_PROTOCOL_SUNSET_HELP = "Date the mesh's protocol version stops being offered, or null when none is set."
+
+
+def _validate_protocol(serializer, value: str) -> str:
+    """Refuse a version past its sunset, unless the mesh is already on it."""
+    instance = getattr(serializer, "instance", None)
+    if protocols.status(value) == protocols.SUNSET and getattr(instance, "protocol", None) != value:
+        raise serializers.ValidationError(f"Protocol {value} is past its sunset and can no longer be chosen.")
+    return value
 _DISCOVER_HELP = (
     "Register gateways whose packets decode with this mesh's channel and PSK automatically. "
     "Only an operator may switch it on for a mesh with a default or blank PSK."
@@ -427,10 +444,23 @@ class MeshPublicSerializer(serializers.ModelSerializer):
     """A mesh as shown to anyone but its owner and superusers, without key material or account state."""
 
     owner_id = serializers.UUIDField(read_only=True)
+    protocol_status = serializers.ChoiceField(choices=protocols.STATUSES, read_only=True, help_text=_PROTOCOL_STATUS_HELP)
+    protocol_sunset = serializers.DateField(read_only=True, allow_null=True, help_text=_PROTOCOL_SUNSET_HELP)
 
     class Meta:
         model = Mesh
-        fields = ["id", "channel_id", "label", "owner_id", "is_public", "created_at", "updated_at"]
+        fields = [
+            "id",
+            "channel_id",
+            "label",
+            "owner_id",
+            "is_public",
+            "protocol",
+            "protocol_status",
+            "protocol_sunset",
+            "created_at",
+            "updated_at",
+        ]
         read_only_fields = fields
 
 
@@ -442,6 +472,8 @@ class MeshSerializer(_MeshTermsMixin, serializers.ModelSerializer):
     source_id = serializers.PrimaryKeyRelatedField(
         source="source", queryset=Source.objects.all(), allow_null=True, required=False, help_text=_SOURCE_HELP
     )
+    protocol_status = serializers.ChoiceField(choices=protocols.STATUSES, read_only=True, help_text=_PROTOCOL_STATUS_HELP)
+    protocol_sunset = serializers.DateField(read_only=True, allow_null=True, help_text=_PROTOCOL_SUNSET_HELP)
 
     class Meta:
         model = Mesh
@@ -459,6 +491,9 @@ class MeshSerializer(_MeshTermsMixin, serializers.ModelSerializer):
             "terms_expires_at",
             "paused_at",
             "discover_gateways",
+            "protocol",
+            "protocol_status",
+            "protocol_sunset",
             "created_at",
             "updated_at",
         ]
@@ -466,6 +501,7 @@ class MeshSerializer(_MeshTermsMixin, serializers.ModelSerializer):
         extra_kwargs = {
             "is_public": {"required": False},
             "discover_gateways": {"required": False, "help_text": _DISCOVER_HELP},
+            "protocol": {"required": False, "help_text": _PROTOCOL_HELP},
         }
 
     # Viewers other than the owner and superusers get MeshPublicSerializer instead.
@@ -473,6 +509,9 @@ class MeshSerializer(_MeshTermsMixin, serializers.ModelSerializer):
 
     def validate_source_id(self, value):
         return _validate_visible_source(self, value)
+
+    def validate_protocol(self, value):
+        return _validate_protocol(self, value)
 
     def validate(self, attrs):
         _check_discovery_psk(self, attrs)
@@ -491,7 +530,7 @@ class MeshCreateSerializer(MeshSerializer):
 
 
 class MeshUpdateSerializer(_MeshTermsMixin, serializers.ModelSerializer):
-    """PUT /meshes/{id}: channel_id, psk_b64, label, is_public, source_id and discover_gateways are editable.
+    """PUT /meshes/{id}: channel_id, psk_b64, label, is_public, source_id, discover_gateways and protocol are editable.
 
     channel_id/psk_b64 are a pair configured together on the physical
     devices, so both can change here the same way - the pipeline decrypts by
@@ -512,6 +551,7 @@ class MeshUpdateSerializer(_MeshTermsMixin, serializers.ModelSerializer):
             "is_public",
             "source_id",
             "discover_gateways",
+            "protocol",
             "terms_version",
             "terms_locale",
         ]
@@ -520,7 +560,11 @@ class MeshUpdateSerializer(_MeshTermsMixin, serializers.ModelSerializer):
             "channel_id": {"required": False},
             "is_public": {"required": False},
             "discover_gateways": {"required": False, "help_text": _DISCOVER_HELP},
+            "protocol": {"required": False, "help_text": _PROTOCOL_HELP},
         }
+
+    def validate_protocol(self, value):
+        return _validate_protocol(self, value)
 
     def validate(self, attrs):
         attrs = super().validate(attrs)
@@ -931,6 +975,24 @@ class DeviceReadSerializer(serializers.ModelSerializer):
     telemetry_variant_ids = serializers.SerializerMethodField(
         help_text="Telemetry variants this device has been seen reporting."
     )
+    protocol = serializers.CharField(
+        read_only=True, help_text="Meshtastic protocol version the device's packets are decoded with: its mesh's."
+    )
+    firmware_protocol = serializers.CharField(
+        read_only=True,
+        allow_null=True,
+        help_text=(
+            "Protocol version the reported firmware speaks, `unsupported` when it is newer than every supported "
+            "version, or null while the device has sent no map report."
+        ),
+    )
+    protocol_mismatch = serializers.BooleanField(
+        read_only=True,
+        help_text=(
+            "Readings from the device are lost or misread under its mesh's protocol version: it sends fields "
+            "that version does not know, or its firmware speaks a version that reads some values differently."
+        ),
+    )
 
     class Meta:
         model = Device
@@ -958,11 +1020,38 @@ class DeviceReadSerializer(serializers.ModelSerializer):
             "archive_enabled_by",
             "last_seen",
             "discovered_at",
+            "protocol",
+            "observed_protocol",
+            "observed_protocol_at",
+            "firmware_version",
+            "firmware_protocol",
+            "firmware_seen_at",
+            "region",
+            "modem_preset",
+            "protocol_mismatch",
             "telemetry_variant_ids",
             "created_at",
             "updated_at",
         ]
         read_only_fields = fields
+        extra_kwargs = {
+            "observed_protocol": {
+                "help_text": (
+                    "Oldest protocol version that decodes everything the device has sent, `unsupported` when "
+                    "no supported version does, or null while its mesh's version has always been enough."
+                )
+            },
+            "observed_protocol_at": {"help_text": "When the evidence for observed_protocol last arrived."},
+            "firmware_version": {
+                "help_text": (
+                    "Firmware version from the device's last map report. Only a device with its own MQTT uplink "
+                    "sends one, and only with map reporting enabled."
+                )
+            },
+            "firmware_seen_at": {"help_text": "When the last map report arrived."},
+            "region": {"help_text": "LoRa region from the device's last map report, for example `EU_868`."},
+            "modem_preset": {"help_text": "Modem preset from the device's last map report, for example `LONG_FAST`."},
+        }
 
     @extend_schema_field(serializers.ListField(child=serializers.UUIDField()))
     def get_telemetry_variant_ids(self, instance) -> list[str]:
@@ -1548,3 +1637,23 @@ class TracerouteSerializer(serializers.Serializer):
     distance_km = serializers.FloatField(
         allow_null=True, help_text="Length of the route towards the target, when every node on it has a position."
     )
+
+
+class ProtocolSerializer(serializers.Serializer):
+    """One Meshtastic protocol version this instance decodes."""
+
+    version = serializers.CharField(help_text="The value to give a mesh's protocol, for example `2.8`.")
+    status = serializers.ChoiceField(
+        choices=protocols.STATUSES,
+        help_text=(
+            "current: the newest version. supported: decoded with no end date. deprecated: still "
+            "decoded, but owners are reminded to move. sunset: still decoded for meshes on it, but "
+            "it can no longer be chosen."
+        ),
+    )
+    sunset = serializers.DateField(
+        allow_null=True, help_text="Date from which the version can no longer be chosen, or null."
+    )
+    source_ref = serializers.CharField(help_text="The Meshtastic protobufs release the version is decoded with.")
+    is_default = serializers.BooleanField(help_text="Whether a new mesh is declared on this version.")
+

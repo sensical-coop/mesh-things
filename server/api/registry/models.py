@@ -8,7 +8,7 @@ from django.dispatch import receiver
 from django.utils import timezone
 from django.utils.functional import cached_property
 
-from mesh_things import node_ids
+from mesh_things import node_ids, protocols
 from mesh_things.channels import DERIVED_KIND, channel_name
 
 
@@ -57,7 +57,8 @@ class Owner(AbstractBaseUser, PermissionsMixin):
     password_reset_sent_at = models.DateTimeField(null=True, blank=True)
     # Length of a device's alarm-email window, in seconds. Null uses the server default.
     alarm_email_cooldown_seconds = models.PositiveIntegerField(null=True, blank=True)
-    # Emails about the sources and sinks this owner created that stay disconnected or unused.
+    # Emails about the sources and sinks this owner created that stay disconnected or unused,
+    # and about devices on their meshes that run a newer protocol than the mesh declares.
     status_alerts_enabled = models.BooleanField(default=False)
     # Emails about the sources this owner created that stay busier than the instance allows.
     source_rate_alerts_enabled = models.BooleanField(default=False)
@@ -333,6 +334,12 @@ class Mesh(models.Model):
     paused_at = models.DateTimeField(null=True, blank=True)
     # Registers gateways whose packets decode with this mesh's channel and PSK, without the owner adding them.
     discover_gateways = models.BooleanField(default=False)
+    # Declared rather than detected: a version's unit changes cannot all be told apart on the wire.
+    protocol = models.CharField(
+        max_length=8, choices=[(v, v) for v in protocols.VERSIONS], default=protocols.DEFAULT
+    )
+    # The last deprecation reminder sent, as "<version>:<status>", so each goes out once.
+    protocol_notice = models.CharField(max_length=32, null=True, blank=True)
     created_at = models.DateTimeField(auto_now_add=True)
     updated_at = models.DateTimeField(auto_now=True)
 
@@ -343,6 +350,16 @@ class Mesh(models.Model):
         if not self.label or self.label == self.channel_id:
             return self.channel_id
         return f"{self.label} ({self.channel_id})"
+
+    @property
+    def protocol_status(self) -> str:
+        """Where the mesh's protocol version stands: current, supported, deprecated or sunset."""
+        return protocols.status(self.protocol)
+
+    @property
+    def protocol_sunset(self):
+        """The date the mesh's protocol version stops being offered, if one is set."""
+        return protocols.PROTOCOLS[self.protocol].sunset
 
     @property
     def ingest_paused(self) -> bool:
@@ -474,6 +491,20 @@ class Device(models.Model):
     last_seen = models.DateTimeField(null=True, blank=True)
     # Set when gateway discovery registered it rather than its owner.
     discovered_at = models.DateTimeField(null=True, blank=True)
+    # The oldest protocol version that decodes everything the device sent, once its
+    # mesh's version left fields unknown. Only moves forward.
+    observed_protocol = models.CharField(
+        max_length=16,
+        null=True,
+        blank=True,
+        choices=[(v, v) for v in protocols.VERSIONS] + [(protocols.UNSUPPORTED, protocols.UNSUPPORTED)],
+    )
+    observed_protocol_at = models.DateTimeField(null=True, blank=True)
+    # Auto-filled from map reports, which only a node with its own MQTT uplink sends.
+    firmware_version = models.CharField(max_length=32, null=True, blank=True)
+    region = models.CharField(max_length=32, null=True, blank=True)
+    modem_preset = models.CharField(max_length=32, null=True, blank=True)
+    firmware_seen_at = models.DateTimeField(null=True, blank=True)
     created_at = models.DateTimeField(auto_now_add=True)
     updated_at = models.DateTimeField(auto_now=True)
 
@@ -493,6 +524,39 @@ class Device(models.Model):
                 name="uq_devices_gateway_device_id_allowed",
             ),
         ]
+
+    @property
+    def protocol(self) -> str:
+        """The protocol version this device's packets are decoded with: its mesh's."""
+        return self.mesh.protocol
+
+    @property
+    def firmware_protocol(self) -> str | None:
+        """The protocol version the device's reported firmware speaks, or None while it has reported none."""
+        return protocols.of_firmware(self.firmware_version)
+
+    @property
+    def protocol_ahead(self) -> bool:
+        """Whether the device runs a newer protocol than its mesh in a way that loses or misreads readings."""
+        firmware = self.firmware_protocol
+        return protocols.is_newer(self.observed_protocol, self.mesh.protocol) or (
+            protocols.is_newer(firmware, self.mesh.protocol) and not protocols.compatible(firmware, self.mesh.protocol)
+        )
+
+    @property
+    def protocol_behind(self) -> bool:
+        """Whether the device's firmware speaks an older protocol than its mesh, which reads some values differently."""
+        firmware = self.firmware_protocol
+        return (
+            firmware is not None
+            and protocols.is_newer(self.mesh.protocol, firmware)
+            and not protocols.compatible(firmware, self.mesh.protocol)
+        )
+
+    @property
+    def protocol_mismatch(self) -> bool:
+        """Whether readings from the device are lost or misread under its mesh's protocol version."""
+        return self.protocol_ahead or self.protocol_behind
 
     def __str__(self) -> str:
         """Node number in the wire form a Meshtastic client shows, plus whatever

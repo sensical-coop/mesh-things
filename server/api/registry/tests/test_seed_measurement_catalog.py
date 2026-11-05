@@ -17,6 +17,7 @@ _EXPECTED_VARIANTS = {
     "telemetry:health_metrics",
     "telemetry:host_metrics",
     "telemetry:traffic_management_stats",
+    "telemetry:soil_water_metrics",  # protocol 2.8
 }
 
 

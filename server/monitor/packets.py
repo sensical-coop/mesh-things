@@ -1,10 +1,9 @@
 """The probe packet: telemetry from the monitor's gateway, encrypted like a real node's."""
 import secrets
 
-from meshtastic.protobuf import mesh_pb2, mqtt_pb2, portnums_pb2, telemetry_pb2
-
 from mesh_things import node_ids
 from mesh_things.codec import decode_psk, encrypt_packet
+from mesh_things.protocols.v2_7 import mesh_pb2, mqtt_pb2, portnums_pb2, telemetry_pb2
 
 
 def build_probe(gateway_node_id: int, channel_id: str, psk_b64: str, topic_prefix: str, marker: int) -> tuple[str, bytes]:

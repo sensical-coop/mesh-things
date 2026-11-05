@@ -11,8 +11,9 @@ and anything a lapse paused is resumed. Each step is idempotent, so `run_pass` c
 resume after a failure.
 
 Each pass also discards sink consumers' broker sessions that have been offline too long or
-queued too much, which the broker's own limits would let grow for weeks, and tells operators
-about sources that stay disconnected and sinks nobody is connected to.
+queued too much, which the broker's own limits would let grow for weeks, tells operators
+about sources that stay disconnected and sinks nobody is connected to, and reminds owners of
+meshes on a deprecated protocol version.
 """
 from datetime import datetime, timedelta
 
@@ -21,12 +22,14 @@ from django.conf import settings
 from django.db import transaction
 from django.utils import timezone
 
+from mesh_things import protocols
 from mesh_things.env import env_str
 
 from .data_store import get_data_store
 from .disk_alert import check_disk
 from .emailing import (
     send_mesh_terms_lapsed_email,
+    send_protocol_retiring_email,
     send_mesh_terms_renewal_email,
     send_sink_terms_lapsed_email,
     send_sink_terms_renewal_email,
@@ -47,7 +50,13 @@ from .models import (
     TermsKind,
 )
 from . import topology
-from .status_alerts import check_silent_sources, check_sinks, check_source_rates, check_sources
+from .status_alerts import (
+    check_protocol_mismatches,
+    check_silent_sources,
+    check_sinks,
+    check_source_rates,
+    check_sources,
+)
 from .terms import terms, terms_enforced, text_hash
 
 log = structlog.get_logger()
@@ -212,6 +221,29 @@ def send_renewal_notices(now: datetime) -> int:
         acceptance = sink.current_terms_acceptance
         if _due_for_notice(acceptance, now) and _notify(send_sink_terms_renewal_email, sink, acceptance):
             sent += _mark_notified(acceptance, now)
+    return sent
+
+
+def send_protocol_notices(now: datetime) -> int:
+    """Email the owner of every mesh on a deprecated protocol version, once within the notice
+    window before its sunset, and once more when the sunset passes."""
+    today = now.date()
+    notice = timedelta(days=settings.PROTOCOL_SUNSET_NOTICE_DAYS)
+    retiring = [
+        p.version for p in protocols.PROTOCOLS.values()
+        if protocols.status(p.version, today) in (protocols.DEPRECATED, protocols.SUNSET)
+    ]
+    sent = 0
+    for mesh in Mesh.objects.filter(protocol__in=retiring).select_related("owner"):
+        status = protocols.status(mesh.protocol, today)
+        if status == protocols.DEPRECATED and mesh.protocol_sunset and today < mesh.protocol_sunset - notice:
+            continue
+        key = f"{mesh.protocol}:{status}"
+        if mesh.protocol_notice == key or not _notify(send_protocol_retiring_email, mesh, status):
+            continue
+        mesh.protocol_notice = key
+        mesh.save(update_fields=["protocol_notice"])
+        sent += 1
     return sent
 
 
@@ -395,6 +427,7 @@ def run_pass(now: datetime | None = None) -> dict:
     now = now or timezone.now()
     return {
         "renewal_notices": send_renewal_notices(now),
+        "protocol_notices": send_protocol_notices(now),
         "paused_sources": pause_lapsed_sources(now),
         "paused_meshes": pause_lapsed_meshes(now),
         "paused_sinks": pause_lapsed_sinks(now),
@@ -405,6 +438,7 @@ def run_pass(now: datetime | None = None) -> dict:
         "source_rate_alerts": check_source_rates(now),
         "source_silent_alerts": check_silent_sources(now),
         "sink_alerts": check_sinks(now),
+        "protocol_mismatch_alerts": check_protocol_mismatches(now),
         "disk_alerts": int(check_disk()),
         "topology_pruned": topology.prune(now),
     }

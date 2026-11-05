@@ -2,11 +2,12 @@ import base64
 
 from cryptography.hazmat.backends import default_backend
 from cryptography.hazmat.primitives.ciphers import Cipher, algorithms, modes
+from google.protobuf import unknown_fields
 from google.protobuf.json_format import MessageToDict
-from meshtastic import protocols
-from meshtastic.protobuf import mesh_pb2, mqtt_pb2
+from google.protobuf.message import DecodeError, Message
 
-from mesh_things import node_ids, portnum_registry
+from mesh_things import node_ids, portnum_registry, protocols
+from mesh_things.protocols.v2_7 import mesh_pb2, mqtt_pb2
 
 # Channel.psk default AQ==
 _DEFAULT_CHANNEL_KEY = bytes(
@@ -15,6 +16,11 @@ _DEFAULT_CHANNEL_KEY = bytes(
 
 
 def parse_envelope(raw: bytes) -> mqtt_pb2.ServiceEnvelope:
+    """Parse an MQTT envelope with the canonical protocol.
+
+    The envelope names the gateway, and so the mesh and its protocol, so it is read
+    before either is known. Its fields have the same numbers in every version.
+    """
     se = mqtt_pb2.ServiceEnvelope()
     se.ParseFromString(raw)
     return se
@@ -46,25 +52,131 @@ def decrypt_packet(mp: mesh_pb2.MeshPacket, key_bytes: bytes | None) -> mesh_pb2
         # Do not log anything here
         return None
 
-def decode_payload(mp: mesh_pb2.MeshPacket):
-    """Returns (portnum, pb_dict, payload_kind) or None."""
+def parse_payload(mp: mesh_pb2.MeshPacket, protocol: str = protocols.CANONICAL) -> tuple[int, Message] | None:
+    """Returns (portnum, message) or None, parsing with a protocol version's messages."""
     if not mp.HasField("decoded"):
         return None
 
     portnum = mp.decoded.portnum
-    handler = protocols.get(portnum) if portnum else None
-    if handler is None or handler.protobufFactory is None:
+    message = protocols.get(protocol).PAYLOAD_MESSAGES.get(portnum)
+    if message is None:
         return None
 
-    pb = handler.protobufFactory()
+    pb = message()
     pb.ParseFromString(mp.decoded.payload)
-    pb_dict = MessageToDict(pb, preserving_proto_field_name=True)
-    payload_kind = portnum_registry.classify(portnum, pb)
+    return portnum, pb
 
-    return portnum, pb_dict, payload_kind
 
-def build_decoded_message(se: mqtt_pb2.ServiceEnvelope, portnum: int, pb_dict: dict, payload_kind: str) -> dict:
-    """Shape a decoded packet into the event downstream writers consume"""
+def _is_repeated(field) -> bool:
+    # protobuf >= 6 dropped FieldDescriptor.label in favour of is_repeated.
+    is_repeated = getattr(field, "is_repeated", None)
+    return field.label == field.LABEL_REPEATED if is_repeated is None else is_repeated
+
+
+def _with_enum_defaults(message: Message, fields: dict) -> dict:
+    """Add the enum fields MessageToDict leaves out at value 0, recursively.
+
+    An enum without presence cannot say it was not sent, and its value 0 is usually
+    meaningful (role `CLIENT`, preset `LONG_FAST`). Numeric fields at 0 stay out, since
+    there 0 commonly means the device has no value.
+    """
+    for field in message.DESCRIPTOR.fields:
+        if (
+            field.enum_type is not None
+            and not field.has_presence
+            and not _is_repeated(field)
+            and field.name not in fields
+        ):
+            fields[field.name] = field.enum_type.values_by_number[field.default_value].name
+    for field, value in message.ListFields():
+        if field.message_type is None or field.message_type.GetOptions().map_entry:
+            continue
+        if _is_repeated(field):
+            for item, item_fields in zip(value, fields.get(field.name) or []):
+                _with_enum_defaults(item, item_fields)
+        elif isinstance(fields.get(field.name), dict):
+            _with_enum_defaults(value, fields[field.name])
+    return fields
+
+
+# Channel keys, passwords, private keys, admin passphrases and passkeys, and the Bluetooth
+# PIN, which admin messages and mesh beacons can carry. Decoded payloads reach third-party
+# sinks and the archive.
+SECRET_FIELDS = frozenset(
+    {"psk", "wifi_psk", "private_key", "password", "passphrase", "session_passkey", "fixed_pin"}
+)
+
+
+def _without_secrets(value):
+    if isinstance(value, dict):
+        return {key: _without_secrets(item) for key, item in value.items() if key not in SECRET_FIELDS}
+    if isinstance(value, list):
+        return [_without_secrets(item) for item in value]
+    return value
+
+
+def payload_fields(portnum: int, pb: Message) -> tuple[dict, str]:
+    """A parsed payload as (pb_dict, payload_kind), with enums at value 0 included and secrets removed."""
+    pb_dict = _with_enum_defaults(pb, MessageToDict(pb, preserving_proto_field_name=True))
+    return _without_secrets(pb_dict), portnum_registry.classify(portnum, pb)
+
+
+def decode_payload(mp: mesh_pb2.MeshPacket, protocol: str = protocols.CANONICAL):
+    """Returns (portnum, pb_dict, payload_kind) or None, decoding with a protocol version's messages."""
+    parsed = parse_payload(mp, protocol)
+    if parsed is None:
+        return None
+    portnum, pb = parsed
+    return (portnum, *payload_fields(portnum, pb))
+
+
+def has_unknown_fields(message: Message) -> bool:
+    """Whether a parsed message, or any message inside it, holds fields its schema does not know."""
+    if len(unknown_fields.UnknownFieldSet(message)):
+        return True
+    for field, value in message.ListFields():
+        if field.message_type is None or field.message_type.GetOptions().map_entry:
+            continue
+        values = value if _is_repeated(field) else [value]
+        if any(has_unknown_fields(item) for item in values):
+            return True
+    return False
+
+
+def needed_protocol(portnum: int, pb: Message, payload: bytes, protocol: str) -> str | None:
+    """The version a payload needs when `protocol` leaves fields unknown, or None when it does not.
+
+    The oldest newer version that knows every field, or protocols.UNSUPPORTED when none does.
+    """
+    if not has_unknown_fields(pb):
+        return None
+    for version in protocols.newer_than(protocol):
+        message = protocols.get(version).PAYLOAD_MESSAGES.get(portnum)
+        if message is None:
+            continue
+        newer = message()
+        try:
+            newer.ParseFromString(payload)
+        except DecodeError:
+            # Bytes the declared version skipped as unknown need not be valid in a newer one.
+            continue
+        if not has_unknown_fields(newer):
+            return version
+    return protocols.UNSUPPORTED
+
+def build_decoded_message(
+    se: mqtt_pb2.ServiceEnvelope,
+    portnum: int,
+    pb_dict: dict,
+    payload_kind: str,
+    protocol: str = protocols.CANONICAL,
+    received_at: int | None = None,
+) -> dict:
+    """Shape a decoded packet into the event downstream writers consume.
+
+    `rx_time` is when the gateway heard it, in epoch seconds, or 0 when the gateway
+    had no clock. `received_at` is when the pipeline did, in epoch milliseconds.
+    """
     mp = se.packet
     return {
         "node_id": getattr(mp, "from"),
@@ -73,10 +185,12 @@ def build_decoded_message(se: mqtt_pb2.ServiceEnvelope, portnum: int, pb_dict: d
         "portnum": portnum,
         "request_id": mp.decoded.request_id or None,
         "rx_time": mp.rx_time,
+        "received_at": received_at,
         **routing_fields(mp),
         "channel_id": se.channel_id,
         "gateway_id": node_ids.to_num(se.gateway_id),
         "payload_kind": payload_kind,
+        "protocol": protocol,
         "payload": pb_dict,
     }
 
@@ -99,7 +213,7 @@ def routing_fields(mp: mesh_pb2.MeshPacket) -> dict:
         "via_mqtt": mp.via_mqtt,
     }
 
-def decode_message(raw: bytes, key_bytes: bytes | None) -> dict | None:
+def decode_message(raw: bytes, key_bytes: bytes | None, protocol: str = protocols.CANONICAL) -> dict | None:
     """Parse, decrypt (if needed), decode, and shape the output.
 
     Returns None if the message cannot be decrypted, has an unknown
@@ -114,12 +228,12 @@ def decode_message(raw: bytes, key_bytes: bytes | None) -> dict | None:
             return None
         mp.decoded.CopyFrom(decrypted)
 
-    result = decode_payload(mp)
+    result = decode_payload(mp, protocol)
     if result is None:
         return None
 
     portnum, pb_dict, payload_kind = result
-    return build_decoded_message(se, portnum, pb_dict, payload_kind)
+    return build_decoded_message(se, portnum, pb_dict, payload_kind, protocol)
 
 
 def decode_psk(key_b64: str) -> bytes | None:
@@ -147,8 +261,8 @@ def is_well_known_psk(key_b64: str | None) -> bool:
         return False
 
 
-def decodes_with(raw: bytes, key_b64: str | None) -> bool:
-    """Whether a ServiceEnvelope fully decodes with a channel PSK.
+def decodes_with(raw: bytes, key_b64: str | None, protocol: str = protocols.CANONICAL) -> bool:
+    """Whether a ServiceEnvelope fully decodes with a channel PSK and protocol version.
 
     An encrypted packet must decrypt to a known portnum whose payload parses; a
     plain one only matches a mesh without encryption. Parsing alone is not
@@ -168,6 +282,6 @@ def decodes_with(raw: bytes, key_b64: str | None) -> bool:
             return False
         mp.decoded.CopyFrom(decrypted)
     try:
-        return decode_payload(mp) is not None
+        return decode_payload(mp, protocol) is not None
     except Exception:
         return False

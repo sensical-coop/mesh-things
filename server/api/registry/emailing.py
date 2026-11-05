@@ -7,6 +7,8 @@ from django.core.mail import EmailMultiAlternatives
 from django.template import TemplateDoesNotExist
 from django.template.loader import render_to_string
 
+from mesh_things import protocols
+
 from . import email_health
 from .models import OperatorRequestStatus, Owner
 
@@ -247,6 +249,58 @@ def send_sink_unused_email(sink, since) -> None:
             "since": since,
             "max_offline_hours": settings.SINKS_MAX_OFFLINE_HOURS,
             "sink_link": console_url("sinks", sink.id),
+        },
+    )
+
+
+def send_protocol_mismatch_email(mesh, devices: list) -> None:
+    """Tell a mesh's owner which devices send readings the mesh's protocol version loses or misreads."""
+    owner = mesh.owner
+    ahead = [device for device in devices if device.protocol_ahead]
+    behind = [device for device in devices if not device.protocol_ahead]
+    needed = (
+        protocols.newest(
+            version
+            for device in ahead
+            for version in (device.observed_protocol, device.firmware_protocol)
+            if protocols.is_newer(version, mesh.protocol)
+        )
+        if ahead
+        else None
+    )
+    send_templated_email(
+        to_email=owner.email,
+        subject="Some devices do not match your mesh's protocol - Mesh Things",
+        template_name="protocol_mismatch",
+        context={
+            "name": owner.name,
+            "mesh": str(mesh),
+            "protocol": mesh.protocol,
+            "needed": needed,
+            "unsupported": protocols.UNSUPPORTED,
+            "ahead": [str(device) for device in ahead],
+            "behind": [f"{device} (firmware {device.firmware_version})" for device in behind],
+            "mesh_link": console_url("meshes", mesh.id),
+        },
+    )
+
+
+def send_protocol_retiring_email(mesh, status: str) -> None:
+    """Tell a mesh's owner that its protocol version is deprecated or past its sunset."""
+    owner = mesh.owner
+    standing = "past its sunset" if status == protocols.SUNSET else "deprecated"
+    send_templated_email(
+        to_email=owner.email,
+        subject=f"Meshtastic protocol {mesh.protocol} is {standing} - Mesh Things",
+        template_name="protocol_retiring",
+        context={
+            "name": owner.name,
+            "mesh": str(mesh),
+            "protocol": mesh.protocol,
+            "status": status,
+            "sunset": mesh.protocol_sunset,
+            "suggested": protocols.DEFAULT,
+            "mesh_link": console_url("meshes", mesh.id),
         },
     )
 

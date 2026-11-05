@@ -1,6 +1,6 @@
 import pytest
 
-pytest.importorskip("meshtastic", reason="needs mesh-things[protobuf]")
+pytest.importorskip("google.protobuf", reason="needs mesh-things[protobuf]")
 
 from mesh_things.protobuf import latest_messages, payload_message, series_messages
 
@@ -46,3 +46,17 @@ def test_archived_payloads_convert_for_every_kind():
     assert user.long_name == "Roof"
     with pytest.raises(ValueError):
         payload_message("computed:derived", {})
+
+
+SOIL_WATER = {"payload_kind": "telemetry:soil_water_metrics", "field_name": "solar_irradiance", "value": 512.5,
+              "time": "2026-11-03T10:00:00Z"}
+
+
+def test_a_variant_is_built_with_the_protocol_that_has_it():
+    messages = latest_messages({"readings": [SOIL_WATER]}, protocol="2.8")
+
+    assert messages["telemetry:soil_water_metrics"].soil_water_metrics.solar_irradiance == pytest.approx(512.5)
+
+
+def test_a_variant_the_protocol_lacks_is_left_out_of_the_latest():
+    assert latest_messages({"readings": [SOIL_WATER]}) == {}

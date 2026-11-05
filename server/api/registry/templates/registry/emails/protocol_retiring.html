@@ -1,0 +1,11 @@
+{% extends "emails/base.html" %}
+{% block content %}
+{% if status == "sunset" %}{% include "emails/_chip.html" with label="Sunset" tone="warning" %}{% include "emails/_title.html" with title="Your mesh's protocol has reached its sunset" %}
+<p style="margin:12px 0 0 0;font-size:15px;line-height:22px;color:#1b1c1f;">Hi {{ name }}, your mesh <strong>{{ mesh }}</strong> is declared on Meshtastic protocol {{ protocol }}, which reached its sunset{% if sunset %} on {{ sunset|date:"j M Y" }}{% endif %}. Its readings are still decoded for now, but a later release stops supporting {{ protocol }}, and no mesh can move onto it any more.</p>
+{% else %}{% include "emails/_chip.html" with label="Deprecated" tone="warning" %}{% include "emails/_title.html" with title="Your mesh's protocol is deprecated" %}
+<p style="margin:12px 0 0 0;font-size:15px;line-height:22px;color:#1b1c1f;">Hi {{ name }}, your mesh <strong>{{ mesh }}</strong> is declared on Meshtastic protocol {{ protocol }}, which is deprecated{% if sunset %} and reaches its sunset on {{ sunset|date:"j M Y" }}{% endif %}. Its readings are still decoded in the meantime.</p>
+{% endif %}
+<p style="margin:12px 0 0 0;font-size:15px;line-height:22px;color:#1b1c1f;">Update the mesh's devices to newer firmware, then set the mesh's protocol to <strong>{{ suggested }}</strong>.</p>
+{% include "emails/_button.html" with href=mesh_link label="Open mesh" %}
+{% endblock %}
+{% block footer %}You are receiving this because you own this mesh on Mesh Things.{% endblock %}

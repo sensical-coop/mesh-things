@@ -30,6 +30,11 @@ NODEINFO = "nodeinfo" # Not telemetry
 PORTNUM_PREFIX = "portnum_"  # an undecoded portnum, e.g. portnum_67
 
 DEVICE_MEASUREMENTS = frozenset({POSITION, NODEINFO})
+
+# Fields every decoded point carries about its packet rather than its readings. `rx_time`
+# (gateway) and `received_at` (pipeline) are epoch seconds, kept so they can be compared
+# with the point's time, which is the payload's own when it has one.
+METADATA_FIELDS = ("packet_id", "timestamp_quality", "rx_time", "received_at")
 COMPUTED_MEASUREMENTS = frozenset({DERIVED, QUALITY, ALARMS})
 
 # The full payload_kinds that are fixed rather than per-variant.

@@ -148,8 +148,9 @@ class HealthView(APIView):
 class ReadingsView(ReadingsAPIView):
     """Return a device's readings for one measurement over a time range.
 
-    Each point's bookkeeping fields, `packet_id` and `timestamp_quality`, are not
-    readings and are left out unless one is asked for with `channel`.
+    Each point's bookkeeping fields, `packet_id`, `timestamp_quality`, `rx_time` and
+    `received_at`, are not readings and are left out unless one is asked for with
+    `channel`.
     Downsampling covers numeric fields only, so text fields are also left out
     whenever `window` is set.
 
@@ -584,8 +585,9 @@ class DeviceQualityView(QualityView):
 class DeviceReadingsView(ReadingsView):
     """Readings over a time range, addressed by the device's registration ID.
 
-    Each point's bookkeeping fields, `packet_id` and `timestamp_quality`, are not
-    readings and are left out unless one is asked for with `channel`.
+    Each point's bookkeeping fields, `packet_id`, `timestamp_quality`, `rx_time` and
+    `received_at`, are not readings and are left out unless one is asked for with
+    `channel`.
     Downsampling covers numeric fields only, so text fields are also left out
     whenever `window` is set.
     """

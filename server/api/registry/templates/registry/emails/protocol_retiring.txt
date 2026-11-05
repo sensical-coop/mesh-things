@@ -1,0 +1,16 @@
+{% autoescape off %}Hi {{ name }},
+{% if status == "sunset" %}
+Your mesh "{{ mesh }}" is declared on Meshtastic protocol {{ protocol }}, which reached
+its sunset{% if sunset %} on {{ sunset|date:"Y-m-d" }}{% endif %}. Its readings are still
+decoded for now, but a later release stops supporting {{ protocol }}, and no mesh can
+move onto it any more.
+{% else %}
+Your mesh "{{ mesh }}" is declared on Meshtastic protocol {{ protocol }}, which is
+deprecated{% if sunset %} and reaches its sunset on {{ sunset|date:"Y-m-d" }}{% endif %}. Its
+readings are still decoded in the meantime.
+{% endif %}
+Update the mesh's devices to newer firmware, then set the mesh's protocol to
+{{ suggested }}:
+
+{{ mesh_link }}
+{% endautoescape %}
