@@ -269,6 +269,28 @@ def test_secrets_are_removed_from_admin_messages():
     assert "wifi_psk" not in network
 
 
+def test_admin_passphrases_passkeys_and_pins_are_removed():
+    admin = protocols.get("2.8").admin_pb2.AdminMessage(session_passkey=b"\x02" * 8)
+    admin.set_config.bluetooth.fixed_pin = 123456
+    admin.set_config.bluetooth.enabled = True
+    mp = mesh_pb2.MeshPacket()
+    mp.decoded.portnum = 6
+    mp.decoded.payload = admin.SerializeToString()
+    lockdown = protocols.get("2.8").admin_pb2.AdminMessage()
+    lockdown.lockdown_auth.passphrase = b"secret"
+    lockdown.lockdown_auth.boots_remaining = 3
+
+    decoded = codec.decode_payload(mp, "2.8")[1]
+    mp.decoded.payload = lockdown.SerializeToString()
+    auth = codec.decode_payload(mp, "2.8")[1]["lockdown_auth"]
+
+    assert "session_passkey" not in decoded
+    assert decoded["set_config"]["bluetooth"]["enabled"] is True
+    assert "fixed_pin" not in decoded["set_config"]["bluetooth"]
+    assert auth["boots_remaining"] == 3
+    assert "passphrase" not in auth
+
+
 def test_a_new_field_inside_a_known_measurement_counts_too():
     v2_8 = protocols.get("2.8")
     telemetry = v2_8.telemetry_pb2.Telemetry(time=1)

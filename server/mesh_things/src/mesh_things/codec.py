@@ -99,9 +99,12 @@ def _with_enum_defaults(message: Message, fields: dict) -> dict:
     return fields
 
 
-# Channel keys, Wi-Fi and MQTT passwords and private keys, which admin messages and
-# mesh beacons can carry. Decoded payloads reach third-party sinks and the archive.
-SECRET_FIELDS = frozenset({"psk", "wifi_psk", "private_key", "password"})
+# Channel keys, passwords, private keys, admin passphrases and passkeys, and the Bluetooth
+# PIN, which admin messages and mesh beacons can carry. Decoded payloads reach third-party
+# sinks and the archive.
+SECRET_FIELDS = frozenset(
+    {"psk", "wifi_psk", "private_key", "password", "passphrase", "session_passkey", "fixed_pin"}
+)
 
 
 def _without_secrets(value):
