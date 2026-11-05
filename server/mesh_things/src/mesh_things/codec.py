@@ -99,10 +99,23 @@ def _with_enum_defaults(message: Message, fields: dict) -> dict:
     return fields
 
 
+# Channel keys, Wi-Fi and MQTT passwords and private keys, which admin messages and
+# mesh beacons can carry. Decoded payloads reach third-party sinks and the archive.
+SECRET_FIELDS = frozenset({"psk", "wifi_psk", "private_key", "password"})
+
+
+def _without_secrets(value):
+    if isinstance(value, dict):
+        return {key: _without_secrets(item) for key, item in value.items() if key not in SECRET_FIELDS}
+    if isinstance(value, list):
+        return [_without_secrets(item) for item in value]
+    return value
+
+
 def payload_fields(portnum: int, pb: Message) -> tuple[dict, str]:
-    """A parsed payload as (pb_dict, payload_kind), with enums at value 0 included."""
+    """A parsed payload as (pb_dict, payload_kind), with enums at value 0 included and secrets removed."""
     pb_dict = _with_enum_defaults(pb, MessageToDict(pb, preserving_proto_field_name=True))
-    return pb_dict, portnum_registry.classify(portnum, pb)
+    return _without_secrets(pb_dict), portnum_registry.classify(portnum, pb)
 
 
 def decode_payload(mp: mesh_pb2.MeshPacket, protocol: str = protocols.CANONICAL):

@@ -240,6 +240,35 @@ def test_a_mesh_beacon_decodes_with_2_8():
     assert codec.decode_payload(mp, "2.7") is None
 
 
+def test_an_offered_channel_key_is_removed_from_a_mesh_beacon():
+    v2_8 = protocols.get("2.8")
+    beacon = v2_8.mesh_beacon_pb2.MeshBeacon()
+    beacon.offer_channel.psk = b"\x01" * 16
+    beacon.offer_channel.name = "Offered"
+    mp = mesh_pb2.MeshPacket()
+    mp.decoded.portnum = v2_8.PortNum.MESH_BEACON_APP
+    mp.decoded.payload = beacon.SerializeToString()
+
+    offered = codec.decode_payload(mp, "2.8")[1]["offer_channel"]
+
+    assert offered["name"] == "Offered"
+    assert "psk" not in offered
+
+
+def test_secrets_are_removed_from_admin_messages():
+    admin = protocols.get("2.7").admin_pb2.AdminMessage()
+    admin.set_config.network.wifi_psk = "hunter2"
+    admin.set_config.network.wifi_ssid = "home"
+    mp = mesh_pb2.MeshPacket()
+    mp.decoded.portnum = 6
+    mp.decoded.payload = admin.SerializeToString()
+
+    network = codec.decode_payload(mp)[1]["set_config"]["network"]
+
+    assert network["wifi_ssid"] == "home"
+    assert "wifi_psk" not in network
+
+
 def test_a_new_field_inside_a_known_measurement_counts_too():
     v2_8 = protocols.get("2.8")
     telemetry = v2_8.telemetry_pb2.Telemetry(time=1)
