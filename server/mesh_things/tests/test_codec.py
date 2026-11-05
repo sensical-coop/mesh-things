@@ -221,6 +221,25 @@ def test_a_new_variant_needs_the_version_that_added_it():
     assert codec.needed_protocol(portnum, pb, payload, "2.7") == "2.8"
 
 
+def test_a_payload_no_newer_version_can_parse_needs_an_unsupported_one():
+    # Field 11 is soil_water_metrics in 2.8; these bytes are not a valid message.
+    payload = telemetry_pb2.Telemetry(time=1).SerializeToString() + bytes([0x5A, 0x01, 0xFF])
+    pb = telemetry_pb2.Telemetry()
+    pb.ParseFromString(payload)
+
+    assert codec.needed_protocol(67, pb, payload, "2.7") == protocols.UNSUPPORTED
+
+
+def test_a_mesh_beacon_decodes_with_2_8():
+    v2_8 = protocols.get("2.8")
+    mp = mesh_pb2.MeshPacket()
+    mp.decoded.portnum = v2_8.PortNum.MESH_BEACON_APP
+    mp.decoded.payload = v2_8.mesh_beacon_pb2.MeshBeacon().SerializeToString()
+
+    assert codec.decode_payload(mp, "2.8") is not None
+    assert codec.decode_payload(mp, "2.7") is None
+
+
 def test_a_new_field_inside_a_known_measurement_counts_too():
     v2_8 = protocols.get("2.8")
     telemetry = v2_8.telemetry_pb2.Telemetry(time=1)

@@ -4,7 +4,7 @@ from cryptography.hazmat.backends import default_backend
 from cryptography.hazmat.primitives.ciphers import Cipher, algorithms, modes
 from google.protobuf import unknown_fields
 from google.protobuf.json_format import MessageToDict
-from google.protobuf.message import Message
+from google.protobuf.message import DecodeError, Message
 
 from mesh_things import node_ids, portnum_registry, protocols
 from mesh_things.protocols.v2_7 import mesh_pb2, mqtt_pb2
@@ -139,7 +139,11 @@ def needed_protocol(portnum: int, pb: Message, payload: bytes, protocol: str) ->
         if message is None:
             continue
         newer = message()
-        newer.ParseFromString(payload)
+        try:
+            newer.ParseFromString(payload)
+        except DecodeError:
+            # Bytes the declared version skipped as unknown need not be valid in a newer one.
+            continue
         if not has_unknown_fields(newer):
             return version
     return protocols.UNSUPPORTED

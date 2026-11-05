@@ -1,6 +1,7 @@
 """Meshtastic protocol 2.8, generated from the protobufs tag in `_source`."""
 from mesh_things.protocols.v2_8 import (
     admin_pb2,
+    mesh_beacon_pb2,
     mesh_pb2,
     mqtt_pb2,
     paxcount_pb2,
@@ -30,6 +31,7 @@ PAYLOAD_MESSAGES = {
     PortNum.STORE_FORWARD_APP: storeforward_pb2.StoreAndForward,
     PortNum.NEIGHBORINFO_APP: mesh_pb2.NeighborInfo,
     PortNum.MAP_REPORT_APP: mqtt_pb2.MapReport,
+    PortNum.MESH_BEACON_APP: mesh_beacon_pb2.MeshBeacon,
 }
 
 __all__ = [
@@ -38,6 +40,7 @@ __all__ = [
     "REF",
     "PortNum",
     "admin_pb2",
+    "mesh_beacon_pb2",
     "mesh_pb2",
     "mqtt_pb2",
     "paxcount_pb2",
