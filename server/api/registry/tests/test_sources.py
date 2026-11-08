@@ -555,3 +555,21 @@ class SyncSourcesCommandTests(RegistryTestCase):
         )
         self.fake_emqx.delete_source.assert_called_once_with(self.orphan)
         self.fake_emqx.apply_source_namespace.assert_called_once()
+
+    def test_sync_reports_unprotected_source_topics_and_writes_no_rule(self):
+        self.fake_emqx.authorization_problem.return_value = "the built_in_database authorization source is missing or not first"
+        out = StringIO()
+
+        call_command("sync_sources", stdout=out)
+
+        self.assertIn("source topics unprotected", out.getvalue())
+        self.fake_emqx.apply_source_namespace.assert_not_called()
+
+    def test_check_fails_while_source_topics_are_unprotected(self):
+        self.fake_emqx.managed_source_ids.return_value = {self.kept["id"], self.missing["id"]}
+        self.fake_emqx.authorization_problem.return_value = "not first"
+
+        with self.assertRaises(CommandError) as raised:
+            call_command("sync_sources", "--check", stdout=StringIO())
+
+        self.assertIn("authorization not first", str(raised.exception))

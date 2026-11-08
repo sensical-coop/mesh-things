@@ -29,7 +29,8 @@ class RegistryTestCase(APITestCase):
         self.fake_emqx.source_status.return_value = "connected"
         self.fake_emqx.source_statuses.return_value = {}
         self.fake_emqx.source_message_count.return_value = None
-        self.fake_emqx.sink_authorization_problem.return_value = None
+        self.fake_emqx.authorization_problem.return_value = None
+        self.fake_emqx.apply_source_namespace.return_value = None
         self.fake_emqx.sink_connections.return_value = {}
         self._original_emqx = emqx_client._client
         emqx_client._client = self.fake_emqx
