@@ -6,9 +6,10 @@ from registry.models import Source
 
 class Command(BaseCommand):
     help = (
-        "Reconcile EMQX with the sources in Postgres: re-apply every source's bridge and remove "
-        "bridges in this instance's namespace that no source owns. Paused sources count as having "
-        "no bridge. Run after EMQX is redeployed."
+        "Reconcile EMQX with the sources in Postgres: re-apply every source's bridge, remove "
+        "bridges in this instance's namespace that no source owns, and stop other clients "
+        "publishing under the source topics. Paused sources count as having no bridge. Run "
+        "after EMQX is redeployed."
     )
 
     def add_arguments(self, parser):
@@ -33,6 +34,7 @@ class Command(BaseCommand):
             self.stdout.write("EMQX matches the registry")
             return
 
+        client.apply_source_namespace()
         # Re-applying every source also repairs ones whose EMQX config drifted.
         for source in wanted.values():
             client.apply_source(source)

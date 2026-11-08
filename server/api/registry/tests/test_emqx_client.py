@@ -237,6 +237,20 @@ class EmqxSinkTests(SimpleTestCase):
         self.client.apply_sink_namespace()
         self.assertEqual([m for m, _, _ in self.calls], ["GET", "GET"])
 
+    def test_publishing_under_the_source_topics_is_denied_once(self):
+        dev_deny = {"topic": "mt-sources-dev/#", "permission": "deny", "action": "publish"}
+        self.responses[("GET", AUTHZ_ALL)] = _response(body={"rules": [dev_deny]})
+
+        self.client.apply_source_namespace()
+
+        deny = {"topic": "mt-sources/#", "permission": "deny", "action": "publish"}
+        self.assertIn(("POST", AUTHZ_ALL, {"rules": [dev_deny, deny]}), self.calls)
+
+        self.calls.clear()
+        self.responses[("GET", AUTHZ_ALL)] = _response(body={"rules": [dev_deny, deny]})
+        self.client.apply_source_namespace()
+        self.assertEqual([m for m, _, _ in self.calls], ["GET"])
+
     def test_authorization_is_a_problem_unless_the_database_is_first(self):
         file_first = {"sources": [{"type": "file", "enable": True}, {"type": "built_in_database", "enable": True}]}
         db_first = {"sources": [{"type": "built_in_database", "enable": True}, {"type": "file", "enable": True}]}

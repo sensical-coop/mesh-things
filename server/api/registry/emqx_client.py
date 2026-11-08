@@ -260,6 +260,22 @@ class EmqxClient:
             resp = self._request("POST", AUTHZ_ALL, json={"rules": [*rules, {"topic": root, "permission": "deny", "action": "all"}]})
             resp.raise_for_status()
 
+    def apply_source_namespace(self) -> None:
+        """Stop every client publishing under the source topics.
+
+        Only EMQX's own bridges republish there, and they are not subject to
+        authorization. Without this, any login allowed to publish anywhere could pose as
+        a source. Subscribing is left alone, since the bridge reads these topics. Added
+        to the rules for everyone, which a dev stack on the same broker shares.
+        """
+        root = sources.local_topic_filter()
+        rules = self._get_rules(AUTHZ_ALL)
+        if not any(rule.get("topic") == root and rule.get("permission") == "deny" for rule in rules):
+            resp = self._request(
+                "POST", AUTHZ_ALL, json={"rules": [*rules, {"topic": root, "permission": "deny", "action": "publish"}]}
+            )
+            resp.raise_for_status()
+
     def sink_authorization_problem(self) -> str | None:
         """Return the reason sinks would not be protected, or None when the built-in database is checked first."""
         resp = self._request("GET", AUTHZ_SOURCES)

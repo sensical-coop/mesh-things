@@ -2792,7 +2792,9 @@ class SourceListCreateView(APIView):
         try:
             with transaction.atomic():
                 source = serializer.save(created_by=request.user)
-                get_emqx_client().apply_source(source)
+                client = get_emqx_client()
+                client.apply_source_namespace()
+                client.apply_source(source)
                 # Only once the bridge exists, since a failed bridge rolls the source back.
                 record_acceptance(TermsKind.SOURCE, request.user, locale, source=source)
         except Exception as e:
