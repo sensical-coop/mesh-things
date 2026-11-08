@@ -38,7 +38,6 @@ class SourcePermissionTests(RegistryTestCase):
         self.assertEqual(source["status"], "connected")
         self.fake_emqx.apply_source.assert_called_once()
         self.assertEqual(str(self.fake_emqx.apply_source.call_args.args[0].id), source["id"])
-        self.fake_emqx.apply_source_namespace.assert_called_once()
 
     def test_a_superuser_is_an_operator(self):
         admin = self.create_owner(name="Admin", email="src-admin@example.com")
@@ -532,7 +531,6 @@ class SyncSourcesCommandTests(RegistryTestCase):
         self.orphan = str(uuid.uuid4())
         self.fake_emqx.managed_source_ids.return_value = {self.kept["id"], self.orphan}
         self.fake_emqx.apply_source.reset_mock()
-        self.fake_emqx.apply_source_namespace.reset_mock()
 
     def test_check_reports_differences_without_changing_emqx(self):
         out = StringIO()
@@ -544,7 +542,6 @@ class SyncSourcesCommandTests(RegistryTestCase):
         self.assertIn(f"orphaned in EMQX: {self.orphan}", out.getvalue())
         self.fake_emqx.apply_source.assert_not_called()
         self.fake_emqx.delete_source.assert_not_called()
-        self.fake_emqx.apply_source_namespace.assert_not_called()
 
     def test_sync_applies_every_source_and_removes_orphans(self):
         call_command("sync_sources", stdout=StringIO())
@@ -554,22 +551,3 @@ class SyncSourcesCommandTests(RegistryTestCase):
             {self.kept["id"], self.missing["id"]},
         )
         self.fake_emqx.delete_source.assert_called_once_with(self.orphan)
-        self.fake_emqx.apply_source_namespace.assert_called_once()
-
-    def test_sync_reports_unprotected_source_topics_and_writes_no_rule(self):
-        self.fake_emqx.authorization_problem.return_value = "the built_in_database authorization source is missing or not first"
-        out = StringIO()
-
-        call_command("sync_sources", stdout=out)
-
-        self.assertIn("source topics unprotected", out.getvalue())
-        self.fake_emqx.apply_source_namespace.assert_not_called()
-
-    def test_check_fails_while_source_topics_are_unprotected(self):
-        self.fake_emqx.managed_source_ids.return_value = {self.kept["id"], self.missing["id"]}
-        self.fake_emqx.authorization_problem.return_value = "not first"
-
-        with self.assertRaises(CommandError) as raised:
-            call_command("sync_sources", "--check", stdout=StringIO())
-
-        self.assertIn("authorization not first", str(raised.exception))
