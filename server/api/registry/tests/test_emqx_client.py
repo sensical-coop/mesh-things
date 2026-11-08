@@ -256,29 +256,17 @@ class EmqxSinkTests(SimpleTestCase):
         self.client.apply_sink_namespace()
         self.assertEqual([m for m, _, _ in self.calls], ["GET", "GET"])
 
-    def test_publishing_under_the_source_topics_is_denied_once(self):
-        dev_deny = {"topic": "mt-sources-dev/#", "permission": "deny", "action": "publish"}
-        stored = self._broker_rules(everyone=[dev_deny])
-
-        self.assertIsNone(self.client.apply_source_namespace())
-
-        deny = {"topic": "mt-sources/#", "permission": "deny", "action": "publish"}
-        self.assertEqual(stored[AUTHZ_ALL], [dev_deny, deny])
-        self.calls.clear()
-        self.client.apply_source_namespace()
-        self.assertNotIn("POST", [m for m, _, _ in self.calls])
-
-    def test_a_deny_that_leaves_publishing_open_does_not_count(self):
+    def test_a_rule_that_leaves_sink_topics_open_does_not_count(self):
         narrower = [
-            {"topic": "mt-sources/#", "permission": "deny", "action": "subscribe"},
-            {"topic": "mt-sources/#", "permission": "deny", "action": "publish", "qos": [1, 2]},
-            {"topic": "mt-sources/#", "permission": "deny", "action": "publish", "retain": "true"},
+            {"topic": "mt-sources-sinks/#", "permission": "deny", "action": "subscribe"},
+            {"topic": "mt-sources-sinks/#", "permission": "deny", "action": "all", "qos": [1, 2]},
+            {"topic": "mt-sources-sinks/#", "permission": "deny", "action": "all", "retain": "true"},
         ]
         stored = self._broker_rules(everyone=narrower)
 
-        self.client.apply_source_namespace()
+        self.client.apply_sink_namespace()
 
-        self.assertEqual(stored[AUTHZ_ALL][-1], {"topic": "mt-sources/#", "permission": "deny", "action": "publish"})
+        self.assertEqual(stored[AUTHZ_ALL][-1], {"topic": "mt-sources-sinks/#", "permission": "deny", "action": "all"})
 
     def test_a_rule_another_writer_drops_is_written_again(self):
         stored = self._broker_rules()
@@ -294,29 +282,39 @@ class EmqxSinkTests(SimpleTestCase):
             return resp
 
         self.client._http.request = concurrent
-        self.client.apply_source_namespace()
+        self.client.apply_sink_namespace()
 
-        self.assertEqual(stored[AUTHZ_ALL], [{"topic": "mt-sources/#", "permission": "deny", "action": "publish"}])
+        self.assertEqual(stored[AUTHZ_ALL], [{"topic": "mt-sources-sinks/#", "permission": "deny", "action": "all"}])
         self.assertEqual([m for m, p, _ in self.calls if p == AUTHZ_ALL].count("POST"), 2)
+
+    def test_the_last_write_is_read_back_before_giving_up(self):
+        stored = self._broker_rules()
+        request = self.client._http.request
+        posts = []
+
+        def keeps_only_the_last(method, url, json=None):
+            resp = request(method, url, json)
+            if method == "POST" and url.endswith(AUTHZ_ALL):
+                posts.append(True)
+                if len(posts) < 3:
+                    stored[AUTHZ_ALL] = []
+            return resp
+
+        self.client._http.request = keeps_only_the_last
+        self.client.apply_sink_namespace()
+
+        self.assertEqual(len(posts), 3)
+        self.assertEqual(stored[AUTHZ_ALL], [{"topic": "mt-sources-sinks/#", "permission": "deny", "action": "all"}])
 
     def test_a_rule_that_never_stays_is_an_error(self):
         self._broker_rules()
-        self.responses[("POST", AUTHZ_ALL)] = _response()
         request = self.client._http.request
         self.client._http.request = lambda method, url, json=None: (
             _response(body={"rules": []}) if url.endswith(AUTHZ_ALL) else request(method, url, json)
         )
 
         with self.assertRaises(RuntimeError):
-            self.client.apply_source_namespace()
-
-    def test_no_source_rule_is_written_while_another_authorizer_comes_first(self):
-        self.responses[("GET", "/authorization/sources")] = _response(
-            body={"sources": [{"type": "file", "enable": True}, {"type": "built_in_database", "enable": True}]}
-        )
-
-        self.assertIn("not first", self.client.apply_source_namespace())
-        self.assertNotIn("POST", [m for m, _, _ in self.calls])
+            self.client.apply_sink_namespace()
 
     def test_authorization_is_a_problem_unless_the_database_is_first(self):
         file_first = {"sources": [{"type": "file", "enable": True}, {"type": "built_in_database", "enable": True}]}

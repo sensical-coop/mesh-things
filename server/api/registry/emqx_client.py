@@ -248,14 +248,18 @@ class EmqxClient:
     def _ensure_rule(self, read, write, rule: dict, actions: tuple[str, ...]) -> None:
         """Add `rule` to a shared rule list unless one there already covers it.
 
-        EMQX replaces a whole list on every write, so a concurrent writer (another
-        registry process, or another stack on the same broker) can drop the rule just
-        added. It is therefore read back and written again until it stays.
+        EMQX replaces a whole list on every write and offers no conditional write, so a
+        concurrent writer (another registry process, or another stack on the same
+        broker) can drop the rule just added. It is read back and written again until it
+        stays. A writer that posts a stale list after that read can still drop it; the
+        next sink creation or `sync_sinks` puts it back.
         """
-        for _ in range(RULE_WRITE_ATTEMPTS):
+        for attempt in range(RULE_WRITE_ATTEMPTS + 1):
             rules = read()
             if any(_covers(existing, rule, actions) for existing in rules):
                 return
+            if attempt == RULE_WRITE_ATTEMPTS:
+                break
             write([*rules, rule])
         raise RuntimeError(f"EMQX did not keep the {rule['permission']} rule on {rule['topic']}")
 
@@ -285,28 +289,6 @@ class EmqxClient:
             {"topic": root, "permission": "deny", "action": "all"},
             ("all",),
         )
-
-    def apply_source_namespace(self) -> str | None:
-        """Stop every client publishing under the source topics, or say why it cannot.
-
-        Only EMQX's own bridges republish there, and they are not subject to
-        authorization. Without this, any login allowed to publish anywhere could pose as
-        a source. Subscribing is left alone, since the bridge reads these topics. Added
-        to the rules for everyone, which a dev stack on the same broker shares.
-
-        Returns the reason when the built-in authorization database would not be
-        consulted first, in which case no rule is written, since it would not apply.
-        """
-        problem = self.authorization_problem()
-        if problem:
-            return problem
-        self._ensure_rule(
-            lambda: self._get_rules(AUTHZ_ALL),
-            self._write_all_rules,
-            {"topic": sources.local_topic_filter(), "permission": "deny", "action": "publish"},
-            ("publish", "all"),
-        )
-        return None
 
     def authorization_problem(self) -> str | None:
         """Return why the registry's rules would not apply, or None when the built-in database is checked first."""

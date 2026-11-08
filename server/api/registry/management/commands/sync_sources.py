@@ -6,10 +6,9 @@ from registry.models import Source
 
 class Command(BaseCommand):
     help = (
-        "Reconcile EMQX with the sources in Postgres: re-apply every source's bridge, remove "
-        "bridges in this instance's namespace that no source owns, and stop other clients "
-        "publishing under the source topics. Paused sources count as having no bridge. Run "
-        "after EMQX is redeployed."
+        "Reconcile EMQX with the sources in Postgres: re-apply every source's bridge and remove "
+        "bridges in this instance's namespace that no source owns. Paused sources count as having "
+        "no bridge. Run after EMQX is redeployed."
     )
 
     def add_arguments(self, parser):
@@ -28,20 +27,12 @@ class Command(BaseCommand):
         for source_id in orphaned:
             self.stdout.write(f"orphaned in EMQX: {source_id}")
 
-        problem = client.authorization_problem()
-        if problem:
-            self.stdout.write(f"source topics unprotected: {problem}; run manage.py sync_sinks --install-authz")
-
         if check:
-            if missing or orphaned or problem:
-                raise CommandError(
-                    f"{len(missing)} missing, {len(orphaned)} orphaned, authorization {problem or 'ok'}"
-                )
+            if missing or orphaned:
+                raise CommandError(f"{len(missing)} missing, {len(orphaned)} orphaned")
             self.stdout.write("EMQX matches the registry")
             return
 
-        if not problem:
-            client.apply_source_namespace()
         # Re-applying every source also repairs ones whose EMQX config drifted.
         for source in wanted.values():
             client.apply_source(source)
