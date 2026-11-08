@@ -236,6 +236,13 @@ SOURCES_ALLOW_PRIVATE_BROKERS = env_bool("REGISTRY__SOURCES_ALLOW_PRIVATE_BROKER
 # longer than this, or holding more queued messages than this. 0 turns either check off.
 SINKS_MAX_OFFLINE_HOURS = env_int("REGISTRY__SINKS_MAX_OFFLINE_HOURS", 24)
 SINKS_MAX_QUEUED = env_int("REGISTRY__SINKS_MAX_QUEUED", 10000)
+# The broker and shared login gateways publish to, shown to verified owners so they can
+# set up a gateway. A blank host means this instance has no broker for gateways.
+GATEWAY_BROKER_HOST = env_str("REGISTRY__GATEWAY_BROKER_HOST")
+GATEWAY_BROKER_PORT = env_int("REGISTRY__GATEWAY_BROKER_PORT", 8883)
+GATEWAY_BROKER_TLS = env_bool("REGISTRY__GATEWAY_BROKER_TLS", True)
+GATEWAY_BROKER_USERNAME = env_str("REGISTRY__GATEWAY_BROKER_USERNAME")
+GATEWAY_BROKER_PASSWORD = env_str("REGISTRY__GATEWAY_BROKER_PASSWORD")
 # An operator who opted in is emailed once when a source has not been connected for this many hours,
 # or when a sink with meshes or devices attached has had nobody connected for this long.
 # Checked on each lifecycle pass. 0 turns either alert off.

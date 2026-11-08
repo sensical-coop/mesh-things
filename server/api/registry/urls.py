@@ -21,6 +21,7 @@ urlpatterns = [
     path("owners/me/terms-acceptance", views.OwnerTermsAcceptanceView.as_view()),
     path("terms", views.TermsView.as_view()),
     path("owners/me/operator-request", views.OwnerOperatorRequestView.as_view()),
+    path("owners/me/gateway-broker", views.OwnerGatewayBrokerView.as_view()),
     path("operator-requests", views.OperatorRequestListView.as_view()),
     path("operator-requests/<uuid:request_id>", views.OperatorRequestDetailView.as_view()),
     path("owners/<uuid:owner_id>", views.OwnerDetailView.as_view()),

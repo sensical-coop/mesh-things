@@ -2,7 +2,7 @@
   "openapi": "3.0.3",
   "info": {
     "title": "Mesh Things API",
-    "version": "0.7.0"
+    "version": "0.8.0"
   },
   "paths": {
     "/algorithms": {
@@ -2534,6 +2534,38 @@
               }
             },
             "description": ""
+          }
+        }
+      }
+    },
+    "/owners/me/gateway-broker": {
+      "get": {
+        "operationId": "owners_me_gateway_broker_retrieve",
+        "description": "Return the MQTT broker and login a gateway uses to send its mesh's traffic here.\n\nEvery gateway shares the same login, which may only publish Meshtastic\ntraffic. A gateway's packets are stored once it is registered on a mesh,\nby its owner or by gateway discovery. Answers `404` when this instance has\nno broker for gateways, in which case its administrator provides one.",
+        "tags": [
+          "owners"
+        ],
+        "security": [
+          {
+            "bearerAuth": []
+          },
+          {
+            "cookieAuth": []
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/GatewayBroker"
+                }
+              }
+            },
+            "description": ""
+          },
+          "404": {
+            "description": "No broker for gateways."
           }
         }
       }
@@ -6958,6 +6990,38 @@
         ],
         "type": "string",
         "description": "* `csv` - csv\n* `parquet` - parquet"
+      },
+      "GatewayBroker": {
+        "type": "object",
+        "properties": {
+          "host": {
+            "type": "string",
+            "description": "Broker host name, for the gateway's MQTT server address."
+          },
+          "port": {
+            "type": "integer",
+            "description": "Broker port."
+          },
+          "tls": {
+            "type": "boolean",
+            "description": "Whether the gateway must connect with TLS."
+          },
+          "username": {
+            "type": "string",
+            "description": "Login shared by every gateway."
+          },
+          "password": {
+            "type": "string",
+            "description": "Password of the shared login."
+          }
+        },
+        "required": [
+          "host",
+          "password",
+          "port",
+          "tls",
+          "username"
+        ]
       },
       "LatestReading": {
         "type": "object",
