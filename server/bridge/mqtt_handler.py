@@ -1,6 +1,7 @@
 import asyncio
 import json
 import os
+import time
 
 import aiomqtt
 from aiohttp import web
@@ -10,7 +11,7 @@ from paho.mqtt.client import topic_matches_sub
 from paho.mqtt.packettypes import PacketTypes
 from paho.mqtt.properties import Properties
 
-from bridge import discovery
+from bridge import discovery, front_desk
 from common import sources
 from pipeline.config_state import replay_consumer, replay_to_end
 from tools.healthcheck import HealthState, KakfaProducerHealth, MQTTHealth
@@ -98,14 +99,10 @@ def subscription_filters(own_topic: str) -> list[str]:
     return [own_topic, sources.local_topic_filter()]
 
 
-def _partition_key(topic):
-    # The last topic segment is the relaying gateway's node id (e.g.
-    # msh/.../2/e/LongFast/!aabbccdd) for the encrypted feed this bridge
-    # subscribes to - matches ServiceEnvelope.gateway_id, which is what
-    # decode_job.py's broadcast-state lookup keys off of.
-    return topic.value.split('/')[-1].encode()
-
 log = structlog.get_logger()
+
+# A gateway rate limited this recently is listed on /health.
+RATE_LIMITED_RECENT_SECONDS = 600
 
 class MQTTHandler(object):
     def __init__(self, broker, kafka_bootstrap_server):
@@ -123,7 +120,10 @@ class MQTTHandler(object):
         self.keys_topic = os.environ.get('REGISTRY__KAFKA_TOPIC', 'mesh.keys.v1')
         # gateway_id -> the source its mesh is bridged from, None for the own topic.
         self.gateway_sources: dict[str, str | None] = {}
-        self.source_mismatch_drops = 0
+        self.gateway_rate = front_desk.GatewayRate.from_env()
+        self.drops: dict[str, int] = {}
+        # gateway_id -> monotonic time it was last rate limited, for /health.
+        self.rate_limited_at: dict[str, float] = {}
         self.config_consumer = None
         self.discovery_pacer = discovery.DiscoveryPacer.from_env()
         self.discovery_topic = discovery.candidate_topic()
@@ -136,6 +136,8 @@ class MQTTHandler(object):
             return
         if event.get("op") == "delete":
             self.gateway_sources.pop(key, None)
+            self.gateway_rate.forget(key)
+            self.rate_limited_at.pop(key, None)
         else:
             self.gateway_sources[key] = event.get("source_id")
 
@@ -156,16 +158,45 @@ class MQTTHandler(object):
                     except Exception as e:
                         log.exception("Bad config message skipped", exc_info=e)
 
-    def accepts(self, topic: str) -> bool:
+    def accepts(self, topic: str, gateway_id: str) -> bool:
         """False when a registered gateway arrives through a source its mesh is not on.
 
         Stops the same gateway being ingested twice, for example directly and again
-        through a bridged public broker. Unregistered gateways pass; decode drops them.
+        through a bridged public broker.
         """
-        gateway_id = topic.split('/')[-1]
-        if gateway_id not in self.gateway_sources:
-            return True
         return self.gateway_sources[gateway_id] == sources.source_id_from_topic(topic)
+
+    def admit(self, topic: str, payload: bytes) -> tuple[str | None, str | None]:
+        """Return (gateway_id, None) to send a message on to Kafka, or (gateway_id, reason) to drop it.
+
+        Only a registered gateway's envelopes pass, and only when the envelope names
+        the gateway its topic does. An unregistered gateway's traffic goes no further
+        than the paced samples gateway discovery gets.
+        """
+        kind = front_desk.topic_kind(topic)
+        if kind is None:
+            return None, front_desk.NOT_ENVELOPE
+        gateway_id = front_desk.envelope_gateway(payload)
+        if gateway_id is None:
+            return None, front_desk.UNPARSEABLE
+        if kind == front_desk.ENCRYPTED and topic.rsplit('/', 1)[-1] != gateway_id:
+            return gateway_id, front_desk.GATEWAY_MISMATCH
+        if gateway_id not in self.gateway_sources:
+            if kind == front_desk.ENCRYPTED:
+                try:
+                    self.observe_candidate(topic, payload)
+                except Exception as e:
+                    log.warning('Gateway discovery sample not sent', topic=topic, error=str(e))
+            return gateway_id, front_desk.UNREGISTERED
+        if not self.accepts(topic, gateway_id):
+            return gateway_id, front_desk.WRONG_SOURCE
+        if not self.gateway_rate.allow(gateway_id):
+            if gateway_id not in self.rate_limited_at:
+                log.warning('Gateway over its rate, dropping its packets', gateway_id=gateway_id)
+            self.rate_limited_at[gateway_id] = time.monotonic()
+            return gateway_id, front_desk.RATE_LIMITED
+        self.rate_limited_at.pop(gateway_id, None)
+        return gateway_id, None
 
     def observe_candidate(self, topic: str, payload: bytes) -> None:
         """Send a paced sample of an unregistered gateway's traffic to the registry for discovery."""
@@ -204,15 +235,15 @@ class MQTTHandler(object):
                     async for message in client.messages:
                         self.mqtt_health.mark_connected()
                         log.debug(f'Got message: {message.topic}: {message.payload}')
-                        if not self.accepts(message.topic.value):
-                            self.source_mismatch_drops += 1
-                            log.debug('Dropping packet from a gateway outside its source', topic=message.topic.value)
+                        gateway_id, reason = self.admit(message.topic.value, message.payload)
+                        if reason is not None:
+                            self.drops[reason] = self.drops.get(reason, 0) + 1
+                            log.debug('Dropping message', topic=message.topic.value, reason=reason)
                             continue
-                        self.kafka_producer.send(os.environ['MQTT_BRIDGE__KAFKA_TOPIC'], key=_partition_key(message.topic), value=message.payload)
-                        try:
-                            self.observe_candidate(message.topic.value, message.payload)
-                        except Exception as e:
-                            log.warning('Gateway discovery sample not sent', topic=message.topic.value, error=str(e))
+                        # Keyed by gateway, which decode_job.py's broadcast-state lookup keys off of.
+                        self.kafka_producer.send(
+                            os.environ['MQTT_BRIDGE__KAFKA_TOPIC'], key=gateway_id.encode(), value=message.payload
+                        )
             except aiomqtt.MqttError as e:
                 self.mqtt_health.mark_disconnected()
                 log.warning(f"Connection lost ({e}); Reconnecting in {int(os.environ['MQTT_BRIDGE__RECONNECT'])} seconds ...")
@@ -243,8 +274,10 @@ class MQTTHandler(object):
         log.info(f'Health check. Kafka connected: {self.health_state.kafka_connected}')
         log.info(f'Health check. MQTT connected: {self.health_state.mqtt_connected}')
 
+        recent = time.monotonic() - RATE_LIMITED_RECENT_SECONDS
         body = {
-            "source_mismatch_drops": self.source_mismatch_drops,
+            "drops": dict(sorted(self.drops.items())),
+            "rate_limited_gateways": sorted(g for g, at in self.rate_limited_at.items() if at >= recent),
             "discovery_candidates_sent": self.discovery_candidates_sent,
             "discovery_gateways_tracked": len(self.discovery_pacer),
         }
