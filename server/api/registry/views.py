@@ -2793,7 +2793,9 @@ class SourceListCreateView(APIView):
             with transaction.atomic():
                 source = serializer.save(created_by=request.user)
                 client = get_emqx_client()
-                client.apply_source_namespace()
+                problem = client.apply_source_namespace()
+                if problem:
+                    log.warning("source_topics_unprotected", problem=problem)
                 client.apply_source(source)
                 # Only once the bridge exists, since a failed bridge rolls the source back.
                 record_acceptance(TermsKind.SOURCE, request.user, locale, source=source)
@@ -2955,7 +2957,7 @@ def _sink_read_data(sink: Sink, connections: dict[str, int] | None = None, passw
 def _require_sink_authorization(client) -> None:
     """Refuse while the broker would let other clients read or write sink topics."""
     try:
-        problem = client.sink_authorization_problem()
+        problem = client.authorization_problem()
     except Exception as e:
         raise BadGateway(f"Failed to check the broker's authorization: {e}")
     if problem:

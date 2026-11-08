@@ -28,13 +28,20 @@ class Command(BaseCommand):
         for source_id in orphaned:
             self.stdout.write(f"orphaned in EMQX: {source_id}")
 
+        problem = client.authorization_problem()
+        if problem:
+            self.stdout.write(f"source topics unprotected: {problem}; run manage.py sync_sinks --install-authz")
+
         if check:
-            if missing or orphaned:
-                raise CommandError(f"{len(missing)} missing, {len(orphaned)} orphaned")
+            if missing or orphaned or problem:
+                raise CommandError(
+                    f"{len(missing)} missing, {len(orphaned)} orphaned, authorization {problem or 'ok'}"
+                )
             self.stdout.write("EMQX matches the registry")
             return
 
-        client.apply_source_namespace()
+        if not problem:
+            client.apply_source_namespace()
         # Re-applying every source also repairs ones whose EMQX config drifted.
         for source in wanted.values():
             client.apply_source(source)
