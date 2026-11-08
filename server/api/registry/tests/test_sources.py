@@ -38,6 +38,7 @@ class SourcePermissionTests(RegistryTestCase):
         self.assertEqual(source["status"], "connected")
         self.fake_emqx.apply_source.assert_called_once()
         self.assertEqual(str(self.fake_emqx.apply_source.call_args.args[0].id), source["id"])
+        self.fake_emqx.apply_source_namespace.assert_called_once()
 
     def test_a_superuser_is_an_operator(self):
         admin = self.create_owner(name="Admin", email="src-admin@example.com")
@@ -531,6 +532,7 @@ class SyncSourcesCommandTests(RegistryTestCase):
         self.orphan = str(uuid.uuid4())
         self.fake_emqx.managed_source_ids.return_value = {self.kept["id"], self.orphan}
         self.fake_emqx.apply_source.reset_mock()
+        self.fake_emqx.apply_source_namespace.reset_mock()
 
     def test_check_reports_differences_without_changing_emqx(self):
         out = StringIO()
@@ -542,6 +544,7 @@ class SyncSourcesCommandTests(RegistryTestCase):
         self.assertIn(f"orphaned in EMQX: {self.orphan}", out.getvalue())
         self.fake_emqx.apply_source.assert_not_called()
         self.fake_emqx.delete_source.assert_not_called()
+        self.fake_emqx.apply_source_namespace.assert_not_called()
 
     def test_sync_applies_every_source_and_removes_orphans(self):
         call_command("sync_sources", stdout=StringIO())
@@ -551,3 +554,4 @@ class SyncSourcesCommandTests(RegistryTestCase):
             {self.kept["id"], self.missing["id"]},
         )
         self.fake_emqx.delete_source.assert_called_once_with(self.orphan)
+        self.fake_emqx.apply_source_namespace.assert_called_once()
