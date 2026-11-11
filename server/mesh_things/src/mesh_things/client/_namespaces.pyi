@@ -278,6 +278,10 @@ class Meshes:
                 packets decodes with this mesh's channel and pre-shared key.
                 Defaults to `false`. Only an operator may switch it on for a mesh
                 with a default or blank key.
+            protocol: Meshtastic protocol version the mesh's devices run, which
+                its packets are decoded with. Defaults to `2.8`. A version past
+                its sunset is refused. Readings are stored in the same units
+                whatever the version.
             terms_version: The `version` of the mesh terms accepted. Required
                 without a source, ignored with one, and ignored on an instance
                 that does not enforce terms.
@@ -391,10 +395,10 @@ class Meshes:
     def update(self, mesh_id: str, *, body: dict[str, Any] | None = None) -> Any:
         """Update a mesh.
 
-        Changing the channel_id, the pre-shared key or the source redistributes
-        them to every allowed gateway on the mesh, and the whole update is
-        rolled back if that fails. Once the source changes, the mesh's gateways
-        are only accepted through the new one.
+        Changing the channel_id, the pre-shared key, the source or the protocol
+        redistributes them to every allowed gateway on the mesh, and the whole
+        update is rolled back if that fails. Once the source changes, the mesh's
+        gateways are only accepted through the new one.
 
         Args:
             source_id: Source to bridge the mesh's traffic from, which must be one
@@ -409,6 +413,10 @@ class Meshes:
                 rejected on this mesh. Switching it off keeps the gateways
                 already found. Only an operator may switch it on for a mesh with
                 a default or blank key.
+            protocol: Meshtastic protocol version the mesh's devices run. Packets
+                received after the change are decoded with it; readings already
+                stored are left as they are. A version past its sunset is refused,
+                unless the mesh is already on it.
             terms_version: The `version` of the mesh terms accepted. Required when
                 moving the mesh onto the default broker unless it already holds a
                 current acceptance, or the instance does not enforce terms;
@@ -577,9 +585,11 @@ class Owners:
                 alarm, no summaries) up to 2592000 (30 days). Leave unset or
                 null to use the server default.
             status_alerts_enabled: Email me when a source I created stays
-                disconnected or stops receiving messages, or a sink I created
-                with meshes or devices attached has nobody connected. Defaults
-                to false. Superusers are always emailed about silent sources.
+                disconnected or stops receiving messages, a sink I created
+                with meshes or devices attached has nobody connected, or a
+                device on a mesh I own runs a newer protocol than the mesh
+                declares. Defaults to false. Superusers are always emailed
+                about silent sources.
             source_rate_alerts_enabled: Email me when a source I created
                 averages more messages per second over an hour than this
                 instance allows. Defaults to false. Superusers are always
@@ -706,6 +716,16 @@ class PostprocessingBlueprints:
     def versions_list(self, blueprint_id: str) -> Any:
         """List every version of a blueprint, oldest first."""
 
+class Protocols:
+    def list(self) -> Any:
+        """Return the Meshtastic protocol versions a mesh can be declared on, oldest first.
+
+        Each version carries its status and sunset date. A deprecated version is still
+        decoded, and owners of meshes on it are reminded to move. A version past its sunset
+        can no longer be chosen for a mesh, but meshes already on it keep decoding.
+        Readings are stored in the same units and channel names whatever the version.
+        """
+
 class Readings:
     def archive_meshes_credentials_create(self, mesh_id: str) -> Any:
         """Issue temporary S3 credentials that can read this mesh's archive and nothing else.
@@ -742,8 +762,9 @@ class Readings:
     def devices_get(self, device_uuid: str, *, agg: Literal['count', 'first', 'last', 'max', 'mean', 'min', 'sum'] | None = None, channel: str | None = None, payload_kind: str | None = None, start: str | datetime | date | None = None, stop: str | datetime | date | None = None, window: str | None = None) -> Any:
         """Readings over a time range, addressed by the device's registration ID.
 
-        Each point's bookkeeping fields, `packet_id` and `timestamp_quality`, are not
-        readings and are left out unless one is asked for with `channel`.
+        Each point's bookkeeping fields, `packet_id`, `timestamp_quality`, `rx_time` and
+        `received_at`, are not readings and are left out unless one is asked for with
+        `channel`.
         Downsampling covers numeric fields only, so text fields are also left out
         whenever `window` is set.
         """
@@ -805,8 +826,9 @@ class Readings:
     def meshes_nodes_get(self, mesh_id: str, node_id: int | str, *, agg: Literal['count', 'first', 'last', 'max', 'mean', 'min', 'sum'] | None = None, channel: str | None = None, payload_kind: str | None = None, start: str | datetime | date | None = None, stop: str | datetime | date | None = None, window: str | None = None) -> Any:
         """Return a device's readings for one measurement over a time range.
 
-        Each point's bookkeeping fields, `packet_id` and `timestamp_quality`, are not
-        readings and are left out unless one is asked for with `channel`.
+        Each point's bookkeeping fields, `packet_id`, `timestamp_quality`, `rx_time` and
+        `received_at`, are not readings and are left out unless one is asked for with
+        `channel`.
         Downsampling covers numeric fields only, so text fields are also left out
         whenever `window` is set.
 
@@ -1417,6 +1439,10 @@ class AsyncMeshes:
                 packets decodes with this mesh's channel and pre-shared key.
                 Defaults to `false`. Only an operator may switch it on for a mesh
                 with a default or blank key.
+            protocol: Meshtastic protocol version the mesh's devices run, which
+                its packets are decoded with. Defaults to `2.8`. A version past
+                its sunset is refused. Readings are stored in the same units
+                whatever the version.
             terms_version: The `version` of the mesh terms accepted. Required
                 without a source, ignored with one, and ignored on an instance
                 that does not enforce terms.
@@ -1530,10 +1556,10 @@ class AsyncMeshes:
     async def update(self, mesh_id: str, *, body: dict[str, Any] | None = None) -> Any:
         """Update a mesh.
 
-        Changing the channel_id, the pre-shared key or the source redistributes
-        them to every allowed gateway on the mesh, and the whole update is
-        rolled back if that fails. Once the source changes, the mesh's gateways
-        are only accepted through the new one.
+        Changing the channel_id, the pre-shared key, the source or the protocol
+        redistributes them to every allowed gateway on the mesh, and the whole
+        update is rolled back if that fails. Once the source changes, the mesh's
+        gateways are only accepted through the new one.
 
         Args:
             source_id: Source to bridge the mesh's traffic from, which must be one
@@ -1548,6 +1574,10 @@ class AsyncMeshes:
                 rejected on this mesh. Switching it off keeps the gateways
                 already found. Only an operator may switch it on for a mesh with
                 a default or blank key.
+            protocol: Meshtastic protocol version the mesh's devices run. Packets
+                received after the change are decoded with it; readings already
+                stored are left as they are. A version past its sunset is refused,
+                unless the mesh is already on it.
             terms_version: The `version` of the mesh terms accepted. Required when
                 moving the mesh onto the default broker unless it already holds a
                 current acceptance, or the instance does not enforce terms;
@@ -1716,9 +1746,11 @@ class AsyncOwners:
                 alarm, no summaries) up to 2592000 (30 days). Leave unset or
                 null to use the server default.
             status_alerts_enabled: Email me when a source I created stays
-                disconnected or stops receiving messages, or a sink I created
-                with meshes or devices attached has nobody connected. Defaults
-                to false. Superusers are always emailed about silent sources.
+                disconnected or stops receiving messages, a sink I created
+                with meshes or devices attached has nobody connected, or a
+                device on a mesh I own runs a newer protocol than the mesh
+                declares. Defaults to false. Superusers are always emailed
+                about silent sources.
             source_rate_alerts_enabled: Email me when a source I created
                 averages more messages per second over an hour than this
                 instance allows. Defaults to false. Superusers are always
@@ -1845,6 +1877,16 @@ class AsyncPostprocessingBlueprints:
     async def versions_list(self, blueprint_id: str) -> Any:
         """List every version of a blueprint, oldest first."""
 
+class AsyncProtocols:
+    async def list(self) -> Any:
+        """Return the Meshtastic protocol versions a mesh can be declared on, oldest first.
+
+        Each version carries its status and sunset date. A deprecated version is still
+        decoded, and owners of meshes on it are reminded to move. A version past its sunset
+        can no longer be chosen for a mesh, but meshes already on it keep decoding.
+        Readings are stored in the same units and channel names whatever the version.
+        """
+
 class AsyncReadings:
     async def archive_meshes_credentials_create(self, mesh_id: str) -> Any:
         """Issue temporary S3 credentials that can read this mesh's archive and nothing else.
@@ -1881,8 +1923,9 @@ class AsyncReadings:
     async def devices_get(self, device_uuid: str, *, agg: Literal['count', 'first', 'last', 'max', 'mean', 'min', 'sum'] | None = None, channel: str | None = None, payload_kind: str | None = None, start: str | datetime | date | None = None, stop: str | datetime | date | None = None, window: str | None = None) -> Any:
         """Readings over a time range, addressed by the device's registration ID.
 
-        Each point's bookkeeping fields, `packet_id` and `timestamp_quality`, are not
-        readings and are left out unless one is asked for with `channel`.
+        Each point's bookkeeping fields, `packet_id`, `timestamp_quality`, `rx_time` and
+        `received_at`, are not readings and are left out unless one is asked for with
+        `channel`.
         Downsampling covers numeric fields only, so text fields are also left out
         whenever `window` is set.
         """
@@ -1944,8 +1987,9 @@ class AsyncReadings:
     async def meshes_nodes_get(self, mesh_id: str, node_id: int | str, *, agg: Literal['count', 'first', 'last', 'max', 'mean', 'min', 'sum'] | None = None, channel: str | None = None, payload_kind: str | None = None, start: str | datetime | date | None = None, stop: str | datetime | date | None = None, window: str | None = None) -> Any:
         """Return a device's readings for one measurement over a time range.
 
-        Each point's bookkeeping fields, `packet_id` and `timestamp_quality`, are not
-        readings and are left out unless one is asked for with `channel`.
+        Each point's bookkeeping fields, `packet_id`, `timestamp_quality`, `rx_time` and
+        `received_at`, are not readings and are left out unless one is asked for with
+        `channel`.
         Downsampling covers numeric fields only, so text fields are also left out
         whenever `window` is set.
 
@@ -2293,6 +2337,7 @@ class SyncNamespaces:
     owners: Owners
     postprocessing_backfills: PostprocessingBackfills
     postprocessing_blueprints: PostprocessingBlueprints
+    protocols: Protocols
     readings: Readings
     sinks: Sinks
     sources: Sources
@@ -2313,6 +2358,7 @@ class AsyncNamespaces:
     owners: AsyncOwners
     postprocessing_backfills: AsyncPostprocessingBackfills
     postprocessing_blueprints: AsyncPostprocessingBlueprints
+    protocols: AsyncProtocols
     readings: AsyncReadings
     sinks: AsyncSinks
     sources: AsyncSources

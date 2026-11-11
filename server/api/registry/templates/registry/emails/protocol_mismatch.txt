@@ -1,0 +1,27 @@
+{% autoescape off %}Hi {{ name }},
+
+Your mesh "{{ mesh }}" is declared on Meshtastic protocol {{ protocol }}, but some of
+its devices do not match it.
+{% if ahead %}
+These devices run newer firmware than that version:
+{% for device in ahead %}
+  - {{ device }}{% endfor %}
+
+Readings that version does not know, or encodes differently, are lost or misread.
+{% if needed == unsupported %}This instance does not support the version these devices run yet. Their other
+readings are unaffected, and the missing ones will be stored once it does.
+{% else %}Set the mesh's protocol to {{ needed }} to read them correctly from now on. Readings
+that were already missed cannot be recovered.
+{% endif %}{% endif %}{% if behind %}
+These devices run older firmware, which encodes some readings differently from
+protocol {{ protocol }}:
+{% for device in behind %}
+  - {{ device }}{% endfor %}
+
+Those readings are misread until you update the devices' firmware.
+{% endif %}
+{{ mesh_link }}
+
+You will not be emailed again until the mesh's devices match its protocol and then
+one stops matching again.
+{% endautoescape %}

@@ -1,11 +1,12 @@
 import base64
 import os
 
+import pytest
 from cryptography.hazmat.backends import default_backend
 from cryptography.hazmat.primitives.ciphers import Cipher, algorithms, modes
-from meshtastic.protobuf import mesh_pb2, mqtt_pb2, telemetry_pb2
 
 from common import decode
+from mesh_things.protocols.v2_7 import mesh_pb2, mqtt_pb2, telemetry_pb2
 
 GATEWAY_ID = "!aabbccdd"
 MESH_ID = "mesh-1"
@@ -40,6 +41,51 @@ def _plaintext_packet(packet_id: int, node_id: int, data: mesh_pb2.Data) -> mesh
 def _gateway_state(key_bytes: bytes | None = None, mesh_id: str | None = MESH_ID) -> dict:
     psk_b64 = base64.b64encode(key_bytes).decode("ascii") if key_bytes else ""
     return {GATEWAY_ID: {"psk_b64": psk_b64, "mesh_id": mesh_id}}
+
+def test_the_decoded_event_names_the_protocol_it_was_decoded_with():
+    data = mesh_pb2.Data(portnum=67, payload=telemetry_pb2.Telemetry(time=1).SerializeToString())
+    raw = _build_envelope(_plaintext_packet(1, 111, data))
+
+    result = decode.decode_packet(raw, gateway_state=_gateway_state(), rejected_nodes=set())
+
+    assert result["decoded"]["protocol"] == "2.7"
+
+
+def test_a_gateway_on_an_unknown_protocol_fails_loudly():
+    """A version the package does not carry is a deploy mistake, not a packet to drop quietly."""
+    data = mesh_pb2.Data(portnum=67, payload=telemetry_pb2.Telemetry(time=1).SerializeToString())
+    raw = _build_envelope(_plaintext_packet(1, 111, data))
+    state = {GATEWAY_ID: {"psk_b64": "", "mesh_id": MESH_ID, "protocol": "9.9"}}
+
+    with pytest.raises(ValueError, match="unknown protocol"):
+        decode.decode_packet(raw, gateway_state=state, rejected_nodes=set())
+
+
+def _soil_water_raw() -> bytes:
+    from mesh_things import protocols
+
+    v2_8 = protocols.get("2.8")
+    telemetry = v2_8.telemetry_pb2.Telemetry(time=1)
+    telemetry.soil_water_metrics.solar_irradiance = 300.0
+    return _build_envelope(_plaintext_packet(1, 111, mesh_pb2.Data(portnum=67, payload=telemetry.SerializeToString())))
+
+
+def test_a_device_on_a_newer_protocol_says_which_on_its_sighting():
+    result = decode.decode_packet(_soil_water_raw(), gateway_state=_gateway_state(), rejected_nodes=set())
+
+    assert result["sighting"]["needs_protocol"] == "2.8"
+    # Still decoded with the declared version, which drops the new variant.
+    assert result["decoded"]["payload_kind"] == "telemetry"
+
+
+def test_a_device_on_the_declared_protocol_adds_nothing_to_its_sighting():
+    state = {GATEWAY_ID: {"psk_b64": "", "mesh_id": MESH_ID, "protocol": "2.8"}}
+
+    result = decode.decode_packet(_soil_water_raw(), gateway_state=state, rejected_nodes=set())
+
+    assert "needs_protocol" not in result["sighting"]
+    assert result["decoded"]["payload_kind"] == "telemetry:soil_water_metrics"
+
 
 def test_unregistered_gateway_returns_none():
     data = mesh_pb2.Data(portnum=67, payload=b"irrelevant")
@@ -91,6 +137,26 @@ def test_nodeinfo_sighting_promotes_identity_fields():
     assert result["sighting"]["name"] == "Node One"
     assert result["sighting"]["short_name"] == "N1"
     assert result["sighting"]["hardware_type"] == "TBEAM"
+
+def test_a_map_report_describes_its_gateway_and_stores_no_reading():
+    report = mqtt_pb2.MapReport(
+        long_name="Roof", hw_model="HELTEC_V3", role="ROUTER", firmware_version="2.8.2.a1b2c3d",
+        region="EU_868", modem_preset="LONG_FAST", latitude_i=414000000, longitude_i=21000000,
+    )
+    data = mesh_pb2.Data(portnum=decode.MAP_REPORT_PORTNUM, payload=report.SerializeToString())
+    raw = _build_envelope(_plaintext_packet(3, 0xAABBCCDD, data))
+
+    result = decode.decode_packet(raw, gateway_state=_gateway_state(), rejected_nodes=set())
+
+    assert "decoded" not in result
+    sighting = result["sighting"]
+    assert sighting["device_id"] == 0xAABBCCDD
+    assert sighting["firmware_version"] == "2.8.2.a1b2c3d"
+    assert sighting["region"] == "EU_868"
+    assert sighting["modem_preset"] == "LONG_FAST"
+    assert sighting["name"] == "Roof"
+    assert sighting["hardware_type"] == "HELTEC_V3"
+    assert "latitude" not in sighting
 
 def test_telemetry_produces_discovery_with_numeric_fields():
     tel = telemetry_pb2.Telemetry()

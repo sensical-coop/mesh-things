@@ -53,6 +53,44 @@ MEASUREMENT_TYPE_SEED: dict[tuple[str, str], tuple[str | None, str]] = {
     ("telemetry:environment_metrics", "rainfall_24h"): ("mm", "Rainfall in the last 24 hours in mm"),
     ("telemetry:environment_metrics", "soil_moisture"): ("%", "Soil moisture measured (percent, 1-100)"),
     ("telemetry:environment_metrics", "soil_temperature"): ("degC", "Soil temperature measured"),
+    # Added in protocol 2.8
+    **{
+        ("telemetry:environment_metrics", f"adc_voltage_ch{n}"): ("V", f"Multi-channel ADC voltage, channel {n}")
+        for n in range(8)
+    },
+    **{
+        ("telemetry:environment_metrics", f"one_wire_temperature_ch{n}"): (
+            "degC", f"Multi-channel one-wire temperature, channel {n}"
+        )
+        for n in range(8)
+    },
+    ("telemetry:environment_metrics", "lightning_strike_count_1h"): (
+        "count", "Lightning strikes detected in the last hour"
+    ),
+    ("telemetry:environment_metrics", "lightning_distance_km"): (
+        "km", "Estimated distance to the leading edge of the storm"
+    ),
+    ("telemetry:air_quality_metrics", "pm_status_flags"): (
+        None, "Particulate sensor status bits, set by the SEN6X family (added in protocol 2.8)"
+    ),
+    # telemetry:soil_water_metrics, added in protocol 2.8
+    ("telemetry:soil_water_metrics", "soil_ph"): ("pH", "Soil pH, 0-14"),
+    ("telemetry:soil_water_metrics", "ph"): ("pH", "pH of water or another solution, 0-14"),
+    ("telemetry:soil_water_metrics", "electrical_conductivity"): ("mS/cm", "Electrical conductivity"),
+    ("telemetry:soil_water_metrics", "salinity"): ("mg/L", "Salinity"),
+    ("telemetry:soil_water_metrics", "nitrogen"): ("mg/kg", "Nitrogen concentration"),
+    ("telemetry:soil_water_metrics", "phosphorus"): ("mg/kg", "Phosphorus concentration"),
+    ("telemetry:soil_water_metrics", "potassium"): ("mg/kg", "Potassium concentration"),
+    ("telemetry:soil_water_metrics", "dissolved_oxygen"): ("mg/L", "Dissolved oxygen"),
+    ("telemetry:soil_water_metrics", "orp"): ("mV", "Oxidation-reduction potential (ORP)"),
+    ("telemetry:soil_water_metrics", "chemical_oxygen_demand"): ("mg/L", "Chemical oxygen demand"),
+    ("telemetry:soil_water_metrics", "turbidity"): ("NTU", "Turbidity"),
+    ("telemetry:soil_water_metrics", "nitrate"): ("ppm", "Nitrate concentration"),
+    ("telemetry:soil_water_metrics", "ammonium"): ("ppm", "Ammonium concentration"),
+    ("telemetry:soil_water_metrics", "biochemical_oxygen_demand"): ("mg/L", "Biochemical oxygen demand"),
+    ("telemetry:soil_water_metrics", "solar_irradiance"): (
+        "W/m2", "Solar irradiance (distinct from the radiation field's uR/h)"
+    ),
     # telemetry:power_metrics - 8 channel pairs
     **{
         ("telemetry:power_metrics", f"ch{n}_{quantity}"): (unit, f"{label} (Ch{n})")
@@ -150,6 +188,7 @@ MEASUREMENT_TYPE_SEED: dict[tuple[str, str], tuple[str | None, str]] = {
 # Index and scale values with no unit to derive the kind from.
 QUANTITY_KIND_WITHOUT_UNIT: dict[tuple[str, str], str] = {
     ("telemetry:environment_metrics", "iaq"): OTHER,
+    ("telemetry:air_quality_metrics", "pm_status_flags"): OTHER,
     ("telemetry:air_quality_metrics", "pm_temperature"): PHYSICAL_PROPERTY,
     ("telemetry:air_quality_metrics", "pm_humidity"): RATIO,
     ("telemetry:air_quality_metrics", "pm_voc_idx"): OTHER,

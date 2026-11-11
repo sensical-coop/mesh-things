@@ -1,14 +1,15 @@
 #!/usr/bin/env python3
 """Create a mesh on this instance's broker, after reading and accepting its terms.
 
-A mesh holds the channel name and key that your Meshtastic devices share. Read the
-terms first with --show-terms. Once the mesh exists, register its gateway with
+A mesh holds the channel name and key that your Meshtastic devices share, and the
+protocol version their firmware runs. Read the terms first with --show-terms. Once the mesh exists, register its gateway with
 registry_create_gateway.py so that its traffic can be decoded.
 """
 import argparse
 import os
 import sys
 
+from mesh_things import protocols
 from mesh_things.client import MeshThings, terms_fields
 
 API_URL = os.environ.get("MESH_THINGS_URL", "http://localhost")
@@ -20,6 +21,10 @@ def main():
     parser.add_argument("--channel-id", default="LongFast")
     parser.add_argument("--psk-b64", default="", help="base64 channel PSK; empty string for a plaintext-only mesh")
     parser.add_argument("--label", default=None)
+    parser.add_argument(
+        "--protocol", choices=sorted(protocols.VERSIONS), default=protocols.DEFAULT,
+        help="Meshtastic protocol version the devices run",
+    )
     parser.add_argument("--locale", choices=("en", "es"), default="en")
     parser.add_argument("--show-terms", action="store_true", help="print the mesh terms and exit")
     parser.add_argument("--accept-terms", action="store_true", help="accept every statement of the mesh terms")
@@ -43,9 +48,10 @@ def main():
         sys.exit("Please read the terms with --show-terms, then pass --accept-terms to create the mesh.")
 
     mesh = api.meshes.create(body={
-        "channel_id": args.channel_id, "psk_b64": args.psk_b64, "label": args.label, **terms_fields(terms),
+        "channel_id": args.channel_id, "psk_b64": args.psk_b64, "label": args.label, "protocol": args.protocol,
+        **terms_fields(terms),
     })
-    print(f"Registered mesh on channel {mesh['channel_id']!r}")
+    print(f"Registered mesh on channel {mesh['channel_id']!r}, protocol {mesh['protocol']}")
     print(f"  id={mesh['id']}  owner_id={mesh['owner_id']}")
     print("Export it to register a gateway against this mesh:")
     print(f"  export MESH_ID={mesh['id']}")

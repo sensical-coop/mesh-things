@@ -2,7 +2,7 @@
   "openapi": "3.0.3",
   "info": {
     "title": "Mesh Things API",
-    "version": "0.1.2"
+    "version": "0.7.0"
   },
   "paths": {
     "/algorithms": {
@@ -1425,7 +1425,7 @@
       },
       "post": {
         "operationId": "meshes_create",
-        "description": "Create a mesh owned by the caller.\n\nA mesh on the default broker needs its mesh terms accepted, which are\nrecorded with it. A mesh on a source is covered by the source's terms.\n\nArgs:\n    source_id: Source the mesh's traffic is bridged from, which must be\n        one the caller created, or any source for a superuser. Leave\n        unset for traffic on this instance's own broker.\n    discover_gateways: Register gateways automatically once one of their\n        packets decodes with this mesh's channel and pre-shared key.\n        Defaults to `false`. Only an operator may switch it on for a mesh\n        with a default or blank key.\n    terms_version: The `version` of the mesh terms accepted. Required\n        without a source, ignored with one, and ignored on an instance\n        that does not enforce terms.\n    terms_locale: Locale the terms were shown in, `en` or `es`. Defaults\n        to `en`.",
+        "description": "Create a mesh owned by the caller.\n\nA mesh on the default broker needs its mesh terms accepted, which are\nrecorded with it. A mesh on a source is covered by the source's terms.\n\nArgs:\n    source_id: Source the mesh's traffic is bridged from, which must be\n        one the caller created, or any source for a superuser. Leave\n        unset for traffic on this instance's own broker.\n    discover_gateways: Register gateways automatically once one of their\n        packets decodes with this mesh's channel and pre-shared key.\n        Defaults to `false`. Only an operator may switch it on for a mesh\n        with a default or blank key.\n    protocol: Meshtastic protocol version the mesh's devices run, which\n        its packets are decoded with. Defaults to `2.8`. A version past\n        its sunset is refused. Readings are stored in the same units\n        whatever the version.\n    terms_version: The `version` of the mesh terms accepted. Required\n        without a source, ignored with one, and ignored on an instance\n        that does not enforce terms.\n    terms_locale: Locale the terms were shown in, `en` or `es`. Defaults\n        to `en`.",
         "tags": [
           "meshes"
         ],
@@ -1512,7 +1512,7 @@
       },
       "put": {
         "operationId": "meshes_update",
-        "description": "Update a mesh.\n\nChanging the channel_id, the pre-shared key or the source redistributes\nthem to every allowed gateway on the mesh, and the whole update is\nrolled back if that fails. Once the source changes, the mesh's gateways\nare only accepted through the new one.\n\nArgs:\n    source_id: Source to bridge the mesh's traffic from, which must be one\n        the caller created, or any source for a superuser, and not paused.\n        Null moves it to the default broker. Moving a mesh off a source\n        schedules the readings stored until then for deletion after the\n        grace period; moving it back within that period cancels it.\n    discover_gateways: Register gateways automatically once one of their\n        packets decodes with this mesh's channel and pre-shared key. A\n        gateway is skipped when another mesh shares the same source,\n        channel and key, when it is registered elsewhere, or when it was\n        rejected on this mesh. Switching it off keeps the gateways\n        already found. Only an operator may switch it on for a mesh with\n        a default or blank key.\n    terms_version: The `version` of the mesh terms accepted. Required when\n        moving the mesh onto the default broker unless it already holds a\n        current acceptance, or the instance does not enforce terms;\n        ignored otherwise.\n    terms_locale: Locale the terms were shown in, `en` or `es`. Defaults\n        to `en`.",
+        "description": "Update a mesh.\n\nChanging the channel_id, the pre-shared key, the source or the protocol\nredistributes them to every allowed gateway on the mesh, and the whole\nupdate is rolled back if that fails. Once the source changes, the mesh's\ngateways are only accepted through the new one.\n\nArgs:\n    source_id: Source to bridge the mesh's traffic from, which must be one\n        the caller created, or any source for a superuser, and not paused.\n        Null moves it to the default broker. Moving a mesh off a source\n        schedules the readings stored until then for deletion after the\n        grace period; moving it back within that period cancels it.\n    discover_gateways: Register gateways automatically once one of their\n        packets decodes with this mesh's channel and pre-shared key. A\n        gateway is skipped when another mesh shares the same source,\n        channel and key, when it is registered elsewhere, or when it was\n        rejected on this mesh. Switching it off keeps the gateways\n        already found. Only an operator may switch it on for a mesh with\n        a default or blank key.\n    protocol: Meshtastic protocol version the mesh's devices run. Packets\n        received after the change are decoded with it; readings already\n        stored are left as they are. A version past its sunset is refused,\n        unless the mesh is already on it.\n    terms_version: The `version` of the mesh terms accepted. Required when\n        moving the mesh onto the default broker unless it already holds a\n        current acceptance, or the instance does not enforce terms;\n        ignored otherwise.\n    terms_locale: Locale the terms were shown in, `en` or `es`. Defaults\n        to `en`.",
         "parameters": [
           {
             "in": "path",
@@ -2395,7 +2395,7 @@
       },
       "put": {
         "operationId": "owners_me_update",
-        "description": "Update the authenticated owner's name, email address, or email preferences.\n\nChanging the email address deactivates the account until the new one\nis verified, and sends a fresh verification email.\n\nArgs:\n    alarm_email_cooldown_seconds: Length of a device's alarm window,\n        in seconds. The first alarm on a device is emailed straight\n        away; any further alarms on that device during the window are\n        sent as one summary when it ends. Accepts 0 (email on every\n        alarm, no summaries) up to 2592000 (30 days). Leave unset or\n        null to use the server default.\n    status_alerts_enabled: Email me when a source I created stays\n        disconnected or stops receiving messages, or a sink I created\n        with meshes or devices attached has nobody connected. Defaults\n        to false. Superusers are always emailed about silent sources.\n    source_rate_alerts_enabled: Email me when a source I created\n        averages more messages per second over an hour than this\n        instance allows. Defaults to false. Superusers are always\n        emailed about busy sources.",
+        "description": "Update the authenticated owner's name, email address, or email preferences.\n\nChanging the email address deactivates the account until the new one\nis verified, and sends a fresh verification email.\n\nArgs:\n    alarm_email_cooldown_seconds: Length of a device's alarm window,\n        in seconds. The first alarm on a device is emailed straight\n        away; any further alarms on that device during the window are\n        sent as one summary when it ends. Accepts 0 (email on every\n        alarm, no summaries) up to 2592000 (30 days). Leave unset or\n        null to use the server default.\n    status_alerts_enabled: Email me when a source I created stays\n        disconnected or stops receiving messages, a sink I created\n        with meshes or devices attached has nobody connected, or a\n        device on a mesh I own runs a newer protocol than the mesh\n        declares. Defaults to false. Superusers are always emailed\n        about silent sources.\n    source_rate_alerts_enabled: Email me when a source I created\n        averages more messages per second over an hour than this\n        instance allows. Defaults to false. Superusers are always\n        emailed about busy sources.",
         "tags": [
           "owners"
         ],
@@ -3376,6 +3376,39 @@
         }
       }
     },
+    "/protocols": {
+      "get": {
+        "operationId": "protocols_list",
+        "description": "Return the Meshtastic protocol versions a mesh can be declared on, oldest first.\n\nEach version carries its status and sunset date. A deprecated version is still\ndecoded, and owners of meshes on it are reminded to move. A version past its sunset\ncan no longer be chosen for a mesh, but meshes already on it keep decoding.\nReadings are stored in the same units and channel names whatever the version.",
+        "tags": [
+          "protocols"
+        ],
+        "security": [
+          {
+            "bearerAuth": []
+          },
+          {
+            "cookieAuth": []
+          },
+          {}
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "array",
+                  "items": {
+                    "$ref": "#/components/schemas/Protocol"
+                  }
+                }
+              }
+            },
+            "description": ""
+          }
+        }
+      }
+    },
     "/readings/archive/meshes/{mesh_id}": {
       "get": {
         "operationId": "readings_archive_meshes_retrieve",
@@ -3529,7 +3562,7 @@
     "/readings/devices/{device_uuid}": {
       "get": {
         "operationId": "readings_devices_retrieve",
-        "description": "Readings over a time range, addressed by the device's registration ID.\n\nEach point's bookkeeping fields, `packet_id` and `timestamp_quality`, are not\nreadings and are left out unless one is asked for with `channel`.\nDownsampling covers numeric fields only, so text fields are also left out\nwhenever `window` is set.",
+        "description": "Readings over a time range, addressed by the device's registration ID.\n\nEach point's bookkeeping fields, `packet_id`, `timestamp_quality`, `rx_time` and\n`received_at`, are not readings and are left out unless one is asked for with\n`channel`.\nDownsampling covers numeric fields only, so text fields are also left out\nwhenever `window` is set.",
         "parameters": [
           {
             "in": "query",
@@ -4002,7 +4035,7 @@
     "/readings/meshes/{mesh_id}/nodes/{node_id}": {
       "get": {
         "operationId": "readings_meshes_nodes_retrieve",
-        "description": "Return a device's readings for one measurement over a time range.\n\nEach point's bookkeeping fields, `packet_id` and `timestamp_quality`, are not\nreadings and are left out unless one is asked for with `channel`.\nDownsampling covers numeric fields only, so text fields are also left out\nwhenever `window` is set.\n\nArgs:\n    payload_kind: Family to read, for example `telemetry:environment_metrics`.\n        Returns every channel in it. Required unless `channel` is given.\n    channel: A single channel, for example `environment_metrics.temperature`.\n        Takes precedence over `payload_kind`.\n    start: Start of the range, as a relative duration such as `-24h`, a date\n        such as `2026-09-01`, or a timestamp such as `2026-09-01T13:45:00Z`.\n        Defaults to `-1h`.\n    stop: End of the range, in the same forms as `start`, or `now()`.\n        Defaults to `now()`.\n    window: Bucket size to downsample into, for example `6h`. Off by default.\n    agg: Aggregate applied to each bucket, one of `mean`, `max`, `min`,\n        `last`, `first`, `sum` or `count`. Defaults to `mean` and applies\n        only when `window` is set.",
+        "description": "Return a device's readings for one measurement over a time range.\n\nEach point's bookkeeping fields, `packet_id`, `timestamp_quality`, `rx_time` and\n`received_at`, are not readings and are left out unless one is asked for with\n`channel`.\nDownsampling covers numeric fields only, so text fields are also left out\nwhenever `window` is set.\n\nArgs:\n    payload_kind: Family to read, for example `telemetry:environment_metrics`.\n        Returns every channel in it. Required unless `channel` is given.\n    channel: A single channel, for example `environment_metrics.temperature`.\n        Takes precedence over `payload_kind`.\n    start: Start of the range, as a relative duration such as `-24h`, a date\n        such as `2026-09-01`, or a timestamp such as `2026-09-01T13:45:00Z`.\n        Defaults to `-1h`.\n    stop: End of the range, in the same forms as `start`, or `now()`.\n        Defaults to `now()`.\n    window: Bucket size to downsample into, for example `6h`. Off by default.\n    agg: Aggregate applied to each bucket, one of `mean`, `max`, `min`,\n        `last`, `first`, `sum` or `count`. Defaults to `mean` and applies\n        only when `window` is set.",
         "parameters": [
           {
             "in": "query",
@@ -6512,6 +6545,67 @@
             "readOnly": true,
             "nullable": true
           },
+          "protocol": {
+            "type": "string",
+            "readOnly": true,
+            "description": "Meshtastic protocol version the device's packets are decoded with: its mesh's."
+          },
+          "observed_protocol": {
+            "readOnly": true,
+            "nullable": true,
+            "description": "Oldest protocol version that decodes everything the device has sent, `unsupported` when no supported version does, or null while its mesh's version has always been enough.\n\n* `2.7` - 2.7\n* `2.8` - 2.8\n* `unsupported` - unsupported",
+            "oneOf": [
+              {
+                "$ref": "#/components/schemas/ObservedProtocolEnum"
+              },
+              {
+                "$ref": "#/components/schemas/NullEnum"
+              }
+            ]
+          },
+          "observed_protocol_at": {
+            "type": "string",
+            "format": "date-time",
+            "readOnly": true,
+            "nullable": true,
+            "description": "When the evidence for observed_protocol last arrived."
+          },
+          "firmware_version": {
+            "type": "string",
+            "readOnly": true,
+            "nullable": true,
+            "description": "Firmware version from the device's last map report. Only a device with its own MQTT uplink sends one, and only with map reporting enabled."
+          },
+          "firmware_protocol": {
+            "type": "string",
+            "readOnly": true,
+            "nullable": true,
+            "description": "Protocol version the reported firmware speaks, `unsupported` when it is newer than every supported version, or null while the device has sent no map report."
+          },
+          "firmware_seen_at": {
+            "type": "string",
+            "format": "date-time",
+            "readOnly": true,
+            "nullable": true,
+            "description": "When the last map report arrived."
+          },
+          "region": {
+            "type": "string",
+            "readOnly": true,
+            "nullable": true,
+            "description": "LoRa region from the device's last map report, for example `EU_868`."
+          },
+          "modem_preset": {
+            "type": "string",
+            "readOnly": true,
+            "nullable": true,
+            "description": "Modem preset from the device's last map report, for example `LONG_FAST`."
+          },
+          "protocol_mismatch": {
+            "type": "boolean",
+            "readOnly": true,
+            "description": "Readings from the device are lost or misread under its mesh's protocol version: it sends fields that version does not know, or its firmware speaks a version that reads some values differently."
+          },
           "telemetry_variant_ids": {
             "type": "array",
             "items": {
@@ -6536,6 +6630,9 @@
           "absence_detection_enabled",
           "created_at",
           "discovered_at",
+          "firmware_protocol",
+          "firmware_seen_at",
+          "firmware_version",
           "hardware_type",
           "is_allowed",
           "is_gateway",
@@ -6545,11 +6642,17 @@
           "location_overridden",
           "longitude",
           "mesh_id",
+          "modem_preset",
           "name",
           "node_id",
           "nodeinfo_overridden",
+          "observed_protocol",
+          "observed_protocol_at",
+          "protocol",
+          "protocol_mismatch",
           "publish_interval_seconds",
           "reading_interval_seconds",
+          "region",
           "role",
           "short_name",
           "telemetry_variant_ids",
@@ -7175,6 +7278,30 @@
             "type": "boolean",
             "description": "Register gateways whose packets decode with this mesh's channel and PSK automatically. Only an operator may switch it on for a mesh with a default or blank PSK."
           },
+          "protocol": {
+            "allOf": [
+              {
+                "$ref": "#/components/schemas/ProtocolEnum"
+              }
+            ],
+            "description": "Meshtastic protocol version the mesh's devices run. Its packets are decoded with that version, and readings are stored in the same units and channel names whatever the version. A version past its sunset cannot be chosen.\n\n* `2.7` - 2.7\n* `2.8` - 2.8"
+          },
+          "protocol_status": {
+            "allOf": [
+              {
+                "$ref": "#/components/schemas/ProtocolStatusEnum"
+              }
+            ],
+            "readOnly": true,
+            "description": "Where the mesh's protocol version stands: current, supported, deprecated or sunset.\n\n* `current` - current\n* `supported` - supported\n* `deprecated` - deprecated\n* `sunset` - sunset"
+          },
+          "protocol_sunset": {
+            "type": "string",
+            "format": "date",
+            "readOnly": true,
+            "nullable": true,
+            "description": "Date the mesh's protocol version stops being offered, or null when none is set."
+          },
           "created_at": {
             "type": "string",
             "format": "date-time",
@@ -7191,6 +7318,8 @@
           "created_at",
           "id",
           "owner_id",
+          "protocol_status",
+          "protocol_sunset",
           "updated_at"
         ]
       },
@@ -7322,6 +7451,30 @@
             "type": "boolean",
             "description": "Register gateways whose packets decode with this mesh's channel and PSK automatically. Only an operator may switch it on for a mesh with a default or blank PSK."
           },
+          "protocol": {
+            "allOf": [
+              {
+                "$ref": "#/components/schemas/ProtocolEnum"
+              }
+            ],
+            "description": "Meshtastic protocol version the mesh's devices run. Its packets are decoded with that version, and readings are stored in the same units and channel names whatever the version. A version past its sunset cannot be chosen.\n\n* `2.7` - 2.7\n* `2.8` - 2.8"
+          },
+          "protocol_status": {
+            "allOf": [
+              {
+                "$ref": "#/components/schemas/ProtocolStatusEnum"
+              }
+            ],
+            "readOnly": true,
+            "description": "Where the mesh's protocol version stands: current, supported, deprecated or sunset.\n\n* `current` - current\n* `supported` - supported\n* `deprecated` - deprecated\n* `sunset` - sunset"
+          },
+          "protocol_sunset": {
+            "type": "string",
+            "format": "date",
+            "readOnly": true,
+            "nullable": true,
+            "description": "Date the mesh's protocol version stops being offered, or null when none is set."
+          },
           "created_at": {
             "type": "string",
             "format": "date-time",
@@ -7339,6 +7492,8 @@
           "id",
           "owner_id",
           "paused_at",
+          "protocol_status",
+          "protocol_sunset",
           "psk_b64",
           "terms_accepted_version",
           "terms_expires_at",
@@ -7779,7 +7934,7 @@
       },
       "MeshUpdate": {
         "type": "object",
-        "description": "PUT /meshes/{id}: channel_id, psk_b64, label, is_public, source_id and discover_gateways are editable.\n\nchannel_id/psk_b64 are a pair configured together on the physical\ndevices, so both can change here the same way - the pipeline decrypts by\ngateway_id/psk_b64 alone, not by channel_id, so this is a metadata update.",
+        "description": "PUT /meshes/{id}: channel_id, psk_b64, label, is_public, source_id, discover_gateways and protocol are editable.\n\nchannel_id/psk_b64 are a pair configured together on the physical\ndevices, so both can change here the same way - the pipeline decrypts by\ngateway_id/psk_b64 alone, not by channel_id, so this is a metadata update.",
         "properties": {
           "channel_id": {
             "type": "string",
@@ -7807,6 +7962,14 @@
           "discover_gateways": {
             "type": "boolean",
             "description": "Register gateways whose packets decode with this mesh's channel and PSK automatically. Only an operator may switch it on for a mesh with a default or blank PSK."
+          },
+          "protocol": {
+            "allOf": [
+              {
+                "$ref": "#/components/schemas/ProtocolEnum"
+              }
+            ],
+            "description": "Meshtastic protocol version the mesh's devices run. Its packets are decoded with that version, and readings are stored in the same units and channel names whatever the version. A version past its sunset cannot be chosen.\n\n* `2.7` - 2.7\n* `2.8` - 2.8"
           },
           "terms_version": {
             "type": "string",
@@ -7923,6 +8086,15 @@
         "enum": [
           null
         ]
+      },
+      "ObservedProtocolEnum": {
+        "enum": [
+          "2.7",
+          "2.8",
+          "unsupported"
+        ],
+        "type": "string",
+        "description": "* `2.7` - 2.7\n* `2.8` - 2.8\n* `unsupported` - unsupported"
       },
       "OperatorRequest": {
         "type": "object",
@@ -8469,7 +8641,7 @@
           },
           "status_alerts_enabled": {
             "type": "boolean",
-            "description": "Email me when a source I created stays disconnected or stops receiving messages, or a sink I created with meshes or devices attached has nobody connected. Off by default. Superusers are always emailed about silent sources."
+            "description": "Email me when a source I created stays disconnected or stops receiving messages, a sink I created with meshes or devices attached has nobody connected, or a device on a mesh I own runs a newer protocol than the mesh declares. Off by default. Superusers are always emailed about silent sources."
           },
           "source_rate_alerts_enabled": {
             "type": "boolean",
@@ -8810,6 +8982,63 @@
           "key",
           "order"
         ]
+      },
+      "Protocol": {
+        "type": "object",
+        "description": "One Meshtastic protocol version this instance decodes.",
+        "properties": {
+          "version": {
+            "type": "string",
+            "description": "The value to give a mesh's protocol, for example `2.8`."
+          },
+          "status": {
+            "allOf": [
+              {
+                "$ref": "#/components/schemas/ProtocolStatusEnum"
+              }
+            ],
+            "description": "current: the newest version. supported: decoded with no end date. deprecated: still decoded, but owners are reminded to move. sunset: still decoded for meshes on it, but it can no longer be chosen.\n\n* `current` - current\n* `supported` - supported\n* `deprecated` - deprecated\n* `sunset` - sunset"
+          },
+          "sunset": {
+            "type": "string",
+            "format": "date",
+            "nullable": true,
+            "description": "Date from which the version can no longer be chosen, or null."
+          },
+          "source_ref": {
+            "type": "string",
+            "description": "The Meshtastic protobufs release the version is decoded with."
+          },
+          "is_default": {
+            "type": "boolean",
+            "description": "Whether a new mesh is declared on this version."
+          }
+        },
+        "required": [
+          "is_default",
+          "source_ref",
+          "status",
+          "sunset",
+          "version"
+        ]
+      },
+      "ProtocolEnum": {
+        "enum": [
+          "2.7",
+          "2.8"
+        ],
+        "type": "string",
+        "description": "* `2.7` - 2.7\n* `2.8` - 2.8"
+      },
+      "ProtocolStatusEnum": {
+        "enum": [
+          "current",
+          "supported",
+          "deprecated",
+          "sunset"
+        ],
+        "type": "string",
+        "description": "* `current` - current\n* `supported` - supported\n* `deprecated` - deprecated\n* `sunset` - sunset"
       },
       "QosEnum": {
         "enum": [

@@ -27,6 +27,8 @@ SCHEMA = pa.schema(
         ("packet_id", pa.int64()),
         ("portnum", pa.int64()),
         ("rx_time", pa.int64()),
+        # When the pipeline received the packet, in epoch milliseconds.
+        ("received_at", pa.int64()),
         ("hop_start", pa.int64()),
         ("channel_id", pa.string()),
         ("gateway_id", pa.int64()),
@@ -51,6 +53,7 @@ def _flatten(event: dict) -> dict:
         "packet_id": event.get("packet_id"),
         "portnum": event.get("portnum"),
         "rx_time": event.get("rx_time"),
+        "received_at": event.get("received_at"),
         "hop_start": event.get("hop_start"),
         "channel_id": event.get("channel_id"),
         "gateway_id": event.get("gateway_id"),

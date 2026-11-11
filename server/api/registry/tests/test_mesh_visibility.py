@@ -173,7 +173,7 @@ class ViewerSecretsTests(MeshVisibilityTestCase):
 class AnonymousViewerTests(MeshVisibilityTestCase):
     """A public mesh is readable without credentials, through the public fields only."""
 
-    PUBLIC_FIELDS = {"id", "channel_id", "label", "owner_id", "is_public", "created_at", "updated_at"}
+    PUBLIC_FIELDS = {"id", "channel_id", "label", "owner_id", "is_public", "protocol", "protocol_status", "protocol_sunset", "created_at", "updated_at"}
 
     def setUp(self):
         super().setUp()

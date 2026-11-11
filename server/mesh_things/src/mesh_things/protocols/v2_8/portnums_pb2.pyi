@@ -1,0 +1,90 @@
+from google.protobuf.internal import enum_type_wrapper as _enum_type_wrapper
+from google.protobuf import descriptor as _descriptor
+from typing import ClassVar as _ClassVar
+
+DESCRIPTOR: _descriptor.FileDescriptor
+
+class PortNum(int, metaclass=_enum_type_wrapper.EnumTypeWrapper):
+    __slots__ = ()
+    UNKNOWN_APP: _ClassVar[PortNum]
+    TEXT_MESSAGE_APP: _ClassVar[PortNum]
+    REMOTE_HARDWARE_APP: _ClassVar[PortNum]
+    POSITION_APP: _ClassVar[PortNum]
+    NODEINFO_APP: _ClassVar[PortNum]
+    ROUTING_APP: _ClassVar[PortNum]
+    ADMIN_APP: _ClassVar[PortNum]
+    TEXT_MESSAGE_COMPRESSED_APP: _ClassVar[PortNum]
+    WAYPOINT_APP: _ClassVar[PortNum]
+    AUDIO_APP: _ClassVar[PortNum]
+    DETECTION_SENSOR_APP: _ClassVar[PortNum]
+    ALERT_APP: _ClassVar[PortNum]
+    KEY_VERIFICATION_APP: _ClassVar[PortNum]
+    REMOTE_SHELL_APP: _ClassVar[PortNum]
+    REPLY_APP: _ClassVar[PortNum]
+    IP_TUNNEL_APP: _ClassVar[PortNum]
+    PAXCOUNTER_APP: _ClassVar[PortNum]
+    STORE_FORWARD_PLUSPLUS_APP: _ClassVar[PortNum]
+    NODE_STATUS_APP: _ClassVar[PortNum]
+    MESH_BEACON_APP: _ClassVar[PortNum]
+    PAGING_APP: _ClassVar[PortNum]
+    SERIAL_APP: _ClassVar[PortNum]
+    STORE_FORWARD_APP: _ClassVar[PortNum]
+    RANGE_TEST_APP: _ClassVar[PortNum]
+    TELEMETRY_APP: _ClassVar[PortNum]
+    ZPS_APP: _ClassVar[PortNum]
+    SIMULATOR_APP: _ClassVar[PortNum]
+    TRACEROUTE_APP: _ClassVar[PortNum]
+    NEIGHBORINFO_APP: _ClassVar[PortNum]
+    ATAK_PLUGIN: _ClassVar[PortNum]
+    MAP_REPORT_APP: _ClassVar[PortNum]
+    POWERSTRESS_APP: _ClassVar[PortNum]
+    LORAWAN_BRIDGE: _ClassVar[PortNum]
+    RETICULUM_TUNNEL_APP: _ClassVar[PortNum]
+    CAYENNE_APP: _ClassVar[PortNum]
+    ATAK_PLUGIN_V2: _ClassVar[PortNum]
+    LORA_OTA_APP: _ClassVar[PortNum]
+    GROUPALARM_APP: _ClassVar[PortNum]
+    PRIVATE_APP: _ClassVar[PortNum]
+    ATAK_FORWARDER: _ClassVar[PortNum]
+    MAX: _ClassVar[PortNum]
+UNKNOWN_APP: PortNum
+TEXT_MESSAGE_APP: PortNum
+REMOTE_HARDWARE_APP: PortNum
+POSITION_APP: PortNum
+NODEINFO_APP: PortNum
+ROUTING_APP: PortNum
+ADMIN_APP: PortNum
+TEXT_MESSAGE_COMPRESSED_APP: PortNum
+WAYPOINT_APP: PortNum
+AUDIO_APP: PortNum
+DETECTION_SENSOR_APP: PortNum
+ALERT_APP: PortNum
+KEY_VERIFICATION_APP: PortNum
+REMOTE_SHELL_APP: PortNum
+REPLY_APP: PortNum
+IP_TUNNEL_APP: PortNum
+PAXCOUNTER_APP: PortNum
+STORE_FORWARD_PLUSPLUS_APP: PortNum
+NODE_STATUS_APP: PortNum
+MESH_BEACON_APP: PortNum
+PAGING_APP: PortNum
+SERIAL_APP: PortNum
+STORE_FORWARD_APP: PortNum
+RANGE_TEST_APP: PortNum
+TELEMETRY_APP: PortNum
+ZPS_APP: PortNum
+SIMULATOR_APP: PortNum
+TRACEROUTE_APP: PortNum
+NEIGHBORINFO_APP: PortNum
+ATAK_PLUGIN: PortNum
+MAP_REPORT_APP: PortNum
+POWERSTRESS_APP: PortNum
+LORAWAN_BRIDGE: PortNum
+RETICULUM_TUNNEL_APP: PortNum
+CAYENNE_APP: PortNum
+ATAK_PLUGIN_V2: PortNum
+LORA_OTA_APP: PortNum
+GROUPALARM_APP: PortNum
+PRIVATE_APP: PortNum
+ATAK_FORWARDER: PortNum
+MAX: PortNum

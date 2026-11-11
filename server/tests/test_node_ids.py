@@ -1,7 +1,6 @@
 """Node ids tests"""
-from meshtastic.protobuf import mesh_pb2, mqtt_pb2, telemetry_pb2
-
 from mesh_things import codec, node_ids
+from mesh_things.protocols.v2_7 import mesh_pb2, mqtt_pb2, telemetry_pb2
 from writer.point_builders import get_points
 
 

@@ -7,16 +7,9 @@ import json
 import structlog
 from kafka import KafkaConsumer, TopicPartition
 
+from common.decode import gateway_entry
+
 log = structlog.get_logger()
-
-
-def gateway_entry(event: dict) -> dict:
-    """The state kept per gateway from one upsert on mesh.keys.v1."""
-    return {
-        "psk_b64": event.get("psk_b64", ""),
-        "mesh_id": event.get("mesh_id"),
-        "source_id": event.get("source_id"),
-    }
 
 
 def apply_config_event(gateway_state: dict, rejected_nodes: set, is_rejection: bool, value: bytes) -> None:

@@ -1,5 +1,6 @@
 """Tell operators who opted in when a source stays disconnected or a sink has nobody connected,
-and superusers when a source is unusually busy or has gone silent.
+owners who opted in when a mesh's devices run a newer protocol than it declares, and
+superusers when a source is unusually busy or has gone silent.
 
 Each lifecycle pass reads EMQX's view and keeps, in the cache, when a problem was first
 seen. The operator is emailed once per outage, after it lasts the configured hours, and
@@ -11,18 +12,19 @@ from datetime import datetime, timedelta
 import structlog
 from django.conf import settings
 from django.core.cache import cache
-from django.db.models import Exists, OuterRef
+from django.db.models import Exists, OuterRef, Q
 
 from mesh_things.env import env_str
 
 from .emailing import (
+    send_protocol_mismatch_email,
     send_sink_unused_email,
     send_source_busy_email,
     send_source_disconnected_email,
     send_source_silent_email,
 )
 from .emqx_client import get_emqx_client
-from .models import DeviceSink, MeshSink, Sink, Source
+from .models import Device, DeviceSink, Mesh, MeshSink, Sink, Source
 
 log = structlog.get_logger()
 
@@ -193,5 +195,25 @@ def check_sinks(now: datetime) -> int:
         since = _outage_due("sink", sink.id, unused, now, settings.SINK_ALERT_HOURS)
         if since and _alerted("sink", sink.id, send_sink_unused_email, sink, since):
             log.warning("sink_unused", sink_id=str(sink.id), since=since.isoformat())
+            sent += 1
+    return sent
+
+
+def check_protocol_mismatches(now: datetime) -> int:
+    """Email a mesh's owner, if opted in, once while readings from any allowed device are lost or misread."""
+    observed = Device.objects.filter(
+        Q(observed_protocol__isnull=False) | Q(firmware_version__isnull=False), is_allowed=True
+    ).select_related("mesh")
+    mismatched: dict = {}
+    for device in observed:
+        if device.protocol_mismatch:
+            mismatched.setdefault(device.mesh_id, []).append(device)
+    sent = 0
+    for mesh in Mesh.objects.filter(owner__status_alerts_enabled=True).select_related("owner"):
+        devices = mismatched.get(mesh.id, [])
+        if _outage_due("mesh-protocol", mesh.id, bool(devices), now, 0) and _alerted(
+            "mesh-protocol", mesh.id, send_protocol_mismatch_email, mesh, devices
+        ):
+            log.warning("protocol_mismatch", mesh_id=str(mesh.id), devices=[d.device_id for d in devices])
             sent += 1
     return sent

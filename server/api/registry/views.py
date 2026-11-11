@@ -41,7 +41,7 @@ from .emqx_client import get_emqx_client
 from .exceptions import BadGateway, Conflict
 from .gateways import save_gateway
 from .kafka_publisher import get_publisher, publish_gateway_state
-from mesh_things import node_ids
+from mesh_things import node_ids, protocols
 from mesh_things.detectors import DETECTOR_SPECS
 from mesh_things.env import env_str
 
@@ -139,6 +139,7 @@ from .serializers import (
     DeviceMeasurementUpdateSerializer,
     DetectorSerializer,
     DeviceTelemetryVariantSerializer,
+    ProtocolSerializer,
     catalog_defaults_for,
     TelemetryVariantMeasurementReadSerializer,
     TelemetryVariantMeasurementUpdateSerializer,
@@ -232,6 +233,32 @@ class MetricsView(APIView):
             "active_gateways": Device.objects.filter(is_gateway=True, is_allowed=True).count(),
         }
         return Response(MetricsResponseSerializer(body).data)
+
+
+class ProtocolListView(APIView):
+    """Return the Meshtastic protocol versions a mesh can be declared on, oldest first.
+
+    Each version carries its status and sunset date. A deprecated version is still
+    decoded, and owners of meshes on it are reminded to move. A version past its sunset
+    can no longer be chosen for a mesh, but meshes already on it keep decoding.
+    Readings are stored in the same units and channel names whatever the version.
+    """
+
+    permission_classes = [AllowAny]
+
+    @extend_schema(responses=ProtocolSerializer(many=True))
+    def get(self, request):
+        body = [
+            {
+                "version": p.version,
+                "status": protocols.status(p.version),
+                "sunset": p.sunset,
+                "source_ref": p.source_ref,
+                "is_default": p.version == protocols.DEFAULT,
+            }
+            for p in protocols.PROTOCOLS.values()
+        ]
+        return Response(ProtocolSerializer(body, many=True).data)
 
 
 class EmailStatusView(APIView):
@@ -803,9 +830,11 @@ class OwnerMeView(APIView):
                 alarm, no summaries) up to 2592000 (30 days). Leave unset or
                 null to use the server default.
             status_alerts_enabled: Email me when a source I created stays
-                disconnected or stops receiving messages, or a sink I created
-                with meshes or devices attached has nobody connected. Defaults
-                to false. Superusers are always emailed about silent sources.
+                disconnected or stops receiving messages, a sink I created
+                with meshes or devices attached has nobody connected, or a
+                device on a mesh I own runs a newer protocol than the mesh
+                declares. Defaults to false. Superusers are always emailed
+                about silent sources.
             source_rate_alerts_enabled: Email me when a source I created
                 averages more messages per second over an hour than this
                 instance allows. Defaults to false. Superusers are always
@@ -986,6 +1015,10 @@ class MeshListCreateView(APIView):
                 packets decodes with this mesh's channel and pre-shared key.
                 Defaults to `false`. Only an operator may switch it on for a mesh
                 with a default or blank key.
+            protocol: Meshtastic protocol version the mesh's devices run, which
+                its packets are decoded with. Defaults to `2.8`. A version past
+                its sunset is refused. Readings are stored in the same units
+                whatever the version.
             terms_version: The `version` of the mesh terms accepted. Required
                 without a source, ignored with one, and ignored on an instance
                 that does not enforce terms.
@@ -1049,10 +1082,10 @@ class MeshDetailView(APIView):
     def put(self, request, mesh_id):
         """Update a mesh.
 
-        Changing the channel_id, the pre-shared key or the source redistributes
-        them to every allowed gateway on the mesh, and the whole update is
-        rolled back if that fails. Once the source changes, the mesh's gateways
-        are only accepted through the new one.
+        Changing the channel_id, the pre-shared key, the source or the protocol
+        redistributes them to every allowed gateway on the mesh, and the whole
+        update is rolled back if that fails. Once the source changes, the mesh's
+        gateways are only accepted through the new one.
 
         Args:
             source_id: Source to bridge the mesh's traffic from, which must be one
@@ -1067,6 +1100,10 @@ class MeshDetailView(APIView):
                 rejected on this mesh. Switching it off keeps the gateways
                 already found. Only an operator may switch it on for a mesh with
                 a default or blank key.
+            protocol: Meshtastic protocol version the mesh's devices run. Packets
+                received after the change are decoded with it; readings already
+                stored are left as they are. A version past its sunset is refused,
+                unless the mesh is already on it.
             terms_version: The `version` of the mesh terms accepted. Required when
                 moving the mesh onto the default broker unless it already holds a
                 current acceptance, or the instance does not enforce terms;
@@ -1076,9 +1113,14 @@ class MeshDetailView(APIView):
         """
         mesh = _get_mesh_or_404(mesh_id)
         _require_mesh_ownership(mesh, request.user)
-        redistributed = ("channel_id", "psk_b64", "source_id")
+        redistributed = ("channel_id", "psk_b64", "source_id", "protocol")
         changing_gateway_state = any(field in request.data for field in redistributed)
-        previous = {"channel_id": mesh.channel_id, "psk_b64": mesh.psk_b64, "source_id": mesh.source_id}
+        previous = {
+            "channel_id": mesh.channel_id,
+            "psk_b64": mesh.psk_b64,
+            "source_id": mesh.source_id,
+            "protocol": mesh.protocol,
+        }
         serializer = MeshUpdateSerializer(mesh, data=request.data, partial=True, context={"owner": request.user})
         serializer.is_valid(raise_exception=True)
         updated = serializer.save()

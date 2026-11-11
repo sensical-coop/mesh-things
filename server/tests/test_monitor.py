@@ -60,7 +60,7 @@ def test_probe_topic_ends_in_the_gateway_and_sits_under_the_bridge_filter():
 
 
 def test_encrypt_packet_is_the_inverse_of_decrypt_packet():
-    from meshtastic.protobuf import mesh_pb2
+    from mesh_things.protocols.v2_7 import mesh_pb2
 
     data = mesh_pb2.Data(portnum=67, payload=b"hello")
     packet = mesh_pb2.MeshPacket(id=7)

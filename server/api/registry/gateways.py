@@ -38,7 +38,7 @@ def _matching_mesh(source_id: str | None, channel_id: str, raw: bytes) -> Mesh |
     matches = [
         mesh
         for mesh in Mesh.objects.filter(source_id=source_id, channel_id=channel_id)
-        if codec.decodes_with(raw, mesh.psk_b64)
+        if codec.decodes_with(raw, mesh.psk_b64, mesh.protocol)
     ]
     if len(matches) > 1:
         log.info("Gateway discovery skipped an ambiguous match", meshes=[str(m.id) for m in matches])

@@ -8,6 +8,7 @@ from mesh_things.channels import (
     DERIVED,
     DERIVED_KIND,
     DEVICE,
+    METADATA_FIELDS,
     NODEINFO,
     NODEINFO_KIND,
     POSITION,
@@ -15,7 +16,7 @@ from mesh_things.channels import (
     TELEMETRY,
     measurement_of,
 )
-from mesh_things.timestamps import resolve_timestamp
+from mesh_things.timestamps import MIN_FEASIBLE_TIME, resolve_timestamp
 
 log = structlog.get_logger()
 
@@ -40,15 +41,19 @@ def _base_point_dict(event: dict, measurement: str) -> dict:
         tags["channel_id"] = event["channel_id"]
     if event.get("gateway_id"):
         tags["gateway_id"] = event["gateway_id"]
-    return {
-        "measurement": measurement,
-        "tags": tags,
-        "fields": {
-            "packet_id": event["packet_id"],
-            "timestamp_quality": quality,
-        },
-        "time": _convert_date(timestamp),
-    }
+    if event.get("protocol"):
+        # The values are canonical whatever the version; this says which one they were decoded from.
+        tags["protocol"] = event["protocol"]
+    fields = {"packet_id": event["packet_id"], "timestamp_quality": quality}
+    if (event.get("rx_time") or 0) > MIN_FEASIBLE_TIME:
+        fields["rx_time"] = event["rx_time"]
+    if event.get("received_at"):
+        fields["received_at"] = event["received_at"] // 1000
+    return {"measurement": measurement, "tags": tags, "fields": fields, "time": _convert_date(timestamp)}
+
+
+def _has_readings(point_dict: dict) -> bool:
+    return any(field not in METADATA_FIELDS for field in point_dict["fields"])
 
 
 def build_telemetry_points(event: dict) -> list[Point]:
@@ -82,7 +87,7 @@ def build_position_points(event: dict) -> list[Point]:
             point_dict["fields"]["altitude"] = float(payload["altitude"])
         except (TypeError, ValueError):
             pass
-    if len(point_dict["fields"]) <= 2:  # nothing beyond packet_id/timestamp_quality
+    if not _has_readings(point_dict):
         return []
     return [Point.from_dict(point_dict)]
 
@@ -106,7 +111,7 @@ def build_generic_points(event: dict) -> list[Point]:
     for key, value in payload.items():
         if isinstance(value, bool) or isinstance(value, (int, float)):
             point_dict["fields"][key] = value
-    if len(point_dict["fields"]) <= 2:  # nothing beyond packet_id/timestamp_quality
+    if not _has_readings(point_dict):
         return []
     return [Point.from_dict(point_dict)]
 
