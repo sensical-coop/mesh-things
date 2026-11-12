@@ -2,7 +2,7 @@
 
 This agreement is adapted from the Apache Software Foundation's Individual Contributor License Agreement, version 2.2.
 
-Thank you for your interest in Mesh Things, a project of Sensical ("Sensical"). To make the intellectual property rights in contributions clear, Sensical must have a Contributor License Agreement ("Agreement") from each Contributor, indicating agreement to the license terms below. This license is for your protection as a Contributor as well as the protection of Sensical and its users. It does not change your rights to use your own Contributions for any other purpose.
+Thank you for your interest in Mesh Things, a project of Sensical SCCL ("Sensical"). To make the intellectual property rights in contributions clear, Sensical must have a Contributor License Agreement ("Agreement") from each Contributor, indicating agreement to the license terms below. This license is for your protection as a Contributor as well as the protection of Sensical and its users. It does not change your rights to use your own Contributions for any other purpose.
 
 You sign this Agreement by commenting on a pull request, as the CLA check asks you to. By doing so, you accept and agree to the following terms and conditions for Your present and future Contributions submitted to Sensical. Except for the license granted herein to Sensical and recipients of software distributed by Sensical, You reserve all right, title, and interest in and to Your Contributions.
 
