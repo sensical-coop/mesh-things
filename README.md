@@ -40,6 +40,12 @@ docker compose --profile full --profile minio up -d     # full, with the archive
 
 ## Work in progress
 
-This repository is still a work in progress. Documentation and licensing are ongoing.
+This repository is still a work in progress. Documentation is ongoing.
 
 Feel free to open issues or PRs. Contact us at info@sensical.es for more information.
+
+## Licence
+
+Mesh Things is licensed under the [GNU Affero General Public License v3.0](LICENSE). If you run a modified version as a service, you must offer its source code to the people who use it.
+
+Mesh Things is also available under a commercial licence, for use that cannot meet the AGPL's terms. Contact us at info@sensical.es.
