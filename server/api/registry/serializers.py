@@ -1657,3 +1657,11 @@ class ProtocolSerializer(serializers.Serializer):
     source_ref = serializers.CharField(help_text="The Meshtastic protobufs release the version is decoded with.")
     is_default = serializers.BooleanField(help_text="Whether a new mesh is declared on this version.")
 
+
+
+class GatewayBrokerSerializer(serializers.Serializer):
+    host = serializers.CharField(help_text="Broker host name, for the gateway's MQTT server address.")
+    port = serializers.IntegerField(help_text="Broker port.")
+    tls = serializers.BooleanField(help_text="Whether the gateway must connect with TLS.")
+    username = serializers.CharField(help_text="Login shared by every gateway.")
+    password = serializers.CharField(help_text="Password of the shared login.")

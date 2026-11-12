@@ -527,6 +527,15 @@ class Owners:
     def me_devices_get(self) -> Any:
         """List the devices the authenticated owner may access."""
 
+    def me_gateway_broker_get(self) -> Any:
+        """Return the MQTT broker and login a gateway uses to send its mesh's traffic here.
+
+        Every gateway shares the same login, which may only publish Meshtastic
+        traffic. A gateway's packets are stored once it is registered on a mesh,
+        by its owner or by gateway discovery. Answers `404` when this instance has
+        no broker for gateways, in which case its administrator provides one.
+        """
+
     def me_get(self) -> Any:
         """Return the authenticated owner's own record, including their devices."""
 
@@ -1687,6 +1696,15 @@ class AsyncOwners:
 
     async def me_devices_get(self) -> Any:
         """List the devices the authenticated owner may access."""
+
+    async def me_gateway_broker_get(self) -> Any:
+        """Return the MQTT broker and login a gateway uses to send its mesh's traffic here.
+
+        Every gateway shares the same login, which may only publish Meshtastic
+        traffic. A gateway's packets are stored once it is registered on a mesh,
+        by its owner or by gateway discovery. Answers `404` when this instance has
+        no broker for gateways, in which case its administrator provides one.
+        """
 
     async def me_get(self) -> Any:
         """Return the authenticated owner's own record, including their devices."""

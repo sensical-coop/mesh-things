@@ -90,6 +90,7 @@ from .serializers import (
     DevicePostprocessingWriteSerializer,
     DeviceReadSerializer,
     DeviceUpdateSerializer,
+    GatewayBrokerSerializer,
     OwnerDevicesSerializer,
     OwnerProfileSerializer,
     MeasurementTypeCreateSerializer,
@@ -430,6 +431,33 @@ class OwnerResendVerificationView(APIView):
             log.warning("verification_email_send_failed", owner_id=str(owner.id), error=str(e))
             raise BadGateway("Failed to send verification email, try again shortly")
         return Response({"detail": "Verification email sent"})
+
+
+class OwnerGatewayBrokerView(APIView):
+    permission_classes = [IsVerifiedOwner]
+
+    @extend_schema(responses={200: GatewayBrokerSerializer, 404: OpenApiResponse(description="No broker for gateways.")})
+    def get(self, request):
+        """Return the MQTT broker and login a gateway uses to send its mesh's traffic here.
+
+        Every gateway shares the same login, which may only publish Meshtastic
+        traffic. A gateway's packets are stored once it is registered on a mesh,
+        by its owner or by gateway discovery. Answers `404` when this instance has
+        no broker for gateways, in which case its administrator provides one.
+        """
+        if not (settings.GATEWAY_BROKER_HOST and settings.GATEWAY_BROKER_USERNAME):
+            raise NotFound("This instance has no broker for gateways")
+        return Response(
+            GatewayBrokerSerializer(
+                {
+                    "host": settings.GATEWAY_BROKER_HOST,
+                    "port": settings.GATEWAY_BROKER_PORT,
+                    "tls": settings.GATEWAY_BROKER_TLS,
+                    "username": settings.GATEWAY_BROKER_USERNAME,
+                    "password": settings.GATEWAY_BROKER_PASSWORD,
+                }
+            ).data
+        )
 
 
 class OwnerOperatorRequestView(APIView):
