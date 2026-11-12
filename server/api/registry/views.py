@@ -445,7 +445,7 @@ class OwnerGatewayBrokerView(APIView):
         by its owner or by gateway discovery. Answers `404` when this instance has
         no broker for gateways, in which case its administrator provides one.
         """
-        if not settings.GATEWAY_BROKER_HOST:
+        if not (settings.GATEWAY_BROKER_HOST and settings.GATEWAY_BROKER_USERNAME):
             raise NotFound("This instance has no broker for gateways")
         return Response(
             GatewayBrokerSerializer(

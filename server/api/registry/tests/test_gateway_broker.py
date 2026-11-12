@@ -42,8 +42,8 @@ class GatewayBrokerTests(RegistryTestCase):
         self.assertIn(resp.status_code, (401, 403))
         self.assertNotIn("shared-secret", resp.content.decode())
 
-    @override_settings(GATEWAY_BROKER_HOST="")
-    def test_an_instance_without_a_broker_answers_not_found(self):
+    @override_settings(GATEWAY_BROKER_USERNAME="")
+    def test_an_instance_without_a_gateway_login_answers_not_found(self):
         resp = self.client.get("/owners/me/gateway-broker", **self.auth_headers(self.owner))
 
         self.assertEqual(resp.status_code, 404)
