@@ -218,33 +218,112 @@ class EmqxSinkTests(SimpleTestCase):
         )
         self.assertEqual(self.calls[1][0:2], ("GET", f"/clients?like_username={SINK_USER}&limit=10000"))
 
+    def _broker_rules(self, **lists):
+        """Serve rule lists from a fake broker that keeps whatever is written to them."""
+        stored = {AUTHZ_ALL: list(lists.get("everyone", [])), f"{AUTHZ_USERS}/dispatcher": list(lists.get("dispatcher", []))}
+        self.responses[("GET", "/authorization/sources")] = _response(
+            body={"sources": [{"type": "built_in_database", "enable": True}, {"type": "file", "enable": True}]}
+        )
+        request = self.client._http.request
+
+        def rules(method, url, json=None):
+            path = url.removeprefix("https://emqx.example.org:18084/api/v5")
+            if path in stored and method == "GET":
+                self.calls.append((method, path, json))
+                return _response(body={"rules": list(stored[path])})
+            if path in stored:
+                self.calls.append((method, path, json))
+                stored[path] = list(json["rules"])
+                return _response()
+            return request(method, url, json)
+
+        self.client._http.request = rules
+        return stored
+
     def test_the_namespace_rules_are_added_to_shared_ones_once(self):
         dev_publish = {"topic": "mt-sources-dev-sinks/#", "permission": "allow", "action": "publish"}
         dev_deny = {"topic": "mt-sources-dev-sinks/#", "permission": "deny", "action": "all"}
-        self.responses[("GET", f"{AUTHZ_USERS}/dispatcher")] = _response(body={"rules": [dev_publish]})
-        self.responses[("GET", AUTHZ_ALL)] = _response(body={"rules": [dev_deny]})
+        stored = self._broker_rules(everyone=[dev_deny], dispatcher=[dev_publish])
 
         self.client.apply_sink_namespace()
 
         publish = {"topic": "mt-sources-sinks/#", "permission": "allow", "action": "publish"}
         deny = {"topic": "mt-sources-sinks/#", "permission": "deny", "action": "all"}
-        self.assertIn(("PUT", f"{AUTHZ_USERS}/dispatcher", {"username": "dispatcher", "rules": [dev_publish, publish]}), self.calls)
-        self.assertIn(("POST", AUTHZ_ALL, {"rules": [dev_deny, deny]}), self.calls)
+        self.assertEqual(stored[f"{AUTHZ_USERS}/dispatcher"], [dev_publish, publish])
+        self.assertEqual(stored[AUTHZ_ALL], [dev_deny, deny])
 
         self.calls.clear()
-        self.responses[("GET", f"{AUTHZ_USERS}/dispatcher")] = _response(body={"rules": [dev_publish, publish]})
-        self.responses[("GET", AUTHZ_ALL)] = _response(body={"rules": [dev_deny, deny]})
         self.client.apply_sink_namespace()
         self.assertEqual([m for m, _, _ in self.calls], ["GET", "GET"])
+
+    def test_a_rule_that_leaves_sink_topics_open_does_not_count(self):
+        narrower = [
+            {"topic": "mt-sources-sinks/#", "permission": "deny", "action": "subscribe"},
+            {"topic": "mt-sources-sinks/#", "permission": "deny", "action": "all", "qos": [1, 2]},
+            {"topic": "mt-sources-sinks/#", "permission": "deny", "action": "all", "retain": "true"},
+        ]
+        stored = self._broker_rules(everyone=narrower)
+
+        self.client.apply_sink_namespace()
+
+        self.assertEqual(stored[AUTHZ_ALL][-1], {"topic": "mt-sources-sinks/#", "permission": "deny", "action": "all"})
+
+    def test_a_rule_another_writer_drops_is_written_again(self):
+        stored = self._broker_rules()
+        request = self.client._http.request
+        dropped = []
+
+        def concurrent(method, url, json=None):
+            resp = request(method, url, json)
+            if method == "POST" and not dropped:
+                # Another writer read the list before this write and posts it back.
+                dropped.append(True)
+                stored[AUTHZ_ALL] = []
+            return resp
+
+        self.client._http.request = concurrent
+        self.client.apply_sink_namespace()
+
+        self.assertEqual(stored[AUTHZ_ALL], [{"topic": "mt-sources-sinks/#", "permission": "deny", "action": "all"}])
+        self.assertEqual([m for m, p, _ in self.calls if p == AUTHZ_ALL].count("POST"), 2)
+
+    def test_the_last_write_is_read_back_before_giving_up(self):
+        stored = self._broker_rules()
+        request = self.client._http.request
+        posts = []
+
+        def keeps_only_the_last(method, url, json=None):
+            resp = request(method, url, json)
+            if method == "POST" and url.endswith(AUTHZ_ALL):
+                posts.append(True)
+                if len(posts) < 3:
+                    stored[AUTHZ_ALL] = []
+            return resp
+
+        self.client._http.request = keeps_only_the_last
+        self.client.apply_sink_namespace()
+
+        self.assertEqual(len(posts), 3)
+        self.assertEqual(stored[AUTHZ_ALL], [{"topic": "mt-sources-sinks/#", "permission": "deny", "action": "all"}])
+
+    def test_a_rule_that_never_stays_is_an_error(self):
+        self._broker_rules()
+        request = self.client._http.request
+        self.client._http.request = lambda method, url, json=None: (
+            _response(body={"rules": []}) if url.endswith(AUTHZ_ALL) else request(method, url, json)
+        )
+
+        with self.assertRaises(RuntimeError):
+            self.client.apply_sink_namespace()
 
     def test_authorization_is_a_problem_unless_the_database_is_first(self):
         file_first = {"sources": [{"type": "file", "enable": True}, {"type": "built_in_database", "enable": True}]}
         db_first = {"sources": [{"type": "built_in_database", "enable": True}, {"type": "file", "enable": True}]}
 
         self.responses[("GET", "/authorization/sources")] = _response(body=file_first)
-        self.assertIn("not first", self.client.sink_authorization_problem())
+        self.assertIn("not first", self.client.authorization_problem())
         self.responses[("GET", "/authorization/sources")] = _response(body=db_first)
-        self.assertIsNone(self.client.sink_authorization_problem())
+        self.assertIsNone(self.client.authorization_problem())
 
     def test_installing_creates_the_database_and_moves_it_first(self):
         self.responses[("GET", "/authorization/sources")] = _response(body={"sources": [{"type": "file"}]})

@@ -25,6 +25,8 @@ AUTHZ_DB = f"{AUTHZ_SOURCES}/built_in_database"
 AUTHZ_USERS = f"{AUTHZ_DB}/rules/users"
 AUTHZ_ALL = f"{AUTHZ_DB}/rules/all"
 LIST_LIMIT = 10000
+# Writes of a shared rule list, read back each time, before giving up on a concurrent writer.
+RULE_WRITE_ATTEMPTS = 3
 
 # One connection per source. With a pool or an EMQX cluster the remote filter would
 # need a $share group, or every member would receive every message.
@@ -243,6 +245,28 @@ class EmqxClient:
         resp.raise_for_status()
         return resp.json().get("rules", [])
 
+    def _ensure_rule(self, read, write, rule: dict, actions: tuple[str, ...]) -> None:
+        """Add `rule` to a shared rule list unless one there already covers it.
+
+        EMQX replaces a whole list on every write and offers no conditional write, so a
+        concurrent writer (another registry process, or another stack on the same
+        broker) can drop the rule just added. It is read back and written again until it
+        stays. A writer that posts a stale list after that read can still drop it; the
+        next sink creation or `sync_sinks` puts it back.
+        """
+        for attempt in range(RULE_WRITE_ATTEMPTS + 1):
+            rules = read()
+            if any(_covers(existing, rule, actions) for existing in rules):
+                return
+            if attempt == RULE_WRITE_ATTEMPTS:
+                break
+            write([*rules, rule])
+        raise RuntimeError(f"EMQX did not keep the {rule['permission']} rule on {rule['topic']}")
+
+    def _write_all_rules(self, rules: list[dict]) -> None:
+        resp = self._request("POST", AUTHZ_ALL, json={"rules": rules})
+        resp.raise_for_status()
+
     def apply_sink_namespace(self) -> None:
         """Let the dispatcher publish sink topics and stop every other client using them.
 
@@ -252,16 +276,22 @@ class EmqxClient:
         """
         root = f"{sinks.topic_root()}/#"
         username = sinks.dispatcher_username()
-        rules = self._get_rules(f"{AUTHZ_USERS}/{quote(username, safe='')}")
-        if not any(rule.get("topic") == root and rule.get("permission") == "allow" for rule in rules):
-            self._put_user_rules(username, [*rules, {"topic": root, "permission": "allow", "action": "publish"}])
-        rules = self._get_rules(AUTHZ_ALL)
-        if not any(rule.get("topic") == root and rule.get("permission") == "deny" for rule in rules):
-            resp = self._request("POST", AUTHZ_ALL, json={"rules": [*rules, {"topic": root, "permission": "deny", "action": "all"}]})
-            resp.raise_for_status()
+        user_path = f"{AUTHZ_USERS}/{quote(username, safe='')}"
+        self._ensure_rule(
+            lambda: self._get_rules(user_path),
+            lambda rules: self._put_user_rules(username, rules),
+            {"topic": root, "permission": "allow", "action": "publish"},
+            ("publish", "all"),
+        )
+        self._ensure_rule(
+            lambda: self._get_rules(AUTHZ_ALL),
+            self._write_all_rules,
+            {"topic": root, "permission": "deny", "action": "all"},
+            ("all",),
+        )
 
-    def sink_authorization_problem(self) -> str | None:
-        """Return the reason sinks would not be protected, or None when the built-in database is checked first."""
+    def authorization_problem(self) -> str | None:
+        """Return why the registry's rules would not apply, or None when the built-in database is checked first."""
         resp = self._request("GET", AUTHZ_SOURCES)
         resp.raise_for_status()
         found = resp.json().get("sources", [])
@@ -280,6 +310,18 @@ class EmqxClient:
             resp.raise_for_status()
         resp = self._request("POST", f"{AUTHZ_DB}/move", json={"position": "front"})
         resp.raise_for_status()
+
+
+def _covers(existing: dict, rule: dict, actions: tuple[str, ...]) -> bool:
+    """Whether an existing rule has `rule`'s effect: same topic and permission, one of
+    `actions`, and not narrowed to some QoS levels or retain flags."""
+    return (
+        existing.get("topic") == rule["topic"]
+        and existing.get("permission") == rule["permission"]
+        and existing.get("action") in actions
+        and set(existing.get("qos") or (0, 1, 2)) >= {0, 1, 2}
+        and existing.get("retain", "all") == "all"
+    )
 
 
 _client: EmqxClient | None = None
