@@ -47,3 +47,9 @@ class GatewayBrokerTests(RegistryTestCase):
         resp = self.client.get("/owners/me/gateway-broker", **self.auth_headers(self.owner))
 
         self.assertEqual(resp.status_code, 404)
+
+    @override_settings(GATEWAY_BROKER_HOST="")
+    def test_an_instance_without_a_bridge_broker_answers_not_found(self):
+        resp = self.client.get("/owners/me/gateway-broker", **self.auth_headers(self.owner))
+
+        self.assertEqual(resp.status_code, 404)
