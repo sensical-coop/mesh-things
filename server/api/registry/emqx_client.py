@@ -245,8 +245,11 @@ class EmqxClient:
         resp.raise_for_status()
         return resp.json().get("rules", [])
 
-    def _ensure_rule(self, read, write, rule: dict, actions: tuple[str, ...]) -> None:
+    def _ensure_rule(self, read, write, rule: dict, actions: tuple[str, ...], first: bool = False) -> None:
         """Add `rule` to a shared rule list unless one there already covers it.
+
+        EMQX applies the first matching rule in a list. With `first`, the rule only
+        counts when no allow comes before it, and is otherwise moved to the front.
 
         EMQX replaces a whole list on every write and offers no conditional write, so a
         concurrent writer (another registry process, or another stack on the same
@@ -256,11 +259,14 @@ class EmqxClient:
         """
         for attempt in range(RULE_WRITE_ATTEMPTS + 1):
             rules = read()
-            if any(_covers(existing, rule, actions) for existing in rules):
+            if _in_effect(rules, rule, actions, first):
                 return
             if attempt == RULE_WRITE_ATTEMPTS:
                 break
-            write([*rules, rule])
+            if first:
+                write([rule, *(existing for existing in rules if not _covers(existing, rule, actions))])
+            else:
+                write([*rules, rule])
         raise RuntimeError(f"EMQX did not keep the {rule['permission']} rule on {rule['topic']}")
 
     def _write_all_rules(self, rules: list[dict]) -> None:
@@ -288,6 +294,7 @@ class EmqxClient:
             self._write_all_rules,
             {"topic": root, "permission": "deny", "action": "all"},
             ("all",),
+            first=True,
         )
 
     def authorization_problem(self) -> str | None:
@@ -310,6 +317,16 @@ class EmqxClient:
             resp.raise_for_status()
         resp = self._request("POST", f"{AUTHZ_DB}/move", json={"position": "front"})
         resp.raise_for_status()
+
+
+def _in_effect(rules: list[dict], rule: dict, actions: tuple[str, ...], first: bool) -> bool:
+    """Whether a rule in `rules` covers `rule`, and, with `first`, no allow comes before it."""
+    for existing in rules:
+        if _covers(existing, rule, actions):
+            return True
+        if first and existing.get("permission") == "allow":
+            return False
+    return False
 
 
 def _covers(existing: dict, rule: dict, actions: tuple[str, ...]) -> bool:

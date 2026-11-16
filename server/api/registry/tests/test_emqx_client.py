@@ -250,7 +250,7 @@ class EmqxSinkTests(SimpleTestCase):
         publish = {"topic": "mt-sources-sinks/#", "permission": "allow", "action": "publish"}
         deny = {"topic": "mt-sources-sinks/#", "permission": "deny", "action": "all"}
         self.assertEqual(stored[f"{AUTHZ_USERS}/dispatcher"], [dev_publish, publish])
-        self.assertEqual(stored[AUTHZ_ALL], [dev_deny, deny])
+        self.assertEqual(stored[AUTHZ_ALL], [deny, dev_deny])
 
         self.calls.clear()
         self.client.apply_sink_namespace()
@@ -266,7 +266,26 @@ class EmqxSinkTests(SimpleTestCase):
 
         self.client.apply_sink_namespace()
 
-        self.assertEqual(stored[AUTHZ_ALL][-1], {"topic": "mt-sources-sinks/#", "permission": "deny", "action": "all"})
+        self.assertEqual(stored[AUTHZ_ALL][0], {"topic": "mt-sources-sinks/#", "permission": "deny", "action": "all"})
+
+    def test_the_deny_goes_before_an_allow_for_everyone(self):
+        allow_all = {"topic": "#", "permission": "allow", "action": "all"}
+        deny = {"topic": "mt-sources-sinks/#", "permission": "deny", "action": "all"}
+        stored = self._broker_rules(everyone=[allow_all, deny])
+
+        self.client.apply_sink_namespace()
+
+        self.assertEqual(stored[AUTHZ_ALL], [deny, allow_all])
+
+    def test_a_deny_behind_other_denies_is_left_in_place(self):
+        dev_deny = {"topic": "mt-sources-dev-sinks/#", "permission": "deny", "action": "all"}
+        deny = {"topic": "mt-sources-sinks/#", "permission": "deny", "action": "all"}
+        stored = self._broker_rules(everyone=[dev_deny, deny])
+
+        self.client.apply_sink_namespace()
+
+        self.assertEqual(stored[AUTHZ_ALL], [dev_deny, deny])
+        self.assertNotIn("POST", [m for m, p, _ in self.calls if p == AUTHZ_ALL])
 
     def test_a_rule_another_writer_drops_is_written_again(self):
         stored = self._broker_rules()
