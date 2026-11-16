@@ -277,6 +277,15 @@ class EmqxSinkTests(SimpleTestCase):
 
         self.assertEqual(stored[AUTHZ_ALL], [deny, allow_all])
 
+    def test_a_deny_for_no_qos_levels_does_not_count(self):
+        empty = {"topic": "mt-sources-sinks/#", "permission": "deny", "action": "all", "qos": []}
+        allow_all = {"topic": "#", "permission": "allow", "action": "all"}
+        stored = self._broker_rules(everyone=[empty, allow_all])
+
+        self.client.apply_sink_namespace()
+
+        self.assertEqual(stored[AUTHZ_ALL][0], {"topic": "mt-sources-sinks/#", "permission": "deny", "action": "all"})
+
     def test_a_deny_behind_other_denies_is_left_in_place(self):
         dev_deny = {"topic": "mt-sources-dev-sinks/#", "permission": "deny", "action": "all"}
         deny = {"topic": "mt-sources-sinks/#", "permission": "deny", "action": "all"}

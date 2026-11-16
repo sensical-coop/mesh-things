@@ -336,7 +336,7 @@ def _covers(existing: dict, rule: dict, actions: tuple[str, ...]) -> bool:
         existing.get("topic") == rule["topic"]
         and existing.get("permission") == rule["permission"]
         and existing.get("action") in actions
-        and set(existing.get("qos") or (0, 1, 2)) >= {0, 1, 2}
+        and set((0, 1, 2) if existing.get("qos") is None else existing["qos"]) >= {0, 1, 2}
         and existing.get("retain", "all") == "all"
     )
 

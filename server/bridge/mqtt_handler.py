@@ -123,7 +123,7 @@ class MQTTHandler(object):
         self.gateway_rate = front_desk.GatewayRate.from_env()
         self.drops: dict[str, int] = {}
         # gateway_id -> monotonic time it was last rate limited, for /health.
-        self.rate_limited_at: dict[str, float] = {}
+        self.rate_limited_at: dict[tuple[str, str], float] = {}
         self.config_consumer = None
         self.discovery_pacer = discovery.DiscoveryPacer.from_env()
         self.discovery_topic = discovery.candidate_topic()
@@ -137,7 +137,8 @@ class MQTTHandler(object):
         if event.get("op") == "delete":
             self.gateway_sources.pop(key, None)
             self.gateway_rate.forget(key)
-            self.rate_limited_at.pop(key, None)
+            for kind in (front_desk.ENCRYPTED, front_desk.MAP):
+                self.rate_limited_at.pop((key, kind), None)
         else:
             self.gateway_sources[key] = event.get("source_id")
 
@@ -191,11 +192,11 @@ class MQTTHandler(object):
         if not self.accepts(topic, gateway_id):
             return gateway_id, front_desk.WRONG_SOURCE
         if not self.gateway_rate.allow(gateway_id, kind):
-            if gateway_id not in self.rate_limited_at:
-                log.warning('Gateway over its rate, dropping its packets', gateway_id=gateway_id)
-            self.rate_limited_at[gateway_id] = time.monotonic()
+            if (gateway_id, kind) not in self.rate_limited_at:
+                log.warning('Gateway over its rate, dropping its packets', gateway_id=gateway_id, kind=kind)
+            self.rate_limited_at[(gateway_id, kind)] = time.monotonic()
             return gateway_id, front_desk.RATE_LIMITED
-        self.rate_limited_at.pop(gateway_id, None)
+        self.rate_limited_at.pop((gateway_id, kind), None)
         return gateway_id, None
 
     def observe_candidate(self, topic: str, payload: bytes) -> None:
@@ -277,7 +278,7 @@ class MQTTHandler(object):
         recent = time.monotonic() - RATE_LIMITED_RECENT_SECONDS
         body = {
             "drops": dict(sorted(self.drops.items())),
-            "rate_limited_gateways": sorted(g for g, at in self.rate_limited_at.items() if at >= recent),
+            "rate_limited_gateways": sorted({g for (g, _), at in self.rate_limited_at.items() if at >= recent}),
             "discovery_candidates_sent": self.discovery_candidates_sent,
             "discovery_gateways_tracked": len(self.discovery_pacer),
         }
