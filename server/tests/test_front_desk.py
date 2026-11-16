@@ -129,6 +129,21 @@ def test_a_gateway_over_its_rate_is_dropped_until_it_slows_down():
     assert GATEWAY not in handler.rate_limited_at
 
 
+def test_map_reports_cannot_use_up_a_gateways_packets():
+    handler = _handler(rate=1, burst=2, clock=_Clock(), **{GATEWAY: None})
+
+    assert [handler.admit(MAP_TOPIC, _envelope())[1] for _ in range(3)] == [None, None, front_desk.RATE_LIMITED]
+    assert handler.admit(TOPIC, _envelope())[1] is None
+
+
+def test_forgetting_a_gateway_refills_all_its_buckets():
+    rate = front_desk.GatewayRate(1, 1, clock=_Clock())
+    assert rate.allow(GATEWAY) and rate.allow(GATEWAY, front_desk.MAP)
+
+    rate.forget(GATEWAY)
+    assert rate.allow(GATEWAY) and rate.allow(GATEWAY, front_desk.MAP)
+
+
 def test_a_rate_of_zero_lets_everything_through():
     rate = front_desk.GatewayRate(0, 1)
 

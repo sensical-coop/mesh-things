@@ -190,7 +190,7 @@ class MQTTHandler(object):
             return gateway_id, front_desk.UNREGISTERED
         if not self.accepts(topic, gateway_id):
             return gateway_id, front_desk.WRONG_SOURCE
-        if not self.gateway_rate.allow(gateway_id):
+        if not self.gateway_rate.allow(gateway_id, kind):
             if gateway_id not in self.rate_limited_at:
                 log.warning('Gateway over its rate, dropping its packets', gateway_id=gateway_id)
             self.rate_limited_at[gateway_id] = time.monotonic()
