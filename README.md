@@ -38,6 +38,10 @@ docker compose --profile full --profile minio up -d     # full, with the archive
 
 `env.example` is set up for local development: its `COMPOSE_FILE` adds the dev overlay `docker-compose.dev.yml`, which publishes the admin UI ports and switches Django to its `dev` settings. In production, delete the `COMPOSE_FILE` line so the base file runs alone, and set `COMPOSE_PROFILES` instead of passing `--profile`. Both API secret keys must be set before the APIs start.
 
+## Documentation
+
+Product overview, service map, data model, and feature list live in [`docs/`](docs/README.md).
+
 ## Work in progress
 
 This repository is still a work in progress. Documentation and licensing are ongoing.
