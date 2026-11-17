@@ -7,7 +7,7 @@ name = "mesh-things"
 dynamic = ["version"]
 description = "Python client for the mesh-things API, with the vocabulary and Meshtastic protocol helpers it is built on"
 readme = "README.md"
-license = "GPL-3.0-only"
+license = "AGPL-3.0-only"
 license-files = ["LICENSE"]
 authors = [{ name = "oscgonfer" }]
 requires-python = ">=3.10"
