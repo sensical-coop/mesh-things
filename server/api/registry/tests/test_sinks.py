@@ -150,7 +150,7 @@ class CreateTests(SinkTestCase):
         self.assertFalse(Sink.objects.exists())
 
     def test_nothing_is_created_while_the_broker_does_not_protect_sinks(self):
-        self.fake_emqx.sink_authorization_problem.return_value = "the built_in_database authorization source is missing"
+        self.fake_emqx.authorization_problem.return_value = "the built_in_database authorization source is missing"
 
         resp = self.client.post("/sinks", {"terms_version": SINK_VERSION}, format="json", **self.auth_headers(self.operator))
 
@@ -403,7 +403,7 @@ class SyncTests(SinkTestCase):
     def test_check_reports_authorization_and_differences(self):
         sink = self.create_sink(self.operator)
         self.fake_emqx.managed_sink_ids.return_value = (set(), {"orphan"})
-        self.fake_emqx.sink_authorization_problem.return_value = "not first"
+        self.fake_emqx.authorization_problem.return_value = "not first"
         out = StringIO()
 
         with self.assertRaises(CommandError):
@@ -414,7 +414,7 @@ class SyncTests(SinkTestCase):
         self.assertIn("authorization: not first", out.getvalue())
 
     def test_syncing_refuses_until_authorization_is_installed(self):
-        self.fake_emqx.sink_authorization_problem.return_value = "not first"
+        self.fake_emqx.authorization_problem.return_value = "not first"
         self.fake_emqx.managed_sink_ids.return_value = (set(), set())
 
         with self.assertRaises(CommandError):
@@ -424,7 +424,7 @@ class SyncTests(SinkTestCase):
     def test_syncing_reapplies_rules_and_removes_orphans(self):
         sink = self.create_sink(self.operator)
         self.fake_emqx.reset_mock()
-        self.fake_emqx.sink_authorization_problem.return_value = None
+        self.fake_emqx.authorization_problem.return_value = None
         self.fake_emqx.managed_sink_ids.return_value = ({sink["id"]}, {"orphan"})
 
         call_command("sync_sinks", "--install-authz", stdout=StringIO())
