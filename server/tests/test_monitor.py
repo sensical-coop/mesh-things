@@ -137,6 +137,9 @@ class FakeChecker:
     async def http_check(self, name):
         return _result(name, self.ok)
 
+    async def mqtt_publish_check(self):
+        return _result("mqtt_publish", self.ok)
+
     async def probe(self, timeout_s=None):
         self.probes += 1
         self.timeouts.append(timeout_s)
@@ -505,3 +508,82 @@ def test_the_sink_check_sees_the_probe(monkeypatch):
 def test_the_sink_check_times_out(monkeypatch):
     result = _await_sink(monkeypatch, [{"node_id": 1}], deadline_s=0.2)
     assert not result.ok and "in time" in result.detail
+
+
+class _FakePublishClient:
+    """Stands in for aiomqtt.Client: records the connection and acknowledges publishes with `reason`."""
+
+    def __init__(self, reason):
+        from paho.mqtt.packettypes import PacketTypes
+        from paho.mqtt.reasoncodes import ReasonCode
+
+        self.reason = ReasonCode(PacketTypes.PUBACK, identifier=reason)
+        self.connections = []
+        self.published = []
+
+    def __call__(self, *args, **kwargs):
+        self.connections.append(kwargs)
+        self._client = type("Paho", (), {"on_publish": staticmethod(lambda *a: None)})()
+        return self
+
+    async def __aenter__(self):
+        return self
+
+    async def __aexit__(self, *exc):
+        return False
+
+    async def publish(self, topic, payload=None, qos=0):
+        self.published.append(topic)
+        self._client.on_publish(None, None, 1, self.reason, None)
+
+
+def _publish_client(monkeypatch, reason):
+    from monitor import checks
+
+    fake = _FakePublishClient(reason)
+    monkeypatch.setattr(checks.aiomqtt, "Client", fake)
+    return fake
+
+
+def test_the_mqtt_check_publishes_under_its_own_root_with_its_own_client_id(monkeypatch):
+    from monitor.checks import Checker
+
+    fake = _publish_client(monkeypatch, 0x10)
+    result = asyncio.run(Checker(_config()).mqtt_publish_check())
+
+    assert result.ok, result.detail
+    client_id = fake.connections[0]["identifier"]
+    assert client_id.startswith("mt-monitor-")
+    assert fake.published == [f"monitor/{client_id}"]
+
+
+def test_the_mqtt_check_fails_when_the_broker_refuses_the_publish(monkeypatch):
+    from monitor.checks import Checker
+
+    _publish_client(monkeypatch, 0x87)
+    result = asyncio.run(Checker(_config()).mqtt_publish_check())
+
+    assert not result.ok and "Not authorized" in result.detail
+
+
+def test_the_probe_connects_as_its_gateway_and_fails_when_refused(monkeypatch):
+    from monitor.checks import Checker
+
+    fake = _publish_client(monkeypatch, 0x87)
+    checker = Checker(_config())
+
+    async def last_seen(api):
+        return None
+
+    checker._last_seen = last_seen
+    checker._api = lambda http, authenticated=True: None
+    results = asyncio.run(checker.probe())
+
+    assert fake.connections[0]["identifier"] == "!1a2b3c4d"
+    assert not results[0].ok and "Not authorized" in results[0].detail
+
+
+def test_the_mqtt_check_is_reported_with_the_others():
+    from monitor.checks import check_names
+
+    assert check_names(_config()).index("mqtt_publish") < check_names(_config()).index("ingestion")
