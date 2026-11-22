@@ -28,7 +28,7 @@ class Command(BaseCommand):
             client.install_sink_authorization()
             self.stdout.write("Installed the built-in authorization database first")
 
-        problem = client.sink_authorization_problem()
+        problem = client.authorization_problem()
         if problem:
             self.stdout.write(f"authorization: {problem}")
         users, rules = client.managed_sink_ids()

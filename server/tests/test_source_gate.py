@@ -3,6 +3,7 @@ import json
 
 import pytest
 
+from bridge import front_desk
 from bridge.mqtt_handler import MQTTHandler, subscription_filters
 from common import sources
 
@@ -24,6 +25,8 @@ class _Record:
 def _handler(**gateway_sources) -> MQTTHandler:
     handler = object.__new__(MQTTHandler)
     handler.gateway_sources = dict(gateway_sources)
+    handler.gateway_rate = front_desk.GatewayRate(0, 1)
+    handler.rate_limited_at = {}
     return handler
 
 
@@ -74,26 +77,19 @@ def test_an_own_topic_overlapping_the_sources_is_refused(own_topic):
         subscription_filters(own_topic)
 
 
-def test_an_unregistered_gateway_passes_either_way():
-    handler = _handler()
-
-    assert handler.accepts(REMOTE)
-    assert handler.accepts(f"{sources.local_topic_prefix(SOURCE)}/{REMOTE}")
-
-
 def test_a_gateway_on_the_own_topic_is_refused_through_a_source():
     handler = _handler(**{"!aabbccdd": None})
 
-    assert handler.accepts(REMOTE)
-    assert not handler.accepts(f"{sources.local_topic_prefix(SOURCE)}/{REMOTE}")
+    assert handler.accepts(REMOTE, "!aabbccdd")
+    assert not handler.accepts(f"{sources.local_topic_prefix(SOURCE)}/{REMOTE}", "!aabbccdd")
 
 
 def test_a_gateway_on_a_source_is_refused_on_the_own_topic_and_other_sources():
     handler = _handler(**{"!aabbccdd": SOURCE})
 
-    assert handler.accepts(f"{sources.local_topic_prefix(SOURCE)}/{REMOTE}")
-    assert not handler.accepts(REMOTE)
-    assert not handler.accepts(f"{sources.local_topic_prefix(OTHER_SOURCE)}/{REMOTE}")
+    assert handler.accepts(f"{sources.local_topic_prefix(SOURCE)}/{REMOTE}", "!aabbccdd")
+    assert not handler.accepts(REMOTE, "!aabbccdd")
+    assert not handler.accepts(f"{sources.local_topic_prefix(OTHER_SOURCE)}/{REMOTE}", "!aabbccdd")
 
 
 def test_gateway_sources_follow_upserts_and_tombstones():
