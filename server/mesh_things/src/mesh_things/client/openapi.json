@@ -2463,7 +2463,7 @@
     "/owners/me/change-password": {
       "post": {
         "operationId": "owners_me_change_password_create",
-        "description": "Change the authenticated owner's password, confirming the current one first.",
+        "description": "Change the authenticated owner's password, confirming the current one first.\n\nThe session that made the change stays signed in. Other sessions of the owner are signed out.",
         "tags": [
           "owners"
         ],

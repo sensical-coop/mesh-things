@@ -513,7 +513,10 @@ class Owners:
         """End the current session."""
 
     def me_change_password_create(self, *, body: dict[str, Any]) -> Any:
-        """Change the authenticated owner's password, confirming the current one first."""
+        """Change the authenticated owner's password, confirming the current one first.
+
+        The session that made the change stays signed in. Other sessions of the owner are signed out.
+        """
 
     def me_delete(self) -> Any:
         """Delete the authenticated owner, along with their meshes, devices, blueprints and sinks.
@@ -1683,7 +1686,10 @@ class AsyncOwners:
         """End the current session."""
 
     async def me_change_password_create(self, *, body: dict[str, Any]) -> Any:
-        """Change the authenticated owner's password, confirming the current one first."""
+        """Change the authenticated owner's password, confirming the current one first.
+
+        The session that made the change stays signed in. Other sessions of the owner are signed out.
+        """
 
     async def me_delete(self) -> Any:
         """Delete the authenticated owner, along with their meshes, devices, blueprints and sinks.
