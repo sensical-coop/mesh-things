@@ -289,6 +289,25 @@ class AccountTermsTests(RegistryTestCase):
         self.assertEqual(resp.status_code, 201)
         self.assertEqual(TermsAcceptance.objects.filter(owner_id=owner["id"], kind="account").count(), 2)
 
+    def test_the_profile_reports_when_the_account_terms_were_last_accepted(self):
+        owner = self.create_owner(name="When", email="terms-when@example.com")
+        profile = lambda: self.client.get("/owners/me", **self.auth_headers(owner)).json()
+        first = TermsAcceptance.objects.get(owner_id=owner["id"], kind="account")
+        self.assertEqual(profile()["terms_accepted_at"], first.accepted_at.isoformat().replace("+00:00", "Z"))
+
+        self.client.post(
+            "/owners/me/terms-acceptance",
+            {"terms_version": terms.VERSIONS[TermsKind.ACCOUNT]},
+            format="json",
+            **self.auth_headers(owner),
+        )
+        latest = TermsAcceptance.objects.filter(owner_id=owner["id"], kind="account").latest("accepted_at")
+        self.assertGreater(latest.accepted_at, first.accepted_at)
+        self.assertEqual(profile()["terms_accepted_at"], latest.accepted_at.isoformat().replace("+00:00", "Z"))
+
+        TermsAcceptance.objects.filter(owner_id=owner["id"], kind="account").delete()
+        self.assertIsNone(profile()["terms_accepted_at"])
+
 
 MESH_VERSION = terms.VERSIONS[TermsKind.MESH]
 

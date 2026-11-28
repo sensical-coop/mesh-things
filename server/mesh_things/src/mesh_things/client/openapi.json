@@ -2,7 +2,7 @@
   "openapi": "3.0.3",
   "info": {
     "title": "Mesh Things API",
-    "version": "0.8.0"
+    "version": "0.8.1"
   },
   "paths": {
     "/algorithms": {
@@ -8491,6 +8491,13 @@
             "description": "Version of the account terms last accepted. Null if never accepted. They never lapse.",
             "readOnly": true
           },
+          "terms_accepted_at": {
+            "type": "string",
+            "format": "date-time",
+            "nullable": true,
+            "description": "When the account terms were last accepted. Null if never accepted.",
+            "readOnly": true
+          },
           "devices": {
             "type": "array",
             "items": {
@@ -8515,6 +8522,7 @@
           "role",
           "source_rate_alerts_enabled",
           "status_alerts_enabled",
+          "terms_accepted_at",
           "terms_accepted_version"
         ]
       },
@@ -8624,6 +8632,13 @@
             "nullable": true,
             "description": "Version of the account terms last accepted. Null if never accepted. They never lapse.",
             "readOnly": true
+          },
+          "terms_accepted_at": {
+            "type": "string",
+            "format": "date-time",
+            "nullable": true,
+            "description": "When the account terms were last accepted. Null if never accepted.",
+            "readOnly": true
           }
         },
         "required": [
@@ -8641,6 +8656,7 @@
           "role",
           "source_rate_alerts_enabled",
           "status_alerts_enabled",
+          "terms_accepted_at",
           "terms_accepted_version"
         ]
       },
@@ -8795,6 +8811,13 @@
             "description": "Version of the account terms last accepted. Null if never accepted. They never lapse.",
             "readOnly": true
           },
+          "terms_accepted_at": {
+            "type": "string",
+            "format": "date-time",
+            "nullable": true,
+            "description": "When the account terms were last accepted. Null if never accepted.",
+            "readOnly": true
+          },
           "api_key": {
             "type": "string",
             "readOnly": true
@@ -8816,6 +8839,7 @@
           "role",
           "source_rate_alerts_enabled",
           "status_alerts_enabled",
+          "terms_accepted_at",
           "terms_accepted_version"
         ]
       },
