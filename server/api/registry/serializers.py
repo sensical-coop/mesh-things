@@ -147,15 +147,22 @@ class OwnerReadSerializer(serializers.ModelSerializer):
             "status_alerts_enabled",
             "source_rate_alerts_enabled",
             "terms_accepted_version",
+            "terms_accepted_at",
         ]
         read_only_fields = fields
 
     terms_accepted_version = serializers.SerializerMethodField()
+    terms_accepted_at = serializers.SerializerMethodField()
 
     def get_terms_accepted_version(self, instance) -> str | None:
         """Version of the account terms last accepted. Null if never accepted. They never lapse."""
         acceptance = instance.current_account_acceptance
         return acceptance.terms_version if acceptance else None
+
+    def get_terms_accepted_at(self, instance) -> datetime | None:
+        """When the account terms were last accepted. Null if never accepted."""
+        acceptance = instance.current_account_acceptance
+        return acceptance.accepted_at if acceptance else None
 
 
 class _ReturnPathInputMixin(serializers.Serializer):
