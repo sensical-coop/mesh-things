@@ -2,7 +2,7 @@
   "openapi": "3.0.3",
   "info": {
     "title": "Mesh Things API",
-    "version": "0.8.1"
+    "version": "0.8.2"
   },
   "paths": {
     "/algorithms": {
@@ -2463,7 +2463,7 @@
     "/owners/me/change-password": {
       "post": {
         "operationId": "owners_me_change_password_create",
-        "description": "Change the authenticated owner's password, confirming the current one first.\n\nThe session that made the change stays signed in. Other sessions of the owner are signed out.",
+        "description": "Change the authenticated owner's password, confirming the current one first.\n\nThe new password must differ from the current one. The session that made the change\nstays signed in. Other sessions of the owner are signed out.",
         "tags": [
           "owners"
         ],

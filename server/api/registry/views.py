@@ -930,7 +930,8 @@ class OwnerRotateKeyView(APIView):
 class OwnerChangePasswordView(APIView):
     """Change the authenticated owner's password, confirming the current one first.
 
-    The session that made the change stays signed in. Other sessions of the owner are signed out.
+    The new password must differ from the current one. The session that made the change
+    stays signed in. Other sessions of the owner are signed out.
     """
 
     permission_classes = [IsVerifiedOwner]
@@ -942,6 +943,8 @@ class OwnerChangePasswordView(APIView):
         owner = request.user
         if not owner.check_password(serializer.validated_data["current_password"]):
             raise ValidationError({"current_password": ["Incorrect password"]})
+        if serializer.validated_data["new_password"] == serializer.validated_data["current_password"]:
+            raise ValidationError({"new_password": ["The new password must be different from the current one."]})
         try:
             validate_password(serializer.validated_data["new_password"], user=owner)
         except DjangoValidationError as e:

@@ -353,6 +353,19 @@ class ChangePasswordTests(RegistryTestCase):
         )
         self.assertEqual(new_login.status_code, 200)
 
+    def test_change_password_refuses_the_current_password(self):
+        owner = self.create_owner(name="Same", email="change-same@example.com")
+
+        resp = self.client.post(
+            "/owners/me/change-password",
+            {"current_password": self.DEFAULT_PASSWORD, "new_password": self.DEFAULT_PASSWORD},
+            format="json",
+            **self.auth_headers(owner),
+        )
+
+        self.assertEqual(resp.status_code, 400)
+        self.assertIn("new_password", resp.json())
+
     def test_change_password_keeps_the_session_signed_in(self):
         self.create_owner(name="Alice", email="change-c@example.com")
         login = self.client.post(

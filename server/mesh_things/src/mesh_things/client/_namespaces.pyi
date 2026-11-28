@@ -515,7 +515,8 @@ class Owners:
     def me_change_password_create(self, *, body: dict[str, Any]) -> Any:
         """Change the authenticated owner's password, confirming the current one first.
 
-        The session that made the change stays signed in. Other sessions of the owner are signed out.
+        The new password must differ from the current one. The session that made the change
+        stays signed in. Other sessions of the owner are signed out.
         """
 
     def me_delete(self) -> Any:
@@ -1688,7 +1689,8 @@ class AsyncOwners:
     async def me_change_password_create(self, *, body: dict[str, Any]) -> Any:
         """Change the authenticated owner's password, confirming the current one first.
 
-        The session that made the change stays signed in. Other sessions of the owner are signed out.
+        The new password must differ from the current one. The session that made the change
+        stays signed in. Other sessions of the owner are signed out.
         """
 
     async def me_delete(self) -> Any:
