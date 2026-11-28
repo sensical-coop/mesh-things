@@ -6,7 +6,7 @@ from functools import partial
 
 import structlog
 from django.conf import settings
-from django.contrib.auth import login as auth_login, logout as auth_logout
+from django.contrib.auth import login as auth_login, logout as auth_logout, update_session_auth_hash
 from django.contrib.auth.password_validation import validate_password
 from django.core.exceptions import ValidationError as DjangoValidationError
 from django.db import IntegrityError, transaction
@@ -15,6 +15,7 @@ from django.middleware.csrf import get_token as get_csrf_token
 from django.utils import timezone
 from drf_spectacular.utils import OpenApiParameter, OpenApiResponse, OpenApiTypes, extend_schema
 from rest_framework import status
+from rest_framework.authentication import SessionAuthentication
 from rest_framework.exceptions import AuthenticationFailed, NotFound, ParseError, PermissionDenied, ValidationError
 from rest_framework.permissions import AllowAny, IsAuthenticated
 from rest_framework.response import Response
@@ -927,7 +928,11 @@ class OwnerRotateKeyView(APIView):
 
 
 class OwnerChangePasswordView(APIView):
-    """Change the authenticated owner's password, confirming the current one first."""
+    """Change the authenticated owner's password, confirming the current one first.
+
+    The new password must differ from the current one. The session that made the change
+    stays signed in. Other sessions of the owner are signed out.
+    """
 
     permission_classes = [IsVerifiedOwner]
 
@@ -938,12 +943,17 @@ class OwnerChangePasswordView(APIView):
         owner = request.user
         if not owner.check_password(serializer.validated_data["current_password"]):
             raise ValidationError({"current_password": ["Incorrect password"]})
+        if serializer.validated_data["new_password"] == serializer.validated_data["current_password"]:
+            raise ValidationError({"new_password": ["The new password must be different from the current one."]})
         try:
             validate_password(serializer.validated_data["new_password"], user=owner)
         except DjangoValidationError as e:
             raise ValidationError({"new_password": list(e.messages)})
         owner.set_password(serializer.validated_data["new_password"])
         owner.save(update_fields=["password"])
+        # A new hash would sign this browser out too; bearer clients have no session to keep.
+        if isinstance(request.successful_authenticator, SessionAuthentication):
+            update_session_auth_hash(request, owner)
         return Response({"detail": "Password changed"})
 
 
