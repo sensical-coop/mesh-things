@@ -1,0 +1,176 @@
+//// Meshtastic Things — PostgreSQL registry
+//// Import at https://dbdiagram.io or with the `dbml` CLI.
+//// Runtime telemetry lives in InfluxDB, not these tables.
+
+Project meshtastic_things {
+  database_type: 'PostgreSQL'
+  Note: 'Fleet registry. Time series are in InfluxDB; decoded archives in Parquet.'
+}
+
+Table owners {
+  id uuid [pk, default: `uuid_generate_v4()`]
+  email varchar(254) [unique, not null]
+  name varchar(255) [not null]
+  password varchar(128) [not null, note: 'Django hasher; unusable if API-key-only']
+  api_key_hash varchar(64) [unique, note: 'SHA-256 of bearer key; plaintext shown once']
+  created_at timestamptz [not null]
+  last_login timestamptz
+  is_staff bool [not null, default: false]
+  is_superuser bool [not null, default: false]
+  is_active bool [not null, default: true, note: 'email-verified']
+  email_verified_at timestamptz
+  email_verification_token_hash varchar(64) [unique]
+  email_verification_sent_at timestamptz
+  password_reset_token_hash varchar(64) [unique]
+  password_reset_sent_at timestamptz
+  alarm_email_cooldown_seconds int [note: 'null = server default']
+
+  Note: 'AUTH_USER_MODEL. Bearer API key and/or session password.'
+}
+
+Table meshes {
+  id uuid [pk]
+  channel_id varchar(255) [not null]
+  psk_b64 text [not null, note: 'write-only over the API']
+  label varchar(255)
+  owner_id uuid [not null, ref: > owners.id]
+  is_public bool [not null, default: false, note: 'widens reads, never writes']
+  created_at timestamptz [not null]
+  updated_at timestamptz [not null]
+}
+
+Table postprocessing_blueprints {
+  id uuid [pk]
+  name varchar(255) [not null]
+  description text
+  owner_id uuid [not null, ref: > owners.id]
+  created_at timestamptz [not null]
+  updated_at timestamptz [not null]
+
+  indexes {
+    (owner_id, name) [unique, name: 'uq_blueprint_owner_name']
+  }
+}
+
+Table postprocessing_steps {
+  id uuid [pk]
+  blueprint_id uuid [not null, ref: > postprocessing_blueprints.id]
+  order int [not null]
+  function_name varchar(128) [not null, note: 'common.algorithms registry']
+  inputs json [not null, default: '{}', note: 'algorithm input to channel name']
+  params json [not null, default: '{}']
+  outputs json [not null, default: '{}', note: 'algorithm output to channel name']
+  created_at timestamptz [not null]
+  updated_at timestamptz [not null]
+
+  indexes {
+    (blueprint_id, order) [unique, name: 'uq_step_blueprint_order']
+  }
+}
+
+Table devices {
+  id uuid [pk]
+  device_id bigint [not null, note: 'Meshtastic node number']
+  mesh_id uuid [not null, ref: > meshes.id]
+  label varchar(255)
+  is_gateway bool [not null, default: false]
+  is_allowed bool [not null, default: true]
+  admin_keys_b64 json [not null, default: '[]', note: 'max 3 firmware admin keys']
+  postprocessing_blueprint_id uuid [ref: > postprocessing_blueprints.id]
+  reading_interval_seconds int
+  publish_interval_seconds int
+  absence_detection_enabled bool [not null, default: false]
+  latitude float
+  longitude float
+  location_overridden bool [not null, default: false]
+  name varchar(255)
+  short_name varchar(32)
+  hardware_type varchar(64)
+  role varchar(32)
+  nodeinfo_overridden bool [not null, default: false]
+  last_seen timestamptz
+  created_at timestamptz [not null]
+  updated_at timestamptz [not null]
+
+  indexes {
+    device_id
+    (device_id) [unique, name: 'uq_devices_device_id_allowed', note: 'partial: WHERE is_allowed']
+  }
+}
+
+Table telemetry_variants {
+  id uuid [pk]
+  payload_kind varchar(64) [unique, not null, note: 'e.g. telemetry:environment_metrics']
+  name varchar(255)
+  model varchar(255)
+  datasheet_url varchar
+  description text
+  default_reading_interval_seconds int
+  created_at timestamptz [not null]
+  updated_at timestamptz [not null]
+}
+
+Table measurement_types {
+  id uuid [pk]
+  payload_kind varchar(64) [not null]
+  field_name varchar(64) [not null]
+  display_name varchar(255)
+  description text
+  native_unit varchar(32)
+  quantity_kind varchar(32) [note: 'physical_property | concentration | count | ratio | other']
+  vocabulary_uri varchar
+  created_at timestamptz [not null]
+  updated_at timestamptz [not null]
+
+  indexes {
+    (payload_kind, field_name) [unique, name: 'uq_measurement_type']
+  }
+}
+
+Table telemetry_variant_measurements {
+  id uuid [pk]
+  telemetry_variant_id uuid [not null, ref: > telemetry_variants.id]
+  measurement_type_id uuid [not null, ref: > measurement_types.id]
+  default_enabled_detectors json [not null, default: '[]']
+  created_at timestamptz [not null]
+  updated_at timestamptz [not null]
+
+  indexes {
+    (telemetry_variant_id, measurement_type_id) [unique, name: 'uq_telemetry_variant_measurement']
+  }
+}
+
+Table device_telemetry_variants {
+  id uuid [pk]
+  device_id uuid [not null, ref: > devices.id]
+  telemetry_variant_id uuid [not null, ref: > telemetry_variants.id]
+  first_seen timestamptz [not null]
+  last_seen timestamptz
+
+  indexes {
+    (device_id, telemetry_variant_id) [unique, name: 'uq_device_telemetry_variant']
+  }
+}
+
+Table measurements {
+  id uuid [pk]
+  device_telemetry_variant_id uuid [not null, ref: > device_telemetry_variants.id]
+  measurement_type_id uuid [not null, ref: > measurement_types.id]
+  enabled_detectors json [note: 'null inherits catalog; empty list silences this channel']
+  valid_min float
+  valid_max float
+  first_seen timestamptz [not null]
+  last_seen timestamptz
+
+  indexes {
+    (device_telemetry_variant_id, measurement_type_id) [unique, name: 'uq_measurement_device_telemetry_variant_type']
+  }
+}
+
+//// readings_ro may SELECT:
+////   owners (all columns)
+////   measurement_types (all columns)
+////   django_session (all columns)
+////   meshes (id, owner_id, is_public)
+////   devices (id, device_id, mesh_id, is_allowed)
+//// It cannot read psk_b64 or other registry secrets.
