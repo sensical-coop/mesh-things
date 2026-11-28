@@ -5,7 +5,7 @@ import time
 import structlog
 
 from monitor import alerts
-from monitor.checks import HTTP_CHECKS, PROBE_CHECKS, Checker, CheckResult, check_names
+from monitor.checks import HTTP_CHECKS, MQTT_PUBLISH, PROBE_CHECKS, Checker, CheckResult, check_names
 from monitor.config import Config
 
 log = structlog.get_logger()
@@ -55,8 +55,10 @@ class Monitor:
         start. Those are recorded once, by the call that started it.
         """
         names = self.names if only is None else (only,)
-        http = [name for name in names if name in HTTP_CHECKS]
-        results = list(await asyncio.gather(*(self.checker.http_check(name) for name in http)))
+        quick = [self.checker.http_check(name) for name in names if name in HTTP_CHECKS]
+        if MQTT_PUBLISH in names:
+            quick.append(self.checker.mqtt_publish_check())
+        results = list(await asyncio.gather(*quick))
         to_record = list(results)
         cached = False
         if any(name in PROBE_CHECKS for name in names):

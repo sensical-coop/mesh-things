@@ -1,6 +1,7 @@
 """The individual checks, run against the stack from outside: its public HTTP API and MQTT."""
 import asyncio
 import json
+import secrets
 import time
 from dataclasses import dataclass
 from datetime import datetime, timezone
@@ -8,6 +9,7 @@ from datetime import datetime, timezone
 import aiomqtt
 import httpx
 import structlog
+from mesh_things import node_ids
 from mesh_things.client import ApiError, AsyncMeshThings, Forbidden
 
 from monitor import packets
@@ -21,6 +23,9 @@ INGESTION = "ingestion"
 REGISTRY_SIGHTING = "registry_sighting"
 SINK = "sink"
 PROBE_CHECKS = (INGESTION, REGISTRY_SIGHTING, SINK)
+MQTT_PUBLISH = "mqtt_publish"
+# The broker lets the monitor's host publish here under any client id, and nobody reads it.
+MQTT_CHECK_ROOT = "monitor"
 
 LATEST_KIND = "telemetry:device_metrics"
 MARKER_CHANNEL = "device_metrics.uptime_seconds"
@@ -51,12 +56,16 @@ def check_names(config: Config) -> tuple[str, ...]:
     """Every check this configuration runs, in report order."""
     probe = (INGESTION, REGISTRY_SIGHTING, SINK) if config.sink_enabled else (INGESTION, REGISTRY_SIGHTING)
     http = HTTP_CHECKS if config.email_check else tuple(name for name in HTTP_CHECKS if name != EMAIL)
-    return http + probe
+    return http + (MQTT_PUBLISH,) + probe
 
 
 def _result(name: str, ok: bool, detail: str, started: float | None = None) -> CheckResult:
     latency = None if started is None else time.monotonic() - started
     return CheckResult(name, ok, detail, latency, time.time())
+
+
+class PublishRefused(Exception):
+    """The broker acknowledged a publish with a failure reason, such as Not authorized."""
 
 
 def marker_in_latest(body: dict) -> int | None:
@@ -158,17 +167,47 @@ class Checker:
         device = await api.devices.get(self.config.gateway_uuid)
         return device.get("last_seen")
 
-    async def _publish(self, topic: str, payload: bytes) -> None:
+    async def _publish(self, topic: str, payload: bytes, client_id: str) -> None:
+        """Publish at QoS 1 over MQTT 5 and raise PublishRefused when the broker does not accept it.
+
+        A broker drops a publish its ACL denies without closing the connection, so the
+        acknowledgement's reason code is the only sign of it. aiomqtt does not expose
+        it, so it is read from the paho client underneath.
+        """
         c = self.config
         async with aiomqtt.Client(
             c.mqtt_broker,
             port=c.mqtt_port,
             username=c.mqtt_user or None,
             password=c.mqtt_pass or None,
+            identifier=client_id,
+            protocol=aiomqtt.ProtocolVersion.V5,
             tls_params=aiomqtt.TLSParameters() if c.mqtt_ssl else None,
             timeout=c.http_timeout_s,
         ) as client:
+            reasons = []
+            on_publish = client._client.on_publish
+
+            def record(paho, userdata, mid, reason_code, properties):
+                reasons.append(reason_code)
+                on_publish(paho, userdata, mid, reason_code, properties)
+
+            client._client.on_publish = record
             await client.publish(topic, payload=payload, qos=1)
+        if reasons and reasons[-1].is_failure:
+            raise PublishRefused(str(reasons[-1]))
+
+    async def mqtt_publish_check(self) -> CheckResult:
+        """The broker accepts a publish from the monitor's own client, apart from any gateway's rules."""
+        started = time.monotonic()
+        client_id = f"mt-monitor-{secrets.token_hex(4)}"
+        try:
+            await self._publish(f"{MQTT_CHECK_ROOT}/{client_id}", b"ping", client_id)
+        except PublishRefused as e:
+            return _result(MQTT_PUBLISH, False, f"the broker refused the publish: {e}", started)
+        except (aiomqtt.MqttError, OSError) as e:
+            return _result(MQTT_PUBLISH, False, f"publish failed: {e}", started)
+        return _result(MQTT_PUBLISH, True, "ok", started)
 
     async def _await_reading(self, api: AsyncMeshThings, marker: int, started: float, deadline: float) -> CheckResult:
         last = "no reading yet"
@@ -228,7 +267,11 @@ class Checker:
             subscribed.set()
 
     async def probe(self, timeout_s: float | None = None) -> list[CheckResult]:
-        """Publish one probe and follow it to the readings API, the registry and the sink."""
+        """Publish one probe as the monitor's gateway and follow it to the readings API, the registry and the sink.
+
+        It connects with the gateway's node id as client id, as Meshtastic firmware does,
+        so the broker applies the same rules it applies to real gateways.
+        """
         c = self.config
         timeout_s = timeout_s or c.ingest_timeout_s
         marker = int(time.time())
@@ -249,8 +292,8 @@ class Checker:
 
             started = time.monotonic()
             try:
-                await self._publish(topic, payload)
-            except (aiomqtt.MqttError, OSError) as e:
+                await self._publish(topic, payload, node_ids.to_hex(c.gateway_node_id))
+            except (aiomqtt.MqttError, OSError, PublishRefused) as e:
                 if sink_task:
                     sink_task.cancel()
                 log.warning("probe_publish_failed", error=str(e))
