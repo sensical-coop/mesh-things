@@ -2,6 +2,10 @@
 
 Thank you for helping with Mesh Things. This guide covers how changes reach `main`: branches, commits, pull requests, and the deploy notes every pull request carries. Code style, comments and docstrings follow [AGENTS.md](AGENTS.md).
 
+## Contributor License Agreement
+
+Before your first pull request can be merged, you sign the [Contributor License Agreement](CLA.md). It lets Sensical distribute your contribution under the AGPL and under the commercial licence. The CLA check comments on your pull request with the sentence to reply with, and remembers your signature for later pull requests.
+
 ## Branches
 
 Each pull request has its own branch, created from `main`. Name it after the kind of change, with a short slug:

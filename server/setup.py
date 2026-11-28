@@ -17,7 +17,7 @@ setup(
     version='0.1.0',
     description='Ingest meshtastic data into kafka queues and influxDB',
     author='oscgonfer',
-    license='GNU-GPL3.0',
+    license='AGPL-3.0-only',
     packages=find_packages(exclude=['mesh_things*']),
     keywords=['meshtastic', 'kafka', 'influxdb', 'flink'],
     # project_urls=PROJECT_URLS,
